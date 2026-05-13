@@ -3,7 +3,6 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
-import * as tar from 'tar'
 import { REQUIRED_R_PACKAGES } from './sync-r-portable-zip.mjs'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -52,13 +51,7 @@ if (!fs.existsSync(archivePath)) {
 
 const tempRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), `metis-r-${platform}-`))
 try {
-  await tar.x({
-    file: archivePath,
-    cwd: tempRoot,
-    gzip: true,
-    preserveOwner: false,
-    strict: true,
-  })
+  await run('tar', ['-xzf', archivePath, '-C', tempRoot])
 
   const runtimeDir = path.join(tempRoot, 'R-Bundled')
   const rscriptPath = path.join(runtimeDir, 'bin', 'Rscript')

@@ -7,7 +7,6 @@ import { fileURLToPath } from 'url'
 import { spawn, spawnSync, exec, execSync, type ChildProcess } from 'child_process'
 import { createServer } from 'net'
 import JSZip from 'jszip'
-import * as tar from 'tar'
 import { isRendererWriteTargetAllowed } from '../src/utils/securityPaths'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -3664,13 +3663,7 @@ async function extractZipArchive(zipPath: string, destinationDir: string): Promi
 
 async function extractTarGzArchive(archivePath: string, destinationDir: string): Promise<void> {
   await fs.promises.mkdir(destinationDir, { recursive: true })
-  await tar.x({
-    file: archivePath,
-    cwd: destinationDir,
-    gzip: true,
-    preserveOwner: false,
-    strict: true,
-  })
+  await runProcess('tar', ['-xzf', archivePath, '-C', destinationDir])
 }
 
 async function runProcess(executablePath: string, args: string[], options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): Promise<void> {

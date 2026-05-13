@@ -63,7 +63,7 @@ jobs:
           conda create -y -p "$PWD/R-Bundled" -c conda-forge \
             r-base r-jsonlite r-matrix r-readxl r-remotes conda-pack \
             c-compiler cxx-compiler fortran-compiler make pkg-config \
-            abseil-cpp udunits2
+            abseil-cpp udunits2 libuv libsodium zlib libxml2
           conda activate "$PWD/R-Bundled"
           Rscript -e 'install.packages(c("plumber", "seminr", "semPower"), repos = "https://cloud.r-project.org", dependencies = c("Depends", "Imports", "LinkingTo"), Ncpus = 2)'
           "$PWD/R-Bundled/bin/Rscript" -e 'install.packages("remotes", repos = "https://cloud.r-project.org"); try(remotes::install_github("sem-in-r/seminrExtras"), silent = TRUE); if (!requireNamespace("seminrExtras", quietly = TRUE)) remotes::install_github("sem-in-r/seminr", subdir = "seminrExtras")'
@@ -135,7 +135,7 @@ jobs:
           conda create -y -p "$PWD/R-Bundled" -c conda-forge \
             r-base r-jsonlite r-matrix r-readxl r-remotes conda-pack \
             c-compiler cxx-compiler fortran-compiler make pkg-config \
-            abseil-cpp udunits2
+            abseil-cpp udunits2 libuv libsodium zlib libxml2
           conda activate "$PWD/R-Bundled"
           Rscript -e 'install.packages(c("plumber", "seminr", "semPower"), repos = "https://cloud.r-project.org", dependencies = c("Depends", "Imports", "LinkingTo"), Ncpus = 2)'
           "$PWD/R-Bundled/bin/Rscript" -e 'install.packages("remotes", repos = "https://cloud.r-project.org"); try(remotes::install_github("sem-in-r/seminrExtras"), silent = TRUE); if (!requireNamespace("seminrExtras", quietly = TRUE)) remotes::install_github("sem-in-r/seminr", subdir = "seminrExtras")'

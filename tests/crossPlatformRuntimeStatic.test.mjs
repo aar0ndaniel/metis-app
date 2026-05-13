@@ -72,8 +72,8 @@ assert.match(
 
 assert.match(
   electronMainSource,
-  /async function extractTarGzArchive[\s\S]*await tar\.x\(\{[\s\S]*file: archivePath[\s\S]*cwd: destinationDir[\s\S]*gzip: true/,
-  'macOS and Linux bundle runtime extraction should use async tar.gz extraction.'
+  /async function extractTarGzArchive[\s\S]*await runProcess\('tar', \['-xzf', archivePath, '-C', destinationDir\]\)/,
+  'macOS and Linux bundle runtime extraction should use system tar for conda-pack symlink compatibility.'
 )
 
 assert.doesNotMatch(
@@ -120,8 +120,8 @@ assert.match(
 
 assert.match(
   smokeSource,
-  /await tar\.x\(\{[\s\S]*file: archivePath[\s\S]*cwd: tempRoot[\s\S]*gzip: true/,
-  'Unix runtime smoke test should extract the archive asynchronously.'
+  /await run\('tar', \['-xzf', archivePath, '-C', tempRoot\]\)/,
+  'Unix runtime smoke test should use system tar for conda-pack symlink compatibility.'
 )
 
 assert.match(
