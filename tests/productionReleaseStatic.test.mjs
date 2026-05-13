@@ -11,6 +11,12 @@ async function read(relativePath) {
 }
 
 async function collectFiles(dir, predicate) {
+  try {
+    await fs.access(dir)
+  } catch {
+    return []
+  }
+
   const entries = await fs.readdir(dir, { withFileTypes: true })
   const files = []
   for (const entry of entries) {
