@@ -1,0 +1,72 @@
+appId: com.metis.app
+productName: metis
+asar: true
+
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: true
+
+directories:
+  output: release/bundle
+  buildResources: build
+
+files:
+  - 'dist{,/**/*}'
+  - 'dist-electron{,/**/*}'
+  - 'node_modules{,/**/*}'
+  - 'package.json'
+
+extraResources:
+  - from: sample dataset.csv
+    to: sample-data/sample dataset.csv
+  - from: r-api
+    to: r-api
+    filter:
+      - .Rprofile
+      - plumber.R
+      - renv-bootstrap.R
+      - renv.lock
+      - renv/**
+      - R-Portable.zip
+      - R-macos.tar.gz
+      - R-linux.tar.gz
+
+win:
+  target: nsis
+  icon: build/icon.ico
+  artifactName: metis ${version} Bundle Beta.${ext}
+
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.education
+  icon: build/icon.icns
+  artifactName: metis ${version} Bundle Beta macOS.${ext}
+
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Education
+  icon: build/icon.png
+  artifactName: metis ${version} Bundle Beta Linux.${ext}
+
+nsis:
+  oneClick: true
+  allowToChangeInstallationDirectory: false
+  differentialPackage: false
+  createDesktopShortcut: always
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+
+fileAssociations:
+  - ext: ada
+    name: metis Workspace
+    role: Editor

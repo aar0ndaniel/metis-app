@@ -1,0 +1,16 @@
+node_modules
+dist
+dist-electron
+release
+.vite
+*.local
+.claude/
+.tmp-tests/
+.tmp-*
+typecheck.log
+Rplots.pdf
+runtime/r-portable/
+r-api/R-Portable/
+r-api/R-Portable.zip
+r-api/R-macos.tar.gz
+r-api/R-linux.tar.gz

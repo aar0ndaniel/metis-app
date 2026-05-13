@@ -1,0 +1,93 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const workspaceRoot = path.resolve(__dirname, '..')
+const source = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
+const titleBar = await fs.readFile(path.join(workspaceRoot, 'src/components/TitleBar.tsx'), 'utf8')
+const css = await fs.readFile(path.join(workspaceRoot, 'src/index.css'), 'utf8')
+
+assert.match(source, /Export Model/, 'properties panel should expose an Export Model action')
+assert.match(source, /id="model-switcher"/, 'properties panel should expose the model switcher dropdown')
+assert.match(source, /modelSwitcherOpen/, 'model switcher should open as an in-panel dropdown')
+const modelSwitcherIndex = source.indexOf('id="model-switcher"')
+const rightPanelTabIndex = source.indexOf('id="tour-properties-tab"')
+assert.ok(
+  modelSwitcherIndex !== -1 && rightPanelTabIndex !== -1 && modelSwitcherIndex < rightPanelTabIndex,
+  'active model switcher should be above the Properties/Tools tabs',
+)
+assert.match(source, /padding:\s*'12px 8px 10px'/, 'right panel model header should have more top padding')
+assert.match(source, /height:\s*rightPanelCollapsed \? 30 : 28/, 'properties/tools tab buttons should be compact')
+assert.match(css, /--color-panel:\s*var\(--color-menu-bg\)/, 'floating panels should use the same theme variable as the canvas menu bar')
+assert.match(css, /\[data-theme='light'\][\s\S]*--color-panel:\s*var\(--color-menu-bg\)/, 'light theme should keep side panels and canvas menu on the same surface color')
+assert.match(css, /--color-menu-bg:\s*#202020/, 'menu bar, variables panel, and properties panel should use the requested #202020 surface')
+assert.match(source, /panelPop:\s*'var\(--color-panel-pop\)'/, 'canvas chrome pop surfaces should be variable-backed')
+assert.match(source, /floatingBorder:\s*'var\(--color-floating-border\)'/, 'floating canvas chrome borders should be variable-backed')
+assert.match(source, /floatingPanelShadow:\s*'var\(--shadow-floating-panel\)'/, 'floating side panel shadows should be variable-backed')
+const datasetHeaderChrome = source.slice(source.indexOf('/* Dataset header'), source.indexOf('{/* Search */'))
+const variableSearchChrome = source.slice(source.indexOf('{/* Search */'), source.indexOf('{/* Variable list'))
+assert.doesNotMatch(datasetHeaderChrome, /#[0-9A-Fa-f]{3,8}/, 'left dataset banner chrome should not use hard-coded hex colors')
+assert.doesNotMatch(datasetHeaderChrome, /backgroundColor:\s*C\.panelPop[\s\S]{0,180}boxShadow:\s*C\.panelPopShadow/, 'dataset banner should not render a raised shadow')
+assert.doesNotMatch(variableSearchChrome, /#[0-9A-Fa-f]{3,8}/, 'left search chrome should not use hard-coded hex colors')
+assert.doesNotMatch(source.slice(source.indexOf('id="model-switcher"'), source.indexOf('{rightTab ===')), /#[0-9A-Fa-f]{3,8}/, 'right panel switcher chrome should not use hard-coded hex colors')
+assert.doesNotMatch(source.slice(source.indexOf('bottom: 52'), source.indexOf('{/* ─── Delete Modal')), /#[0-9A-Fa-f]{3,8}/, 'floating canvas menu should not use hard-coded hex colors')
+assert.match(titleBar, /background:\s*'#202020'/, 'title bar shell should stay fixed at #202020')
+assert.match(titleBar, /height:\s*36,[\s\S]*padding:\s*'0 16px'/, 'title bar should keep its compact height')
+assert.match(titleBar, /width:\s*22,[\s\S]*height:\s*22,[\s\S]*<AppLogo size=\{14\}/, 'title bar logo should stay visually compact')
+assert.doesNotMatch(titleBar, /House|aria-label="Workspace home"|id="titlebar-home"/, 'title bar should not duplicate home navigation with a separate home icon')
+assert.match(titleBar, /action:\s*'toggle-home-canvas'[\s\S]*<AppLogo/, 'brand button should own canvas-safe workspace navigation')
+assert.doesNotMatch(source, /title="Back to Workspace"/, 'dataset banner should own the full sidebar width without an inline back button')
+assert.match(source, /const floatingPanelBottom = 52/, 'side panels should be 10px shorter to align with the menu baseline')
+assert.match(source, /placeholder="Search indicators\.\.\."/, 'variables search should be labeled as indicator search')
+assert.match(source, /<MagnifyingGlass size=\{14\} color=\{C\.textSec\}/, 'search icon should be visibly brighter')
+assert.match(source, /borderRadius:\s*8,\s*\n\s*height:\s*30/, 'search input should have slightly rounder corners')
+assert.match(source, /activeTone=\{activeTool === 'select' \? 'yellow' : undefined\}/, 'select tool should become yellow when active')
+assert.match(source, /activeTone=\{activeTool === 'connect' \? 'yellow' : undefined\}/, 'connect tool should become yellow when active')
+assert.match(source, /activeTone=\{activeTool === 'construct' \? 'yellow' : undefined\}/, 'latent variable tool should become yellow when active')
+assert.match(source, /activeLabel="Select"/, 'active select tool should show its label')
+assert.match(source, /activeLabel="Connect"/, 'active connect tool should show its label')
+assert.match(source, /activeLabel="Latent"/, 'active latent variable tool should show its label')
+assert.match(source, /activeTone === 'yellow'\s*\?\s*'var\(--color-accent\)'/, 'active drawing tools should use a solid yellow background')
+assert.match(source, /activeTone=\{canCalculate && !isAnyCalculationRunning \? 'green' : undefined\}/, 'calculate should become green only when available and no calculation is running')
+assert.match(source, /selectedTabBg:\s*'rgba\(var\(--color-success-rgb\), 0\.20\)'/, 'selected Properties/Tools tabs should use variable-backed subtle green background')
+assert.match(source, /selectedTabBorder:\s*'rgba\(var\(--color-success-rgb\), 0\.24\)'/, 'selected Properties/Tools tab borders should be variable-backed')
+assert.match(source, /currentWorkspaceSwitcherLabel && \(\s*<span style=\{\{ fontSize: 9/, 'workspace label should sit under the active model name')
+assert.doesNotMatch(source, /{currentWorkspaceSwitcherLabel && \(\s*<span style=\{\{ fontSize: 10/, 'workspace label should not render as a separate right-panel row')
+assert.match(source, /title="Remove indicator"/, 'selected construct indicators should have remove controls')
+assert.match(source, /const \[propertiesIndicatorsExpanded,\s*setPropertiesIndicatorsExpanded\]\s*=\s*useState\(false\)/, 'properties panel indicator list should start collapsed')
+assert.match(source, /aria-expanded=\{propertiesIndicatorsExpanded\}/, 'properties panel indicator list should expose its expanded state')
+assert.match(source, /propertiesIndicatorsExpanded && selectedConstruct\.indicators\.map/, 'properties panel should only render indicator rows after expanding the section')
+assert.doesNotMatch(
+  source,
+  /indicators:\s*\[\.\.\.selectedConstruct\.indicators/,
+  'properties panel should not add indicators directly',
+)
+const constructNameIndex = source.indexOf('/* Construct Name */')
+const constructColorIndex = source.indexOf('/* Construct Colour */')
+const exportIndex = source.indexOf('/* Export */')
+assert.ok(
+  constructColorIndex !== -1 && exportIndex !== -1 && constructColorIndex < exportIndex,
+  'Export Model should come after Construct Colour',
+)
+const primaryPropertiesUnit = source.slice(constructNameIndex, constructColorIndex)
+assert.doesNotMatch(primaryPropertiesUnit, /borderBottom/, 'construct name, shape, size, indicators, and measurement model should read as one unit without separators')
+assert.match(source, /bottom:\s*52/, 'canvas toolbar should move up 10px to align with the side panel baseline')
+assert.match(source, /height:\s*52,[\s\S]*padding:\s*'8px 8px'/, 'floating canvas tool menu should have more vertical padding')
+assert.doesNotMatch(source, /Zoom overlay/, 'canvas should not render a separate zoom overlay under the right panel')
+assert.doesNotMatch(source, />Save<\/span>/, 'canvas toolbar should not render a Save text action')
+assert.doesNotMatch(source, />Export<\/span>/, 'canvas toolbar should not render an Export text action')
+assert.doesNotMatch(source, /#0D99FF/, 'floating canvas controls should not use Figma blue as the active color')
+assert.doesNotMatch(source, /<PlusCircle size=\{18\}/, 'latent variable tool should use a plain circle icon')
+assert.doesNotMatch(source, /<TBtn onClick=\{undo\}/, 'floating canvas dock should not include undo')
+assert.doesNotMatch(source, /<TBtn onClick=\{redo\}/, 'floating canvas dock should not include redo')
+assert.doesNotMatch(source, /<TBtn onClick=\{pasteClipboard\}/, 'floating canvas dock should not include paste/shuffle')
+assert.match(source, /case 'l':\s*e\.preventDefault\(\);\s*setActiveTool\('construct'\)/, 'L should activate latent variable drawing')
+assert.match(source, /case 'c':\s*e\.preventDefault\(\);\s*setActiveTool\('connect'\)/, 'C should activate connect')
+assert.match(source, /case 'v':\s*e\.preventDefault\(\);\s*setActiveTool\('select'\)/, 'V should activate move/select')
+assert.match(source, /case 'b':\s*e\.preventDefault\(\);\s*if \(canCalculate && !isAnyCalculationRunning\) setShowBootstrapModal\(true\)/, 'Ctrl+B should open bootstrap only when no calculation is running')
+assert.match(source, /case 'p':\s*e\.preventDefault\(\);\s*if \(canCalculate && !isAnyCalculationRunning\) setShowPlsPredictModal\(true\)/, 'Ctrl+P should open PLSpredict only when no calculation is running')
+assert.match(source, /case 'enter':\s*e\.preventDefault\(\);\s*if \(canCalculate && !isAnyCalculationRunning\) void handleStartCalculation\(\)/, 'Ctrl+Enter should run PLS calculate only when no calculation is running')
+
+console.log('PASS model canvas floating UI contract')

@@ -1,0 +1,61 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const workspaceRoot = path.resolve(__dirname, '..')
+const modalSource = await fs.readFile(path.join(workspaceRoot, 'src/components/CalculatingModal.tsx'), 'utf8')
+const chipSource = await fs.readFile(path.join(workspaceRoot, 'src/components/CalculatingChip.tsx'), 'utf8')
+const dialogSource = await fs.readFile(path.join(workspaceRoot, 'src/components/CalcCancelDialog.tsx'), 'utf8')
+const appSource = await fs.readFile(path.join(workspaceRoot, 'src/App.tsx'), 'utf8')
+const contextSource = await fs.readFile(path.join(workspaceRoot, 'src/state/calculationContext.tsx'), 'utf8')
+const cssSource = await fs.readFile(path.join(workspaceRoot, 'src/index.css'), 'utf8')
+
+assert.match(modalSource, /useCalculation\(\)/, 'CalculatingModal should read active calculation state from the shared context.')
+assert.match(modalSource, /useCalculationDispatch\(\)/, 'CalculatingModal should dispatch Hide and Stop through the shared context.')
+assert.match(modalSource, /active\.view !== 'modal'/, 'CalculatingModal should only render while the active calculation is in modal view.')
+assert.match(modalSource, /currentPhase/, 'CalculatingModal should show the current backend phase.')
+assert.doesNotMatch(modalSource, /active\.phases\.map/, 'CalculatingModal should not render backend phases as a checklist.')
+assert.match(modalSource, /active\.progressPct/, 'CalculatingModal should render progress from context.')
+assert.match(modalSource, /dispatch\(\{ type: 'hide' \}\)/, 'Hide should collapse the modal to the chip.')
+assert.match(modalSource, /dispatch\(\{ type: 'requestStop' \}\)/, 'Stop confirmation should request cancellation.')
+assert.match(modalSource, /active\.status === 'stopping'/, 'Stopping state should be shown while the backend returns.')
+assert.match(modalSource, /active\.status === 'error'/, 'Error state should be visible and dismissible.')
+assert.match(modalSource, /CalcCancelDialog/, 'Stop should use the shared confirmation dialog.')
+assert.match(modalSource, /calculation-progress-fill/, 'Progress fill should use the animated calculation-progress-fill style.')
+assert.match(modalSource, /EyeSlash/, 'Hide should use a Phosphor icon.')
+assert.match(modalSource, /StopCircle/, 'Stop should use a Phosphor icon.')
+assert.match(modalSource, /aria-label="Hide calculation"/, 'Hide should have an accessible label.')
+assert.match(modalSource, /aria-label="Stop calculation"/, 'Stop should have an accessible label.')
+assert.match(modalSource, />\s*Hide\s*</, 'Hide action should include text beside the icon.')
+assert.match(modalSource, />\s*Stop\s*</, 'Stop action should include text beside the icon.')
+assert.doesNotMatch(modalSource, /LOGO_PATH|calculation-logo-snake|GearSix/, 'The old full-screen logo loader should not remain in the unified modal.')
+
+assert.match(chipSource, /state\.active\.view === 'chip'/, 'CalculatingChip should render the minimized running calculation.')
+assert.match(chipSource, /dispatch\(\{ type: 'expand' \}\)/, 'Chip expand should restore the modal.')
+assert.match(chipSource, /dispatch\(\{ type: 'dismissChip' \}\)/, 'Chip dismiss should silence UI without cancelling.')
+assert.match(chipSource, /lastTransientDone/, 'CalculatingChip should render a transient done state after background completion.')
+assert.match(chipSource, /useNavigate\(\)/, 'Done chip should navigate to the completed results.')
+assert.match(chipSource, /navigate\(done\.resultsRoute,\s*done\.navigationState/, 'Done chip should preserve saved analysis/model snapshot state when opening results.')
+assert.match(chipSource, /useLocation\(\)/, 'Done chip should inspect the current route before asking users to click to view.')
+assert.match(chipSource, /clearTransientDone/, 'Done chip should clear immediately when the app is already on the result route.')
+assert.match(chipSource, /var\(--color-calculation-accent\)/, 'Done feedback should use the theme-aware calculation accent, not a fixed green.')
+assert.match(chipSource, /a\.progressMode === 'indeterminate'/, 'Minimized indeterminate calculations should not show a fake percent.')
+
+assert.match(dialogSource, /intent: 'stop' \| 'quit'/, 'CalcCancelDialog should cover both Stop and quit-while-running confirmations.')
+assert.match(dialogSource, /Stop and discard/, 'Stop confirmation should be explicit about discarding work.')
+assert.match(dialogSource, /Quit anyway/, 'Quit confirmation should be explicit about quitting during a calculation.')
+
+assert.match(appSource, /<CalculationProvider>/, 'App should mount CalculationProvider at the root.')
+assert.match(appSource, /<CalculatingModal \/>/, 'App should mount exactly one global CalculatingModal.')
+assert.match(appSource, /<CalculatingChip \/>/, 'App should mount exactly one global CalculatingChip.')
+
+assert.match(contextSource, /'pls' \| 'bootstrap' \| 'plspredict' \| 'advanced'/, 'Calculation context should include PLSpredict as a modal-backed calculation type.')
+assert.match(contextSource, /'real' \| 'phase' \| 'indeterminate'/, 'Calculation context should support indeterminate progress for blocking backend analyses.')
+assert.match(cssSource, /--color-calculation-accent:\s*var\(--color-accent\)/, 'Dark theme calculation accent should use the primary accent.')
+assert.match(cssSource, /\[data-theme='light'\][\s\S]*--color-calculation-accent:\s*var\(--color-success\)/, 'Light theme calculation accent should use the secondary success color.')
+assert.match(cssSource, /@keyframes calculation-progress-sweep/, 'Progress bar should include a moving animation keyframe.')
+assert.match(cssSource, /calculation-progress-indeterminate/, 'Progress bar should include an indeterminate loading state for blocking analyses.')
+
+console.log('PASS calculating modal context contract')
