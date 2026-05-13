@@ -62,9 +62,10 @@ jobs:
         run: |
           conda create -y -p "$PWD/R-Bundled" -c conda-forge \
             r-base r-jsonlite r-matrix r-readxl r-remotes conda-pack \
-            c-compiler cxx-compiler fortran-compiler make pkg-config
+            c-compiler cxx-compiler fortran-compiler make pkg-config \
+            abseil-cpp udunits2
           conda activate "$PWD/R-Bundled"
-          Rscript -e 'install.packages(c("plumber", "seminr", "semPower"), repos = "https://cloud.r-project.org", dependencies = TRUE, Ncpus = 2)'
+          Rscript -e 'install.packages(c("plumber", "seminr", "semPower"), repos = "https://cloud.r-project.org", dependencies = c("Depends", "Imports", "LinkingTo"), Ncpus = 2)'
           "$PWD/R-Bundled/bin/Rscript" -e 'install.packages("remotes", repos = "https://cloud.r-project.org"); try(remotes::install_github("sem-in-r/seminrExtras"), silent = TRUE); if (!requireNamespace("seminrExtras", quietly = TRUE)) remotes::install_github("sem-in-r/seminr", subdir = "seminrExtras")'
           "$PWD/R-Bundled/bin/conda-pack" -p "$PWD/R-Bundled" -o "r-api/$R_ARCHIVE" --arcroot R-Bundled
 
@@ -133,9 +134,10 @@ jobs:
         run: |
           conda create -y -p "$PWD/R-Bundled" -c conda-forge \
             r-base r-jsonlite r-matrix r-readxl r-remotes conda-pack \
-            c-compiler cxx-compiler fortran-compiler make pkg-config
+            c-compiler cxx-compiler fortran-compiler make pkg-config \
+            abseil-cpp udunits2
           conda activate "$PWD/R-Bundled"
-          Rscript -e 'install.packages(c("plumber", "seminr", "semPower"), repos = "https://cloud.r-project.org", dependencies = TRUE, Ncpus = 2)'
+          Rscript -e 'install.packages(c("plumber", "seminr", "semPower"), repos = "https://cloud.r-project.org", dependencies = c("Depends", "Imports", "LinkingTo"), Ncpus = 2)'
           "$PWD/R-Bundled/bin/Rscript" -e 'install.packages("remotes", repos = "https://cloud.r-project.org"); try(remotes::install_github("sem-in-r/seminrExtras"), silent = TRUE); if (!requireNamespace("seminrExtras", quietly = TRUE)) remotes::install_github("sem-in-r/seminr", subdir = "seminrExtras")'
           "$PWD/R-Bundled/bin/conda-pack" -p "$PWD/R-Bundled" -o "r-api/$R_ARCHIVE" --arcroot R-Bundled
 
