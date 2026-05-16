@@ -99,6 +99,7 @@ const preferencesSource = await read('src/components/PreferencesModal.tsx')
 assert.match(preferencesSource, /APP_EDITION/, 'Preferences should receive the current Lite/Bundle edition.')
 assert.match(preferencesSource, /\['Edition',\s*APP_EDITION/, 'Preferences About should show whether the build is Lite or Bundle.')
 assert.match(preferencesSource, /\['Version',\s*APP_BASE_RELEASE_LABEL/, 'Preferences About should show the app version.')
+assert.doesNotMatch(preferencesSource, /Analysis Engine|R \(Plumber \+ seminr\)|SEMPower|\['Engine'/, 'Preferences should not expose an analysis-engine selector or About engine row.')
 
 const viteSource = await read('vite.config.ts')
 assert.match(viteSource, /__METIS_APP_EDITION__/, 'Vite should define the build edition for the renderer.')

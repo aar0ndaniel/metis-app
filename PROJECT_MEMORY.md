@@ -17,6 +17,7 @@ Project started by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 ### Completed Changes
 - `2026-05-16` — Package and visible version labels were moved to `0.0.1`.
 - `2026-05-16` — Preferences now stores app font size under `metis:prefs:fontScale` with `Small`, `Default`, `Large`, and `Extra Large` options.
+- `2026-05-16` — Preferences no longer exposes an analysis-engine selector because the app's analysis path is fixed on the local R/Plumber `seminr` workflow; `semPower` remains a supporting package for post hoc calculations rather than a selectable engine.
 - `2026-05-16` — Font scale ratios are `0.94`, `1.00`, `1.08`, and `1.16`; the app shell is the single visible scaler so inline pixel-sized UI changes visibly after restart without compounding inherited body text.
 - `2026-05-16` — The title bar brand area now shows only the metis icon and `metis`; build edition and version details live in Preferences About.
 - `2026-05-16` — The old beta release-channel define was removed so Lite/Bundle labels come only from the edition and package version.
@@ -138,7 +139,6 @@ Project started by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 - Current preference-backed behaviors include:
   - dark/light theme selection,
   - language placeholder locked to English,
-  - analysis engine selection display,
   - autosave toggle and interval preference,
   - default bootstrap subsamples,
   - decimal-place formatting for results and diagrams.

@@ -278,7 +278,6 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   // General
   const [language, setLanguage]           = useState(getSavedSetting('language', 'English'))
   const [startupAction, setStartupAction] = useState(getSavedSetting('startupAction', 'Open last workspace'))
-  const [engine, setEngine]               = useState(getSavedSetting('engine', 'R (Plumber + seminr)'))
   const [realtimeCalc, setRealtimeCalc]   = useState(getSavedSetting('realtimeCalc', true))
 
   const [theme, setTheme] = useState<'Dark' | 'Light'>(() => getSavedThemeSetting())
@@ -304,7 +303,6 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const handleSave = () => {
     localStorage.setItem('pls:prefs:language', language)
     localStorage.setItem('pls:prefs:startupAction', startupAction)
-    localStorage.setItem('pls:prefs:engine', engine)
     localStorage.setItem('pls:prefs:realtimeCalc', String(realtimeCalc))
     localStorage.setItem('metis:prefs:theme', theme)
     localStorage.setItem('pls:prefs:theme', theme)
@@ -329,7 +327,6 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const handleReset = () => {
     setLanguage('English')
     setStartupAction('Open last workspace')
-    setEngine('R (Plumber + seminr)')
     setRealtimeCalc(true)
     setTheme('Dark')
     setFontScale('Default')
@@ -453,15 +450,6 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                   </SettingRowSimple>
                   <Divider />
                   <div style={{ background: UI.elevated, borderRadius: 14, padding: '14px 16px', margin: '10px 0', display: 'flex', flexDirection: 'column', gap: 16 }}>
-                    <SettingRowSimple label="Analysis Engine">
-                      <SelectBox
-                        value={engine}
-                        options={['R (Plumber + seminr)', 'SEMPower']}
-                        onChange={setEngine}
-                        width={220}
-                      />
-                    </SettingRowSimple>
-                    <Divider />
                     <SettingRowTall
                       label="Real-time Calculations"
                       desc="Automatically run PLS estimates as you draw the model. Shows factor loadings on indicator arrows and R² inside construct circles."
@@ -738,7 +726,6 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                         ['Build',    'desktop-dev',         false],
                         ['Licence',  'GNU GPL v3',           false],
                         ['Built by', `${APP_BRAND_NAME} team`, false],
-                        ['Engine',   engine,                 false],
                         ['UI',      'Electron + React + TypeScript', false],
                       ] as [string, string, boolean][]).map(([k, v, highlight]) => (
                         <div key={k} className="flex items-center justify-between">
