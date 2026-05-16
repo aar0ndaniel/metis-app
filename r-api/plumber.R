@@ -160,8 +160,13 @@ analysis_core_plan <- function() {
   requested <- max_analysis_cores
   policy <- "env-fixed"
   if (is.na(requested) || requested == 0L) {
-    # Default: -2 for >9 cores (reserve 2), -1 for <=9 cores (reserve 1)
-    reserve <- if (detected > 9L) 2L else 1L
+    reserve <- if (detected <= 4L) {
+      1L
+    } else if (detected <= 16L) {
+      2L
+    } else {
+      4L
+    }
     requested <- detected - reserve
     policy <- "dynamic-reserve"
   } else if (requested < 0L) {
