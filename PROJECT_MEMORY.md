@@ -2,7 +2,7 @@
 
 This document serves as a living record of recent queries, changes, logs, and the thinking process to maintain project context.
 
-Project started by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
+Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
 ## 2026-05-16 — Version, font scale, zoom, and panel polish
 
