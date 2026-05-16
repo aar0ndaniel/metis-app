@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import logoBlack from '../assets/logo-black.svg'
 import logoWhite from '../assets/logo-white.svg'
-import { APP_BRAND_NAME, getEditionReleaseLabel } from '../config/appBranding'
+import { APP_BRAND_NAME } from '../config/appBranding'
 
 const INSTALL_STEPS = [
   { label: 'Preparing files', detail: 'Preparing files', stopAt: 12 },
@@ -22,7 +22,6 @@ const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const FF = 'Matter, sans-serif'
 const DEFAULT_ROOT_PATH = ''
-const RELEASE_LABEL = getEditionReleaseLabel('Bundle')
 const ACCENT_HEX = 'var(--color-accent)'
 const ACCENT_RGB = 'var(--color-accent-rgb)'
 const TEXT_PRIMARY = 'var(--color-text-primary)'

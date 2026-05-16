@@ -13,7 +13,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import logoBlack from '../assets/logo-black.svg'
 import logoWhite from '../assets/logo-white.svg'
-import { APP_BRAND_NAME, getEditionReleaseLabel } from '../config/appBranding'
+import { APP_BRAND_NAME } from '../config/appBranding'
 
 type Phase = 'options' | 'installing' | 'complete'
 type SetupTheme = 'Dark' | 'Light'
@@ -86,7 +86,6 @@ const STAGE_LABELS: Record<InstallStage, { label: string; detail: string }> = {
 
 const DEFAULT_ROOT_PATH = ''
 const FF = 'Matter, sans-serif'
-const RELEASE_LABEL = getEditionReleaseLabel('Lite')
 const ACCENT_HEX = 'var(--color-accent)'
 const ACCENT_RGB = 'var(--color-accent-rgb)'
 const TEXT_PRIMARY = 'var(--color-text-primary)'

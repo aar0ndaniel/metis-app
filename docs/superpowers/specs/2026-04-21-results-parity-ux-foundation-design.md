@@ -48,7 +48,7 @@ No hidden-but-computed sections should remain.
 
 ### 5. Preserve metis visual language
 
-This work keeps the established metis shell, color system, spacing rhythm, and dark-surface aesthetic. New panel patterns, drawers, and section treatments should use the current palette and semantic tokens from `COLORS.md` rather than introducing a parallel style system.
+This work keeps the established metis shell, color system, spacing rhythm, and dark-surface aesthetic. New panel patterns, drawers, and section treatments should use the current palette variables and semantic tokens rather than introducing a parallel style system.
 
 ## Results Information Architecture
 

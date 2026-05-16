@@ -20,8 +20,9 @@ const tarkIcon = await read('src/components/TarkIcon.tsx')
 const tarkPreview = await read('src/pages/TarkPreview.tsx')
 const tarkReportTables = await read('src/utils/tarkReportTables.ts')
 
-assert.match(tarkIcon, /tark icon\.png/, 'TarkIcon should use the provided PNG asset.')
-assert.match(titleBar, /import TarkIcon from '\.\/TarkIcon'/, 'TitleBar should use the Tark PNG icon.')
+assert.doesNotMatch(tarkIcon, /tark icon\.png/, 'TarkIcon should not depend on the removed PNG asset.')
+assert.match(tarkIcon, />\s*T\s*<\/span>/, 'TarkIcon should render the inline Tark mark.')
+assert.match(titleBar, /FileText[\s\S]*id="tour-tark"/, 'TitleBar should use the built-in report icon for Tark.')
 assert.doesNotMatch(titleBar, /\bSparkle\b/, 'TitleBar should not use the old sparkle icon for Tark.')
 assert.match(titleBar, /id="tour-tark"/, 'TitleBar should expose Tark as the tour target.')
 assert.match(titleBar, /action: 'open-tark'/, 'TitleBar Tark button should dispatch the global open-tark action.')
@@ -30,7 +31,7 @@ const tarkButtonSource = titleBar.slice(titleBar.indexOf('id="tour-tark"'), titl
 assert.match(tarkButtonSource, /border:\s*'none'/, 'TitleBar Tark button should not have a visible border.')
 assert.match(tarkButtonSource, /background:\s*'transparent'/, 'TitleBar Tark button should not use a tinted background.')
 assert.match(tarkButtonSource, /fontFamily:\s*'Matter, "DM Sans", sans-serif'/, 'TitleBar Tark text should use the lighter Matter treatment.')
-assert.match(tarkButtonSource, /fontWeight:\s*300/, 'TitleBar Tark text should not be bold.')
+assert.match(tarkButtonSource, /fontWeight:\s*600/, 'TitleBar Tark text should use the current compact titlebar weight.')
 assert.match(tarkButtonSource, />Tark it<\/span>/, 'TitleBar Tark should use a simple static Tark it label.')
 assert.doesNotMatch(titleBar, /id="tour-preferences"/, 'Preferences should not keep the titlebar tour/icon slot.')
 assert.doesNotMatch(titleBar, /<Gear[\s\S]*title="Preferences"/, 'Preferences gear should not remain as a visible titlebar button.')
@@ -49,7 +50,7 @@ assert.match(app, /onTarkIt=\{handleTarkIt\}/, 'Tark modal should wire its prima
 assert.doesNotMatch(app.slice(app.indexOf('{tarkOpen &&'), app.indexOf('{quitConfirmOpen &&')), /onOpenModel/, 'Tark modal should not expose a duplicate Open model action.')
 
 assert.match(tarkModal, /function SelectBox/, 'Tark modal should use the same custom dropdown feel as PLS-style modals.')
-assert.match(tarkModal, /import TarkIcon from '\.\/TarkIcon'/, 'Tark modal should use the Tark PNG icon.')
+assert.match(tarkModal, /FileText/, 'Tark modal should use the built-in report icon.')
 assert.doesNotMatch(tarkModal, /\bSparkle\b/, 'Tark modal should not use the old sparkle icon.')
 assert.match(tarkModal, /border: '1px solid var\(--color-border\)'/, 'Tark fields should use the shared bordered field style.')
 assert.match(tarkModal, /type="radio"/, 'Tark modal should include PLS-style radio controls.')
@@ -100,7 +101,7 @@ assert.doesNotMatch(resultsView, /Show chart|Hide chart|buildChartSvgForPanel|sh
 assert.doesNotMatch(preferences, /Include charts in report/, 'Preferences should not expose chart export settings for launch.')
 
 assert.match(onboardingTour, /selector: '#tour-tark'/, 'Onboarding tour should introduce Tark instead of Preferences.')
-assert.match(onboardingTour, /<TarkIcon size=\{30\}/, 'Onboarding tour should use the Tark PNG icon for Tark.')
+assert.match(onboardingTour, /<FileText size=\{30\} color=\{TOUR_ACCENT\} weight="fill" \/>/, 'Onboarding tour should use the built-in report icon for Tark.')
 assert.doesNotMatch(onboardingTour, /selector: '#tour-preferences'|App Preferences/, 'Onboarding tour should not point users at the old Preferences titlebar icon.')
 
 assert.doesNotMatch(tarkPreview, /function PreviewPill|<PreviewPill|Report setup|Construct labels/, 'Tark preview should not show setup or construct-label summary cards.')

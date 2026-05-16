@@ -1,5 +1,4 @@
 import type { CSSProperties } from 'react'
-import tarkIconUrl from '../../tark icon.png'
 
 interface TarkIconProps {
   size?: number
@@ -10,19 +9,28 @@ interface TarkIconProps {
 
 export default function TarkIcon({ size = 18, alt = '', className, style }: TarkIconProps) {
   return (
-    <img
-      src={tarkIconUrl}
-      alt={alt}
+    <span
+      aria-label={alt || undefined}
+      aria-hidden={alt ? undefined : true}
       className={className}
-      draggable={false}
       style={{
         width: size,
         height: size,
-        display: 'block',
-        objectFit: 'contain',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         flexShrink: 0,
+        borderRadius: Math.max(5, Math.round(size * 0.28)),
+        background: 'rgb(var(--color-accent-rgb) / 0.12)',
+        color: 'var(--color-accent)',
+        fontFamily: 'Matter, "DM Sans", sans-serif',
+        fontSize: Math.max(10, Math.round(size * 0.56)),
+        fontWeight: 700,
+        lineHeight: 1,
         ...style,
       }}
-    />
+    >
+      T
+    </span>
   )
 }

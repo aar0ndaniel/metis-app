@@ -39,7 +39,7 @@ extraResources:
 win:
   target: nsis
   icon: build/icon.ico
-  artifactName: metis ${version} Bundle Beta.${ext}
+  artifactName: metis ${version} Bundle.${ext}
 
 mac:
   target:
@@ -47,7 +47,7 @@ mac:
     - zip
   category: public.app-category.education
   icon: build/icon.icns
-  artifactName: metis ${version} Bundle Beta macOS.${ext}
+  artifactName: metis ${version} Bundle macOS.${ext}
 
 linux:
   target:
@@ -55,7 +55,7 @@ linux:
     - deb
   category: Education
   icon: build/icon.png
-  artifactName: metis ${version} Bundle Beta Linux.${ext}
+  artifactName: metis ${version} Bundle Linux.${ext}
 
 nsis:
   oneClick: true

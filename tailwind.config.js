@@ -4,7 +4,7 @@ export default {
   theme: {
     extend: {
       colors: {
-        // metis Design System — matches COLORS.md
+        // metis design system
         page:             'rgb(var(--color-page-rgb) / <alpha-value>)',
         surface:          'rgb(var(--color-surface-rgb) / <alpha-value>)',
         elevated:         'rgb(var(--color-elevated-rgb) / <alpha-value>)',
