@@ -787,9 +787,11 @@ export default function ModelCanvas({
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [isModalShaking, setIsModalShaking] = useState(false)
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false)
   const [propertiesIndicatorsExpanded, setPropertiesIndicatorsExpanded] = useState(false)
   const [showLeftSidebar, setShowLeftSidebar] = useState(true)
   const [showRightSidebar, setShowRightSidebar] = useState(true)
+  const [showZoomControl, setShowZoomControl] = useState(true)
   const [leftSidebarWidth, setLeftSidebarWidth] = useState(250)
   const isResizingLeft = useRef(false)
 
@@ -2376,6 +2378,7 @@ export default function ModelCanvas({
       const action = e.detail?.action
       if (action === 'view:toggle-vars') setShowLeftSidebar(v => !v)
       if (action === 'view:toggle-props') setShowRightSidebar(v => !v)
+      if (action === 'view:toggle-zoom-control') setShowZoomControl(v => !v)
       
       switch (action) {
         case 'edit:undo': undo(); break; case 'edit:redo': redo(); break
@@ -3383,7 +3386,96 @@ export default function ModelCanvas({
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative', backgroundColor: C.page }}>
 
         {/* ── Left Panel — Variables ──────────────────────────────────────────── */}
-        {showLeftSidebar && (
+        {showLeftSidebar && (leftPanelCollapsed ? (
+          <div
+            id="collapsed-dataset-card"
+            tabIndex={0}
+            aria-label="Expand indicator panel"
+            onClick={() => setLeftPanelCollapsed(false)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                setLeftPanelCollapsed(false)
+              }
+            }}
+            style={{
+              width: Math.min(Math.max(leftSidebarWidth, 280), 360),
+              position: 'absolute',
+              left: 16,
+              top: floatingPanelTop,
+              zIndex: 36,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              minHeight: 72,
+              padding: '10px 12px',
+              backgroundColor: C.panel,
+              border: `1px solid ${C.floatingBorder}`,
+              borderRadius: 12,
+              boxShadow: C.floatingPanelShadow,
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            {linkedDataset ? (
+              <>
+                <Database size={20} color={C.secondary} weight="fill" style={{ flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <span style={{ fontSize: 12, color: C.text, fontFamily: 'DM Sans, sans-serif', fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {linkedDataset.name}
+                  </span>
+                  <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>
+                    Click to show indicators
+                  </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  <button
+                    onClick={async (event) => {
+                      event.stopPropagation()
+                      await persistCanvasSnapshot(constructs, paths)
+                      navigate(`/dataview/${activeWs?.id}/${linkedDataset.id}`, {
+                        state: {
+                          source: 'model-canvas' as const,
+                          modelId: modelId || '',
+                          returnTo: `/canvas/${modelId}`,
+                        },
+                      })
+                    }}
+                    title="Open dataset"
+                    aria-label="Open dataset"
+                    style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textSec, background: C.floatingIconBg, border: `1px solid ${C.borderFaint}`, borderRadius: 8, cursor: 'pointer', padding: 0 }}
+                  >
+                    <CornersOut size={14} weight="bold" />
+                  </button>
+                  <button
+                    onClick={async (event) => {
+                      event.stopPropagation()
+                      await persistCanvasSnapshot(constructs, paths)
+                      setShowDatasetManager(true)
+                    }}
+                    title="Change dataset"
+                    aria-label="Change dataset"
+                    style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: C.textMuted, background: C.floatingIconBg, border: `1px solid ${C.borderFaint}`, borderRadius: 8, cursor: 'pointer', padding: 0 }}
+                  >
+                    <Shuffle size={14} weight="bold" />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <WarningCircle size={20} color={C.textMuted} style={{ flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  <span style={{ fontSize: 12, color: C.text, fontFamily: 'DM Sans, sans-serif', fontWeight: 700 }}>
+                    No dataset linked
+                  </span>
+                  <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>
+                    Click to add or choose a dataset
+                  </span>
+                </div>
+              </>
+            )}
+          </div>
+        ) : (
           <div style={{
             width: leftSidebarWidth,
             position: 'absolute',
@@ -3411,13 +3503,19 @@ export default function ModelCanvas({
 
           {/* Dataset header — Conditional rendering based on dataset presence */}
           {!linkedDataset ? (
-            <div style={{ padding: '10px 12px', margin: '16px 8px 8px', borderRadius: 8, backgroundColor: C.chrome, border: '1px dashed rgb(var(--color-accent-rgb) / 0.36)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div
+              onClick={() => setLeftPanelCollapsed(true)}
+              style={{ padding: '10px 12px', margin: '16px 8px 8px', borderRadius: 8, backgroundColor: C.chrome, border: '1px dashed rgb(var(--color-accent-rgb) / 0.36)', display: 'flex', flexDirection: 'column', gap: 10, cursor: 'pointer' }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <WarningCircle size={18} color={C.textMuted} />
                 <span style={{ fontSize: 11, color: C.textSec, fontFamily: 'DM Sans, sans-serif' }}>No dataset linked</span>
               </div>
               <button
-                onClick={() => window.dispatchEvent(new CustomEvent('pls:use-sample-dataset'))}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  window.dispatchEvent(new CustomEvent('pls:use-sample-dataset'))
+                }}
                 style={{
                   width: '100%',
                   padding: '6px',
@@ -3440,7 +3538,8 @@ export default function ModelCanvas({
                 USE SAMPLE DATASET
               </button>
               <button 
-                onClick={async () => {
+                onClick={async (event) => {
+                  event.stopPropagation()
                   await persistCanvasSnapshot(constructs, paths)
                   window.dispatchEvent(new CustomEvent('pls:open-import-picker', {
                     detail: {
@@ -3474,7 +3573,8 @@ export default function ModelCanvas({
           ) : (
             <>
               <div
-                style={{ margin: '16px 8px 8px', padding: '10px 12px', borderRadius: 8, backgroundColor: C.chrome, border: '1px solid rgb(var(--color-accent-rgb) / 0.34)', position: 'relative' }}
+                onClick={() => setLeftPanelCollapsed(true)}
+                style={{ margin: '16px 8px 8px', padding: '10px 12px', borderRadius: 8, backgroundColor: C.chrome, border: '1px solid rgb(var(--color-accent-rgb) / 0.34)', position: 'relative', cursor: 'pointer' }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <Database size={18} color={C.secondary} weight="fill" />
@@ -3489,7 +3589,8 @@ export default function ModelCanvas({
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <button
-                    onClick={async () => {
+                    onClick={async (event) => {
+                      event.stopPropagation()
                       await persistCanvasSnapshot(constructs, paths)
                       navigate(`/dataview/${activeWs?.id}/${linkedDataset.id}`, {
                         state: {
@@ -3507,7 +3608,8 @@ export default function ModelCanvas({
                   </button>
                   <button 
                     id="tour-change-dataset"
-                    onClick={async () => {
+                    onClick={async (event) => {
+                      event.stopPropagation()
                       await persistCanvasSnapshot(constructs, paths)
                       setShowDatasetManager(true)
                     }}
@@ -3614,7 +3716,7 @@ export default function ModelCanvas({
             })}
           </div>
         </div>
-      )}
+        ))}
 
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
 
@@ -3637,6 +3739,37 @@ export default function ModelCanvas({
                 opacity: 0.4
               }} 
             />
+          )}
+
+          {showZoomControl && (
+            <div
+              id="canvas-zoom-control"
+              style={{
+                position: 'absolute',
+                bottom: floatingPanelBottom + 16,
+                right: showRightSidebar ? (rightPanelCollapsed ? 84 : 300) : 20,
+                zIndex: 42,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                height: 36,
+                padding: '4px 6px',
+                borderRadius: 10,
+                backgroundColor: C.panel,
+                border: `1px solid ${C.floatingBorder}`,
+                boxShadow: C.floatingMenuShadow,
+              }}
+            >
+              <SmallBtn onClick={() => setZoom(z => Math.max(30, z - 10))}>
+                <MinusCircle size={16} color={C.textMuted} />
+              </SmallBtn>
+              <div style={{ width: 58, height: 28, borderRadius: 7, backgroundColor: C.panelControl, border: `1px solid ${C.borderFaint}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec, fontFamily: 'DM Sans, sans-serif' }}>{Math.round(zoom)}%</span>
+              </div>
+              <SmallBtn onClick={() => setZoom(z => Math.min(200, z + 10))}>
+                <PlusCircleAlt size={16} color={C.textMuted} />
+              </SmallBtn>
+            </div>
           )}
 
           {/* SVG canvas */}
@@ -4572,21 +4705,6 @@ export default function ModelCanvas({
                   <input ref={textColorRef} type="color" value={selectedConstruct?.labelColor} onChange={e => updateSelected({ labelColor: e.target.value })} style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }} />
                 </div>
               </SectionRow>
-
-
-              {/* Zoom */}
-              <div style={{ position: 'relative', height: 69 }}>
-                <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 1, backgroundColor: 'var(--color-border)' }} />
-                <span style={{ position: 'absolute', top: 6, left: 12, fontSize: 10, fontFamily: 'Inter, sans-serif', fontWeight: 600, color: 'var(--color-text-dim)', letterSpacing: 1.5 }}>ZOOM</span>
-                <div style={{ position: 'absolute', top: 28, left: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <SmallBtn onClick={() => setZoom(z => Math.max(30, z - 10))}><MinusCircle size={16} color={C.textMuted} /></SmallBtn>
-                  <div style={{ width: 60, height: 28, borderRadius: 6, backgroundColor: C.panelControl, border: `1px solid ${C.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: C.textSec, fontFamily: 'Inter, sans-serif' }}>{Math.round(zoom)}%</span>
-                  </div>
-                  <SmallBtn onClick={() => setZoom(z => Math.min(200, z + 10))}><PlusCircleAlt size={16} color={C.textMuted} /></SmallBtn>
-                  <SmallBtn onClick={fitCanvasToScreen} style={{ backgroundColor: C.panelControlActive }}><FrameCorners size={16} color={C.primary} /></SmallBtn>
-                </div>
-              </div>
 
               {/* Grid & Snap */}
               <div style={{ position: 'relative', height: 71 }}>

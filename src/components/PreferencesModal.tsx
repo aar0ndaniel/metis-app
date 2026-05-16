@@ -26,8 +26,11 @@ interface Props {
 
 const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
+const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
 const METIS_UPDATES_URL = 'https://metis.emend.it.com/updates.html'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
+const FONT_SIZE_OPTIONS = ['Small', 'Default', 'Large', 'Extra Large'] as const
+type FontSizeOption = typeof FONT_SIZE_OPTIONS[number]
 
 function getSavedSetting<T>(key: string, defaultVal: T): T {
   try {
@@ -47,6 +50,15 @@ function getSavedThemeSetting(): 'Dark' | 'Light' {
     return raw === 'Light' ? 'Light' : 'Dark'
   } catch {
     return 'Dark'
+  }
+}
+
+function getSavedFontScaleSetting(): FontSizeOption {
+  try {
+    const raw = localStorage.getItem(METIS_PREF_FONT_SCALE_KEY)
+    return FONT_SIZE_OPTIONS.includes(raw as FontSizeOption) ? raw as FontSizeOption : 'Default'
+  } catch {
+    return 'Default'
   }
 }
 
@@ -110,10 +122,11 @@ function Divider() {
   return <div style={{ height: 10 }} />
 }
 
-function SelectBox({ value, options, onChange, width = 200 }: {
-  value: string; options: string[]; onChange: (v: string) => void; width?: number
+function SelectBox({ value, options, onChange, width = 200, direction = 'down' }: {
+  value: string; options: string[]; onChange: (v: string) => void; width?: number; direction?: 'up' | 'down'
 }) {
   const [open, setOpen] = useState(false)
+  const opensUpward = direction === 'up'
   return (
     <div style={{ position: 'relative', flexShrink: 0 }}>
       <button
@@ -122,10 +135,22 @@ function SelectBox({ value, options, onChange, width = 200 }: {
         style={{ width, height: 32, background: UI.input, border: `1px solid ${UI.border}`, borderRadius: 12, padding: '0 12px', gap: 6, cursor: 'pointer' }}
       >
         <span style={{ color: UI.text, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600 }}>{value}</span>
-        <CaretDown size={12} color="var(--color-text-muted)" />
+        <CaretDown size={12} color="var(--color-text-muted)" style={{ transform: opensUpward ? 'rotate(180deg)' : undefined }} />
       </button>
       {open && (
-        <div className="absolute z-20 flex flex-col" style={{ top: '100%', right: 0, marginTop: 4, background: UI.menuBg, border: `1px solid ${UI.border}`, borderRadius: 14, boxShadow: '0 8px 24px rgba(0,0,0,0.18)', minWidth: width, overflow: 'hidden' }}>
+        <div
+          className="absolute z-20 flex flex-col"
+          style={{
+            ...(opensUpward ? { bottom: '100%', marginBottom: 4 } : { top: '100%', marginTop: 4 }),
+            right: 0,
+            background: UI.menuBg,
+            border: `1px solid ${UI.border}`,
+            borderRadius: 14,
+            boxShadow: 'var(--shadow-floating-dropdown)',
+            minWidth: width,
+            overflow: 'hidden',
+          }}
+        >
           {options.map(opt => (
             <button
               key={opt}
@@ -215,7 +240,7 @@ function MonitorPreview({ dark }: { dark: boolean }) {
               </div>
               <div style={{ display: 'flex', gap: 3 }}>
                 <div style={{ height: 10, padding: '0 4px', borderRadius: 3, background: dark ? 'var(--color-accent)' : '#87976B', display: 'flex', alignItems: 'center' }}>
-                  <span style={{ color: '#0F0F13', fontFamily: 'DM Sans, sans-serif', fontSize: 4.5, fontWeight: 700 }}>Public Beta v1</span>
+                  <span style={{ color: '#0F0F13', fontFamily: 'DM Sans, sans-serif', fontSize: 4.5, fontWeight: 700 }}>{APP_BASE_RELEASE_LABEL}</span>
                 </div>
                 <div style={{ height: 10, padding: '0 4px', borderRadius: 3, background: dark ? 'var(--color-border)' : '#E5E7EB', display: 'flex', alignItems: 'center' }}>
                   <span style={{ color: dark ? 'var(--color-text-secondary)' : 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 4.5 }}>Info</span>
@@ -257,6 +282,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const [realtimeCalc, setRealtimeCalc]   = useState(getSavedSetting('realtimeCalc', true))
 
   const [theme, setTheme] = useState<'Dark' | 'Light'>(() => getSavedThemeSetting())
+  const [fontScale, setFontScale] = useState<FontSizeOption>(() => getSavedFontScaleSetting())
 
   // Autosave
   const [autosaveOn, setAutosaveOn]             = useState(getSavedSetting('autosaveOn', true))
@@ -282,6 +308,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     localStorage.setItem('pls:prefs:realtimeCalc', String(realtimeCalc))
     localStorage.setItem('metis:prefs:theme', theme)
     localStorage.setItem('pls:prefs:theme', theme)
+    localStorage.setItem(METIS_PREF_FONT_SCALE_KEY, fontScale)
     void (window as any).electronAPI?.setThemePreference?.(theme.toLowerCase())
     localStorage.setItem('pls:prefs:autosaveOn', String(autosaveOn))
     localStorage.setItem('pls:prefs:autosaveInterval', autosaveInterval)
@@ -305,6 +332,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     setEngine('R (Plumber + seminr)')
     setRealtimeCalc(true)
     setTheme('Dark')
+    setFontScale('Default')
     setAutosaveOn(true)
     setAutosaveInterval('Every 1 minute')
     setWarnUnsaved(true)
@@ -454,7 +482,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                     <Palette size={18} color="var(--color-accent)" weight="fill" style={{ marginTop: 2 }} />
                     <div className="flex flex-col" style={{ gap: 2 }}>
                       <span style={{ color: UI.text, fontFamily: 'DM Sans, sans-serif', fontSize: 14, fontWeight: 700 }}>Appearance</span>
-                      <span style={{ color: UI.textSecondary, fontFamily: 'DM Sans, sans-serif', fontSize: 12 }}>Choose a theme for {APP_BRAND_NAME}.</span>
+                      <span style={{ color: UI.textSecondary, fontFamily: 'DM Sans, sans-serif', fontSize: 12 }}>Choose a theme and text size for {APP_BRAND_NAME}.</span>
                     </div>
                   </div>
                 </div>
@@ -522,6 +550,13 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                       </span>
                     </div>
                   </button>
+                </div>
+                <div style={{ padding: '0 24px 22px', background: UI.surface, borderBottomLeftRadius: 16, borderBottomRightRadius: 16 }}>
+                  <div style={{ borderTop: `1px solid ${UI.border}`, paddingTop: 16 }}>
+                    <SettingRowTall label="App font size" desc="Restart metis to apply font size changes.">
+                      <SelectBox value={fontScale} options={[...FONT_SIZE_OPTIONS]} onChange={(value) => setFontScale(value as FontSizeOption)} direction="up" />
+                    </SettingRowTall>
+                  </div>
                 </div>
               </Card>
             )}

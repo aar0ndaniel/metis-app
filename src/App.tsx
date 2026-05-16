@@ -61,6 +61,7 @@ interface DatasetImportState {
 const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
+const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
 const METIS_TOUR_COMPLETED_KEY = 'metis:tour-completed'
 const LEGACY_TOUR_COMPLETED_KEY = 'pls:tour-completed'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
@@ -73,6 +74,14 @@ function getSavedTheme(): AppTheme {
 function getInstallerPreviewTheme(): AppTheme {
   const raw = localStorage.getItem(INSTALLER_PREF_THEME_KEY)
   return raw === 'Dark' ? 'Dark' : 'Light'
+}
+
+function readStartupFontScale(): string {
+  const raw = localStorage.getItem(METIS_PREF_FONT_SCALE_KEY)
+  if (raw === 'Small') return 'small'
+  if (raw === 'Large') return 'large'
+  if (raw === 'Extra Large') return 'extra-large'
+  return 'default'
 }
 
 function openMetisExternal(url: string) {
@@ -288,6 +297,10 @@ function AppShell() {
     }
     loadWorkspaces()
   }, [isInstallerPreview])
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-font-scale', readStartupFontScale())
+  }, [])
 
   useEffect(() => {
     if (isInstallerPreview) return

@@ -88,7 +88,7 @@ function buildTourData(displayName = '', workspacePath = ''): Record<'home' | 'c
     { title: 'Indicators Panel', content: 'Manage the measurement items linked to your latent variables.', icon: icon(CirclesThreePlus), selector: '#tour-indicators-panel' },
     { title: 'Measurement Model', content: 'Switch between Reflective and Formative measurement modes.', icon: icon(Layout), selector: '#tour-measurement-model' },
     { title: 'Construct Color', content: 'Categorize your model visually with secondary colors.', icon: icon(PaintBucket), selector: '#tour-construct-color' },
-    { title: 'Tools & Workspace', content: 'Access canvas settings like background color, zoom, and grid options.', icon: icon(Toolbox), selector: '#tour-tools-tab' },
+    { title: 'Tools & Workspace', content: 'Access canvas settings like background color and grid options.', icon: icon(Toolbox), selector: '#tour-tools-tab' },
     { title: 'Search Variables', content: 'Quickly find indicators in your dataset to drag onto the canvas.', icon: icon(MagnifyingGlass), selector: '#tour-search-variables' },
     { title: 'Change Dataset', content: 'Update the active dataset for this model if your data has been refined.', icon: icon(ArrowsClockwise), selector: '#tour-change-dataset' },
     feedbackStep,

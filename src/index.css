@@ -13,6 +13,7 @@
 :root,
 [data-theme='dark'] {
   color-scheme: dark;
+  --app-font-scale: 1;
   --color-accent: #C6A24B;
   --color-accent-rgb: 198 162 75;
   --color-page: #181818;
@@ -95,11 +96,11 @@
   --color-toggle-track-bg: rgb(var(--color-text-primary-rgb) / 0.06);
   --color-badge-calc-text: #F3F3F5;
   --color-badge-draft-text: #E8D8C1;
-  --shadow-floating-panel: 0 18px 44px rgba(0, 0, 0, 0.42), inset 0 1px 0 var(--color-floating-highlight-soft);
-  --shadow-floating-menu: 0 14px 32px rgba(0, 0, 0, 0.48), inset 0 1px 0 var(--color-floating-highlight);
+  --shadow-floating-panel: 0 10px 24px rgba(0, 0, 0, 0.28), inset 0 1px 0 var(--color-floating-highlight-soft);
+  --shadow-floating-menu: 0 8px 18px rgba(0, 0, 0, 0.26), inset 0 1px 0 var(--color-floating-highlight);
   --shadow-panel-pop: 0 10px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 var(--color-floating-highlight);
-  --shadow-floating-dropdown: 0 18px 34px rgba(0, 0, 0, 0.55);
-  --shadow-floating-tooltip: 0 12px 28px rgba(0, 0, 0, 0.42);
+  --shadow-floating-dropdown: 0 12px 22px rgba(0, 0, 0, 0.34);
+  --shadow-floating-tooltip: 0 8px 18px rgba(0, 0, 0, 0.26);
 }
 
 [data-theme='light'] {
@@ -186,11 +187,27 @@
   --color-toggle-track-bg: #E4E4E4;
   --color-badge-calc-text: #1A2A18;
   --color-badge-draft-text: #3A2A14;
-  --shadow-floating-panel: 0 18px 44px rgba(15, 18, 25, 0.12), inset 0 1px 0 var(--color-floating-highlight);
-  --shadow-floating-menu: 0 14px 32px rgba(15, 18, 25, 0.14), inset 0 1px 0 var(--color-floating-highlight);
+  --shadow-floating-panel: 0 10px 24px rgba(15, 18, 25, 0.08), inset 0 1px 0 var(--color-floating-highlight);
+  --shadow-floating-menu: 0 8px 18px rgba(15, 18, 25, 0.10), inset 0 1px 0 var(--color-floating-highlight);
   --shadow-panel-pop: 0 10px 24px rgba(15, 18, 25, 0.10), inset 0 1px 0 var(--color-floating-highlight);
-  --shadow-floating-dropdown: 0 18px 34px rgba(15, 18, 25, 0.16);
-  --shadow-floating-tooltip: 0 12px 28px rgba(15, 18, 25, 0.14);
+  --shadow-floating-dropdown: 0 12px 22px rgba(15, 18, 25, 0.12);
+  --shadow-floating-tooltip: 0 8px 18px rgba(15, 18, 25, 0.10);
+}
+
+[data-font-scale='small'] {
+  --app-font-scale: 0.94;
+}
+
+[data-font-scale='default'] {
+  --app-font-scale: 1;
+}
+
+[data-font-scale='large'] {
+  --app-font-scale: 1.08;
+}
+
+[data-font-scale='extra-large'] {
+  --app-font-scale: 1.16;
 }
 
 html,
@@ -205,6 +222,7 @@ body {
   margin: 0;
   background: transparent;
   color: var(--color-text-primary);
+  font-size: calc(14px * var(--app-font-scale));
 }
 
 #root {

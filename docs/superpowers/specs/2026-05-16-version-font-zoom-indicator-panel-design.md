@@ -8,8 +8,10 @@
 
 - Replace public-beta version labels and app package metadata with `0.0.1`.
 - Let users choose an app font size in Preferences while making it clear that the change appears after restart.
-- Keep model-canvas zoom controls visible near the canvas/right-panel boundary instead of hiding them inside the Tools tab.
+- Keep model-canvas zoom controls visible near the canvas/right-panel boundary instead of hiding them inside the Tools tab, with visibility controlled from the title bar View menu.
 - Let users collapse the left dataset/indicator panel into a compact dataset card, matching the provided reference: dataset identity remains visible, but the full indicator list is hidden.
+- Rename the title bar View menu's left panel label from Variables Panel to Indicators Panel.
+- Reduce floating panel and zoom-control shadows in dark and light themes.
 
 ## Out of Scope
 
@@ -48,6 +50,8 @@ Preferences copy must make the restart behavior explicit: font-size changes appl
 
 CSS should scale the main app gently through root-level variables so the layout remains stable. The first pass should target general app surfaces and avoid forcing SVG chart labels or exported reports to change.
 
+The font-size selector opens upward so the options stay visible at the bottom of the Preferences modal without forcing extra scrolling.
+
 ## Canvas Zoom Relocation
 
 Zoom controls should be moved out of the right Tools tab into a floating canvas control near the right panel.
@@ -61,10 +65,13 @@ Required control:
 Placement:
 
 - Absolute/floating inside the model canvas viewport.
+- Bottom-right of the model canvas viewport.
 - Visually close to the right panel, with enough offset that it does not overlap the panel collapse handle or canvas content controls.
-- Always visible while on the model canvas, regardless of whether the right panel is on Properties, Tools, or collapsed.
+- Visible by default, with a checked `Zoom Control` toggle in the title bar View menu.
 
 The existing keyboard shortcuts and wheel/pinch zoom behavior remain unchanged.
+
+The title bar View menu keeps the existing Zoom In, Zoom Out, and Fit to Screen commands. The new visibility toggle belongs in View alongside Indicators Panel and Properties Panel.
 
 ## Collapsible Indicator Panel
 

@@ -98,7 +98,7 @@ function buildEditMenu(screen: string, status: any): MenuItem[] {
   ]
 }
 
-function buildViewMenu(screen: string, showVars: boolean, showProps: boolean): MenuItem[] {
+function buildViewMenu(screen: string, showVars: boolean, showProps: boolean, showZoomControl: boolean): MenuItem[] {
   const noCanvas  = screen !== 'canvas'
   // On results, zoom/pan is handled in the diagram toolbar; panel toggles don't apply.
   const onResults = screen === 'results'
@@ -107,7 +107,8 @@ function buildViewMenu(screen: string, showVars: boolean, showProps: boolean): M
     { type: 'item',    label: 'Zoom Out',      shortcut: 'Ctrl+−', disabled: noCanvas, action: 'view:zoom-out' },
     { type: 'item',    label: 'Fit to Screen', shortcut: 'Ctrl+0', disabled: noCanvas, action: 'view:fit-screen' },
     { type: 'separator' },
-    { type: 'checked', label: 'Variables Panel',  checked: showVars, disabled: onResults, action: 'view:toggle-vars' },
+    { type: 'checked', label: 'Zoom Control',     checked: showZoomControl, disabled: onResults, action: 'view:toggle-zoom-control' },
+    { type: 'checked', label: 'Indicators Panel', checked: showVars, disabled: onResults, action: 'view:toggle-vars' },
     { type: 'checked', label: 'Properties Panel', checked: showProps, disabled: onResults, action: 'view:toggle-props' },
   ]
 }
@@ -260,6 +261,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [showVars, setShowVars] = useState(true)
   const [showProps, setShowProps] = useState(true)
+  const [showZoomControl, setShowZoomControl] = useState(true)
   const [isMaximized, setIsMaximized] = useState(false)
   const [recentModels, setRecentModels] = useState<{ id: string; name: string }[]>([])
   const [showAdvancedHint, setShowAdvancedHint] = useState(false)
@@ -299,6 +301,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
       const action = e.detail?.action
       if (action === 'view:toggle-vars') setShowVars(v => !v)
       if (action === 'view:toggle-props') setShowProps(v => !v)
+      if (action === 'view:toggle-zoom-control') setShowZoomControl(v => !v)
       if (action === 'open-feedback') {
         void window.electronAPI?.openExternal?.('https://metis.emend.it.com/feedback.html')
       }
@@ -369,7 +372,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
   const menus: { label: string; items: MenuItem[]; width: number }[] = [
     { label: 'File', items: buildFileMenu(currentScreen, recentModels, status), width: 240 },
     { label: 'Edit', items: buildEditMenu(currentScreen, status), width: 220 },
-    { label: 'View', items: buildViewMenu(currentScreen, showVars, showProps), width: 230 },
+    { label: 'View', items: buildViewMenu(currentScreen, showVars, showProps, showZoomControl), width: 230 },
     { label: 'Analysis', items: buildAnalysisMenu(currentScreen, status), width: 230 },
     { label: 'Help', items: buildHelpMenu(), width: 220 },
   ]

@@ -308,6 +308,7 @@ async function notifyCrashReport(kind: string, summary: string, reportPath: stri
 
 function buildSplashHtml(): string {
   const splashTheme = readStoredThemePreference()
+  const splashVersionLabel = app.getVersion() || '0.0.1'
   const isLightSplash = splashTheme === 'light'
   const logoAssetPath = isLightSplash ? 'src/assets/logo-black.svg' : 'src/assets/logo-primary.svg'
   const splashColors = isLightSplash
@@ -629,7 +630,7 @@ function buildSplashHtml(): string {
           <div class="wordmark">
             <div style="display:flex;align-items:baseline;gap:8px;">
               <p class="title" style="margin:0;">metis</p>
-              <span class="version" style="margin:0 0 0 2px;color:var(--subtitle);font-size:9px;font-weight:500;letter-spacing:0.01em;opacity:0.72;">Public Beta v1</span>
+              <span class="version" style="margin:0 0 0 2px;color:var(--subtitle);font-size:9px;font-weight:500;letter-spacing:0.01em;opacity:0.72;">${splashVersionLabel}</span>
             </div>
             <p class="subtitle" style="margin:0;color:var(--subtitle);font-size:10px;font-weight:400;letter-spacing:0.01em;">Advanced PLS-SEM Analysis</p>
           </div>
