@@ -185,7 +185,7 @@ Lower dark and light theme floating shadow intensity through shared CSS variable
 
 - [x] **Step 3: Move zoom to bottom right**
 
-Place the canvas zoom overlay at the bottom right, offset from the right panel and bottom toolbar baseline.
+Place the canvas zoom overlay at the bottom right, aligned to the same bottom baseline as the main canvas toolbar while keeping the zoom control smaller than the toolbar.
 
 - [x] **Step 4: Add title bar View menu zoom visibility**
 

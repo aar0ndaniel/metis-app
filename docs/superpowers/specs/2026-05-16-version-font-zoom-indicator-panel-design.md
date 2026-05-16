@@ -66,6 +66,7 @@ Placement:
 
 - Absolute/floating inside the model canvas viewport.
 - Bottom-right of the model canvas viewport.
+- The zoom control shares the same bottom baseline as the main canvas toolbar but remains a smaller, compact pill.
 - Visually close to the right panel, with enough offset that it does not overlap the panel collapse handle or canvas content controls.
 - Visible by default, with a checked `Zoom Control` toggle in the title bar View menu.
 

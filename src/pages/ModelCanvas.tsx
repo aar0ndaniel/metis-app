@@ -3746,14 +3746,14 @@ export default function ModelCanvas({
               id="canvas-zoom-control"
               style={{
                 position: 'absolute',
-                bottom: floatingPanelBottom + 16,
+                bottom: 52,
                 right: showRightSidebar ? (rightPanelCollapsed ? 84 : 300) : 20,
                 zIndex: 42,
                 display: 'flex',
                 alignItems: 'center',
-                gap: 6,
+                gap: 4,
                 height: 36,
-                padding: '4px 6px',
+                padding: '4px 5px',
                 borderRadius: 10,
                 backgroundColor: C.panel,
                 border: `1px solid ${C.floatingBorder}`,
@@ -3763,7 +3763,7 @@ export default function ModelCanvas({
               <SmallBtn onClick={() => setZoom(z => Math.max(30, z - 10))}>
                 <MinusCircle size={16} color={C.textMuted} />
               </SmallBtn>
-              <div style={{ width: 58, height: 28, borderRadius: 7, backgroundColor: C.panelControl, border: `1px solid ${C.borderFaint}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{ width: 50, height: 28, borderRadius: 7, backgroundColor: C.panelControl, border: `1px solid ${C.borderFaint}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: C.textSec, fontFamily: 'DM Sans, sans-serif' }}>{Math.round(zoom)}%</span>
               </div>
               <SmallBtn onClick={() => setZoom(z => Math.min(200, z + 10))}>
