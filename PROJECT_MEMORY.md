@@ -2,6 +2,134 @@
 
 This document serves as a living record of recent queries, changes, logs, and the thinking process to maintain project context.
 
+Project started by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
+
+## 2026-05-16 — Core app capability audit and memory backfill
+
+### Why This Entry Was Added
+- The project memory had strong historical notes for installer failures, security hardening, PLSpredict fixes, results polish, branding, and release builds.
+- What was missing was a current, dated map of the app's core capabilities as they exist in the codebase.
+- This entry was added after reviewing the memory alongside the main app routes, Electron IPC bridge, R Plumber backend, results catalog, report tooling, and workspace/data/model pages.
+
+### Current Core App Routes
+- `2026-05-16` — The app is routed through `HashRouter` in `src/App.tsx`.
+- Current primary routes:
+  - `/` — workspace home and project library.
+  - `/canvas/:modelId` — model-building canvas.
+  - `/results/:modelId` — analysis results workspace.
+  - `/results/:modelId/descriptive` — descriptive statistics view.
+  - `/dataview/:workspaceId/:datasetId` — dataset inspection view.
+  - `/import/step1` — dataset import and preview flow.
+  - `/tark-preview/:workspaceId/:modelId` — Tark report preview.
+  - `/rcode` — generated R code viewer.
+  - `/installer-preview` — bundled installer preview/setup flow.
+  - `/setup-wizard` — Lite setup wizard for external R configuration.
+
+### Workspace System
+- `2026-05-16` — Workspaces are structured around `.ada` files and typed children: models, datasets, and results.
+- Workspace children support metadata including `createdAt`, `updatedAt`, badges, linked dataset/model ids, stats, and stored analysis state.
+- Workspace home supports:
+  - creating and opening workspaces,
+  - opening `.ada` files from Explorer into the running app instance,
+  - model, dataset, and result children inside a workspace,
+  - pinning, color changes, reordering, and context-menu actions,
+  - safer delete prompts that avoid exposing absolute local paths.
+- Electron owns the durable workspace filesystem operations through `workspace:list`, `workspace:create`, `workspace:save`, `workspace:delete`, `workspace:deleteChild`, `workspace:openFile`, and `workspace:extractDataset`.
+
+### Dataset System
+- `2026-05-16` — Dataset import supports CSV/text-style data and Excel workbooks.
+- Import flow detects delimiters, handles encodings, parses Excel through `exceljs`, previews headers and rows, infers variable types, counts missing values, and persists imported data into the selected workspace.
+- Workspaces currently enforce a practical dataset cap in the import UI, blocking new imports when a workspace already has three datasets.
+- Imported datasets store headers, variable types, row/missing counts, original filename, workspace-safe internal file paths, and extracted temp paths for analysis.
+- The app also has a sample dataset path via `dataset:useSample`, letting users start modeling without manually importing data first.
+
+### Model Canvas
+- `2026-05-16` — The model canvas is the central no-code PLS-SEM editor.
+- Core canvas behavior includes:
+  - creating latent variables,
+  - dragging dataset indicators onto constructs,
+  - reflective/formative measurement model selection,
+  - direct paths and moderation paths,
+  - straight, curved, and right-angle connector styles,
+  - draggable connector handles and joints,
+  - multi-selection, group move/resize, alignment, distribution, and auto-size controls,
+  - dataset switching and dataset opening from the canvas,
+  - model tabs with dirty-state handling,
+  - PNG export for path diagrams,
+  - generated R script export/copy support.
+- Autosave exists in the canvas and is driven by shared preference values, currently reading the saved autosave interval rather than using a hardcoded-only interval.
+
+### Analysis Engine
+- `2026-05-16` — The statistical engine is a local R Plumber service bridged through Electron.
+- Electron exposes analysis IPC calls for:
+  - `plumber:health`,
+  - `plumber:runPls`,
+  - `plumber:runBootstrap`,
+  - `plumber:runPlsPredict`,
+  - `plumber:runAdvancedAnalysis`.
+- The renderer service layer falls back to a local HTTP Plumber URL in browser-only development when the Electron bridge is unavailable.
+- The R backend validates payload structure, trusted dataset roots, construct/path/interactions limits, algorithm settings, bootstrap settings, PLSpredict settings, and advanced-analysis settings before running analysis.
+- Current analysis modes are:
+  - `PLS-SEM` via `seminr::estimate_pls`,
+  - `Bootstrap` via `seminr::bootstrap_model`,
+  - `PLSpredict` via `seminr::predict_pls`,
+  - `Advanced analysis` via `seminrExtras::assess_ipma`, `assess_nca`, and `assess_cipma`.
+- The backend includes timeout handling, memory/timeout-friendly error messages, timing metadata, trusted workspace root checks, bootstrap sample ceilings, NCA run-depth ceilings, CVPAT sample ceilings, and dynamic CPU-core reservation.
+
+### Results System
+- `2026-05-16` — Results are organized by mode using `src/results/panelCatalog.ts`.
+- PLS-SEM panels include structural effects, measurement model outputs, model quality, data diagnostics, and execution logs.
+- Bootstrap panels include resampled structural/measurement effects, HTMT confidence intervals, base-model reference quality panels, and execution logs.
+- PLSpredict panels include MV/LV summaries, PLS vs LM comparison, Q2predict, prediction errors, error histograms, CVPAT LV summary, and execution logs.
+- Advanced-analysis panels include base PLS-SEM reference results plus priority maps, construct tables, NCA necessity checks, ceiling lines, bottleneck tables, cIPMA priorities, and execution logs.
+- Results support:
+  - mode-specific panel navigation,
+  - list/matrix table views where relevant,
+  - bootstrap confidence interval views,
+  - significance coloring,
+  - chart rendering through `ResultsCharts`,
+  - static chart embedding in exported HTML reports,
+  - clipboard copy with HTML and plain-text table formats,
+  - R script export/copy,
+  - HTML report export and auto-open for generated reports.
+
+### Tark Reporting
+- `2026-05-16` — Tark is now a first-class report-preview workflow rather than only a future/report idea.
+- The title bar exposes a `Tark it` action, and `TarkModal` collects report choices before opening `TarkPreview`.
+- Tark can build report sections from saved PLS-SEM, Bootstrap, PLSpredict, and advanced-analysis outputs.
+- Tark report utilities generate APA-style tables, hypothesis-test tables, measurement/model-quality sections, PLSpredict sections, and path-diagram snapshots with configurable construct labels.
+- Tark tables can be copied in Word-friendly HTML/plain-text formats.
+
+### Setup, Packaging, and Runtime Modes
+- `2026-05-16` — The app supports two runtime/setup paths:
+  - Bundle mode, where the installer prepares a bundled R engine archive.
+  - Lite mode, where the setup wizard finds and validates an existing `Rscript` installation and required R packages.
+- Setup and installer screens share theme persistence through `metis:prefs:theme` and legacy `pls:prefs:theme` keys.
+- Electron includes bundled runtime extraction paths for Windows zip and Unix tar/gz archives, relocation handling for Unix R bundles, and production installer progress events.
+- The project keeps separate builder configs for Lite and Bundle in `build/electron-builder.lite.yml` and `build/electron-builder.bundle.yml`.
+
+### Preferences, Theme, Tour, and Diagnostics
+- `2026-05-16` — Preferences cover general settings, appearance, autosave, algorithm defaults, export settings, and updates/about information.
+- Current preference-backed behaviors include:
+  - dark/light theme selection,
+  - language placeholder locked to English,
+  - analysis engine selection display,
+  - autosave toggle and interval preference,
+  - default bootstrap subsamples,
+  - decimal-place formatting for results and diagrams.
+- The onboarding tour is implemented through `OnboardingTour` and can be opened from the title-bar help menu.
+- Diagnostics are collected through shared utilities and surfaced in analysis/runtime error flows to make renderer bridge failures, backend failures, and import/persistence issues easier to trace.
+
+### Memory Gaps Closed By This Entry
+- `2026-05-16` — The previous memory did not clearly state the full current route map.
+- `2026-05-16` — The previous memory did not summarize the typed workspace child model for datasets, models, and results.
+- `2026-05-16` — Dataset import, Excel parsing, variable-type inference, sample dataset use, and DataView were under-documented.
+- `2026-05-16` — The current model canvas capabilities were spread across older bug notes rather than captured as one current feature map.
+- `2026-05-16` — Advanced analysis was partly covered by design docs and implementation notes, but the memory did not clearly connect it to current R endpoints and results panels.
+- `2026-05-16` — Results chart/export/clipboard/HTML-report behavior existed in the app but was not summarized as a current capability.
+- `2026-05-16` — Tark report generation existed in the app but was not recorded as a first-class current workflow.
+- `2026-05-16` — Preferences, theme persistence, onboarding tour, and diagnostics existed in the app but were not fully captured in the memory.
+
 ## 2026-04-05 — Session 03 — Installer renderer failure, file-protocol fix, and final Beta installers
 
 ### Queries & User Requests

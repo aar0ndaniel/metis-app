@@ -14,3 +14,11 @@ r-api/R-Portable/
 r-api/R-Portable.zip
 r-api/R-macos.tar.gz
 r-api/R-linux.tar.gz
+COLORS.md
+COLOR_REFACTORING_SUMMARY.md
+cleanup-mixed-quotes.mjs
+final-color-fix.mjs
+fix-colors.mjs
+history_files.txt
+release notes.md
+replace-colors.mjs
