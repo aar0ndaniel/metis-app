@@ -17,7 +17,6 @@ export default defineConfig({
   define: {
     __METIS_APP_NAME__: JSON.stringify('metis'),
     __METIS_APP_VERSION__: JSON.stringify(pkg.version ?? '0.0.1'),
-    __METIS_RELEASE_CHANNEL__: JSON.stringify('Beta'),
     __METIS_APP_EDITION__: JSON.stringify(appEdition),
   },
   plugins: [

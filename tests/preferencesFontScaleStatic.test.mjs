@@ -64,14 +64,26 @@ assert.match(
 
 assert.match(
   cssSource,
-  /\[data-font-scale='large'\][\s\S]*--app-font-scale:\s*1\.08;/,
-  'Large font scale should be backed by a CSS variable.',
+  /\[data-font-scale='small'\][\s\S]*--app-font-scale:\s*0\.94;[\s\S]*\[data-font-scale='default'\][\s\S]*--app-font-scale:\s*1;[\s\S]*\[data-font-scale='large'\][\s\S]*--app-font-scale:\s*1\.08;[\s\S]*\[data-font-scale='extra-large'\][\s\S]*--app-font-scale:\s*1\.16;/,
+  'Font scale ratios should be Small 0.94, Default 1.00, Large 1.08, Extra Large 1.16.',
 )
 
 assert.match(
   cssSource,
-  /body[\s\S]*font-size:\s*calc\(14px \* var\(--app-font-scale\)\)/,
-  'Body font size should scale from the startup font-size variable.',
+  /body[\s\S]*font-size:\s*14px;/,
+  'Body font size should stay at the base size so shell zoom is the single visible font-scale multiplier.',
+)
+
+assert.match(
+  cssSource,
+  /\.metis-app-shell[\s\S]*zoom:\s*var\(--app-font-scale\)/,
+  'The app shell should scale so inline pixel font sizes visibly change after restart.',
+)
+
+assert.match(
+  cssSource,
+  /\.metis-app-shell[\s\S]*width:\s*calc\(100vw \/ var\(--app-font-scale\)\)[\s\S]*height:\s*calc\(100vh \/ var\(--app-font-scale\)\)/,
+  'The scaled app shell should keep the viewport from overflowing after zooming.',
 )
 
 console.log('PASS preferences font scale static coverage')

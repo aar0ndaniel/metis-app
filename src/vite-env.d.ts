@@ -2,7 +2,6 @@
 
 declare const __METIS_APP_NAME__: string
 declare const __METIS_APP_VERSION__: string
-declare const __METIS_RELEASE_CHANNEL__: string
 declare const __METIS_APP_EDITION__: string
 
 interface Window {

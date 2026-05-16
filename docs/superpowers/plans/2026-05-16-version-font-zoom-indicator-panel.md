@@ -198,3 +198,35 @@ Update the title bar View menu label while preserving the existing `view:toggle-
 - [x] **Step 6: Clean stale tour copy**
 
 Remove the onboarding text that said zoom lives in the Tools tab.
+
+### Task 7: Title Bar Branding And Font-Scale Follow-up
+
+**Files:**
+- Modify: `src/components/TitleBar.tsx`
+- Modify: `src/config/appBranding.ts`
+- Modify: `src/components/PreferencesModal.tsx`
+- Modify: `src/App.tsx`
+- Modify: `src/index.css`
+- Modify: `tests/productionReleaseStatic.test.mjs`
+- Modify: `tests/preferencesFontScaleStatic.test.mjs`
+- Modify: `PROJECT_MEMORY.md`
+
+- [x] **Step 1: Remove edition/version from title bar**
+
+Keep the title bar brand area to the metis icon and `metis` text only.
+
+- [x] **Step 2: Move edition/version details into Preferences**
+
+Show the current build edition and package version separately in Preferences About.
+
+- [x] **Step 2b: Remove the unused beta release channel**
+
+Delete the stale release-channel Vite define and branding export so Lite/Bundle labels are derived from edition plus package version only.
+
+- [x] **Step 3: Make font-size ratios visibly affect pixel-sized UI**
+
+Scale the root app shell from the startup `--app-font-scale` value so `Small`, `Default`, `Large`, and `Extra Large` are visible after restart even on inline pixel-sized text.
+
+- [x] **Step 4: Extend static guards**
+
+Add assertions that the title bar does not import or render release labels, Preferences owns edition/version display, and the app shell uses the startup font-scale variable.

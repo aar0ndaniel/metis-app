@@ -4,6 +4,31 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project started by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-05-16 — Version, font scale, zoom, and panel polish
+
+### Queries & User Requests
+1. Change all public-beta version wording to app version `0.0.1`.
+2. Add a Preferences font-size adjuster whose effect appears after restarting the app.
+3. Move model-canvas zoom controls out of the right Tools panel, place them on the canvas, and expose a View menu toggle for showing or hiding them.
+4. Let the left indicator panel collapse into a compact dataset card rather than a full-height rail.
+5. Rename the View menu's Variables Panel item to Indicators Panel.
+6. Keep the title bar brand clean: show only `metis` next to the icon, with Lite/Bundle edition and version shown inside Preferences.
+
+### Completed Changes
+- `2026-05-16` — Package and visible version labels were moved to `0.0.1`.
+- `2026-05-16` — Preferences now stores app font size under `metis:prefs:fontScale` with `Small`, `Default`, `Large`, and `Extra Large` options.
+- `2026-05-16` — Font scale ratios are `0.94`, `1.00`, `1.08`, and `1.16`; the app shell is the single visible scaler so inline pixel-sized UI changes visibly after restart without compounding inherited body text.
+- `2026-05-16` — The title bar brand area now shows only the metis icon and `metis`; build edition and version details live in Preferences About.
+- `2026-05-16` — The old beta release-channel define was removed so Lite/Bundle labels come only from the edition and package version.
+- `2026-05-16` — Preferences About now separates `Edition` from `Version`, using the Lite/Bundle build define and package version.
+- `2026-05-16` — Model-canvas zoom controls are a compact bottom-right canvas overlay with a View menu `Zoom Control` visibility toggle.
+- `2026-05-16` — The left indicator panel can collapse to a compact dataset card and expand again from that card.
+- `2026-05-16` — Floating panel and zoom shadows were softened for both dark and light themes.
+
+### Validation
+- Focused static coverage was added for version branding, Preferences font scale, title-bar label removal, Preferences edition/version placement, canvas zoom relocation, and indicator-panel collapse behavior.
+- Verification for this pass used targeted Node static tests plus TypeScript checks.
+
 ## 2026-05-16 — Core app capability audit and memory backfill
 
 ### Why This Entry Was Added

@@ -222,11 +222,17 @@ body {
   margin: 0;
   background: transparent;
   color: var(--color-text-primary);
-  font-size: calc(14px * var(--app-font-scale));
+  font-size: 14px;
 }
 
 #root {
   background: transparent;
+}
+
+.metis-app-shell {
+  width: calc(100vw / var(--app-font-scale));
+  height: calc(100vh / var(--app-font-scale));
+  zoom: var(--app-font-scale);
 }
 
 /* Theme-aware scrollbar */

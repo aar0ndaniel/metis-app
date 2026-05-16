@@ -1114,7 +1114,7 @@ function AppShell() {
 
   return (
     <div
-      className="h-screen w-screen flex flex-col overflow-hidden select-none"
+      className="metis-app-shell h-screen w-screen flex flex-col overflow-hidden select-none"
       data-theme={theme === 'Light' ? 'light' : 'dark'}
       style={{ background: isInstallerPreview ? 'transparent' : 'var(--color-page)' }}
     >

@@ -12,6 +12,7 @@
 - Let users collapse the left dataset/indicator panel into a compact dataset card, matching the provided reference: dataset identity remains visible, but the full indicator list is hidden.
 - Rename the title bar View menu's left panel label from Variables Panel to Indicators Panel.
 - Reduce floating panel and zoom-control shadows in dark and light themes.
+- Keep the title bar brand clean: icon plus `metis` only; Lite/Bundle edition and version details belong in Preferences.
 
 ## Out of Scope
 
@@ -30,6 +31,9 @@ Implementation targets:
 - Splash/version label in Electron startup UI.
 - Preferences preview and version/about surfaces.
 - Branding constants that read the package version through Vite defines.
+- The title bar should not show edition, beta, or version labels next to the metis name.
+- Preferences About should show Edition (`Lite` or `Bundle`) and Version (`0.0.1`) separately.
+- The old beta release-channel define should not remain as a parallel label source.
 
 Historical project-memory entries that mention older releases stay as historical logs.
 
@@ -44,11 +48,18 @@ Supported options:
 - `Large`
 - `Extra Large`
 
+Scale ratios:
+
+- `Small`: `0.94`
+- `Default`: `1.00`
+- `Large`: `1.08`
+- `Extra Large`: `1.16`
+
 The chosen option is stored in localStorage under `metis:prefs:fontScale`. The running app should not hot-apply the setting from the modal. Instead, `App` reads the saved value during startup and applies a document-level `data-font-scale` attribute.
 
 Preferences copy must make the restart behavior explicit: font-size changes apply after restarting metis.
 
-CSS should scale the main app gently through root-level variables so the layout remains stable. The first pass should target general app surfaces and avoid forcing SVG chart labels or exported reports to change.
+CSS should scale the main app gently through root-level variables so the layout remains stable. Because much of the app uses explicit pixel font sizes, the root app shell should be the single visible scaler from the startup variable so the Preferences choice visibly affects the full app after restart without compounding inherited body text. The first pass should avoid forcing SVG chart labels or exported reports to change.
 
 The font-size selector opens upward so the options stay visible at the bottom of the Preferences modal without forcing extra scrolling.
 

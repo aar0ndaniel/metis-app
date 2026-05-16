@@ -13,7 +13,7 @@ import {
   FileText,
 } from '@phosphor-icons/react'
 import AppLogo from './AppLogo'
-import { APP_BRAND_NAME, APP_TITLE_RELEASE_LABEL } from '../config/appBranding'
+import { APP_BRAND_NAME } from '../config/appBranding'
 import { stripModelDisplayName } from '../utils/displayNames'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -423,20 +423,6 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
             }}
           >
             {APP_BRAND_NAME}
-          </span>
-          <span
-            style={{
-              color: 'var(--color-title-tab)',
-              fontFamily: 'Inter, DM Sans, sans-serif',
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: 0,
-              textTransform: 'uppercase',
-              opacity: 0.82,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {APP_TITLE_RELEASE_LABEL}
           </span>
         </button>
       </div>

@@ -16,7 +16,7 @@ import {
   ArrowsClockwise,
   GearSix,
 } from '@phosphor-icons/react'
-import { APP_BASE_RELEASE_LABEL, APP_BRAND_NAME } from '../config/appBranding'
+import { APP_BASE_RELEASE_LABEL, APP_BRAND_NAME, APP_EDITION } from '../config/appBranding'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Props {
@@ -733,6 +733,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                     </div>
                     <div className="flex flex-col" style={{ gap: 8 }}>
                       {([
+                        ['Edition', APP_EDITION, true],
                         ['Version',  APP_BASE_RELEASE_LABEL, true],
                         ['Build',    'desktop-dev',         false],
                         ['Licence',  'GNU GPL v3',           false],

@@ -86,15 +86,23 @@ assert.doesNotMatch(appSource, /extensions:\s*\[[^\]]*(?:'txt'|'sav'|'omv'|'jmo'
 assert.match(appSource, /pls:use-sample-dataset/, 'Sample dataset onboarding action should remain available.')
 
 const titleBarSource = await read('src/components/TitleBar.tsx')
-assert.match(titleBarSource, /APP_TITLE_RELEASE_LABEL/, 'Title bar should render the build-specific release label.')
-assert.match(titleBarSource, /\{APP_BRAND_NAME\}[\s\S]*\{APP_TITLE_RELEASE_LABEL\}/, 'Title bar should show metis with Beta Lite or Beta Bundle.')
+assert.match(titleBarSource, /APP_BRAND_NAME/, 'Title bar should render the metis brand name.')
+assert.doesNotMatch(titleBarSource, /APP_TITLE_RELEASE_LABEL|APP_EDITION|APP_BASE_RELEASE_LABEL|APP_VERSION_LABEL/, 'Title bar should not render build, edition, or version labels next to metis.')
 
 const brandingSource = await read('src/config/appBranding.ts')
 assert.match(brandingSource, /APP_EDITION/, 'Branding config should expose the current build edition.')
-assert.match(brandingSource, /APP_TITLE_RELEASE_LABEL\s*=\s*getEditionReleaseLabel\(APP_EDITION\)/, 'Title release label should be derived from the build edition.')
+assert.match(brandingSource, /return `\$\{edition\} \$\{APP_VERSION\}`/, 'Edition release labels should combine Lite/Bundle with the app version, not a beta channel.')
+assert.doesNotMatch(brandingSource, /APP_RELEASE_CHANNEL/, 'Branding config should not keep an unused beta release channel.')
+assert.doesNotMatch(brandingSource, /APP_TITLE_RELEASE_LABEL/, 'Branding config should not expose a title-bar release label.')
+
+const preferencesSource = await read('src/components/PreferencesModal.tsx')
+assert.match(preferencesSource, /APP_EDITION/, 'Preferences should receive the current Lite/Bundle edition.')
+assert.match(preferencesSource, /\['Edition',\s*APP_EDITION/, 'Preferences About should show whether the build is Lite or Bundle.')
+assert.match(preferencesSource, /\['Version',\s*APP_BASE_RELEASE_LABEL/, 'Preferences About should show the app version.')
 
 const viteSource = await read('vite.config.ts')
 assert.match(viteSource, /__METIS_APP_EDITION__/, 'Vite should define the build edition for the renderer.')
+assert.doesNotMatch(viteSource, /__METIS_RELEASE_CHANNEL__|JSON\.stringify\('Beta'\)/, 'Vite should not define an unused beta release channel.')
 assert.match(viteSource, /lifecycleEvent\.startsWith\('build:lite'\)[\s\S]*Lite[\s\S]*Bundle/, 'Vite should distinguish all Lite platform builds from Bundle builds.')
 
 const modelCanvasSource = await read('src/pages/ModelCanvas.tsx')
