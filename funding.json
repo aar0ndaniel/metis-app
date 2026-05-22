@@ -1,0 +1,104 @@
+{
+  "$schema": "https://fundingjson.org/schema/v1.1.0.json",
+  "version": "v1.1.0",
+  "entity": {
+    "type": "group",
+    "role": "maintainer",
+    "name": "Metis Team",
+    "email": "aaronakuteye@gmail.com",
+    "phone": "",
+    "description": "Metis is maintained by a small academic and technical team working to make advanced statistical modelling more accessible to students, researchers, lecturers, and academic teams affected by software cost, licensing restrictions, and coding barriers.",
+    "webpageUrl": {
+      "url": "https://metis.emend.it.com",
+      "wellKnown": ""
+    }
+  },
+  "projects": [
+    {
+      "guid": "metis",
+      "name": "Metis",
+      "description": "Metis version 0.0.1 is a free desktop application for PLS-SEM, Necessary Condition Analysis, IPMA, and PLSpredict. It provides a visual interface for importing datasets, building models, running analyses, reviewing results, and exporting outputs while using R and SEMinR as its analytical foundation. Metis supports reproducible research and lowers the barrier to advanced statistical modelling for students, lecturers, researchers, and academic teams affected by software cost, licensing restrictions, or coding requirements.",
+      "webpageUrl": {
+        "url": "https://metis.emend.it.com",
+        "wellKnown": ""
+      },
+      "repositoryUrl": {
+        "url": "https://github.com/aar0ndaniel/metis-app",
+        "wellKnown": "https://github.com/aar0ndaniel/metis-app/blob/main/.well-known/funding-manifest-urls"
+      },
+      "licenses": [
+        "spdx:GPL-3.0-only"
+      ],
+      "tags": [
+        "statistics",
+        "research",
+        "education",
+        "pls-sem",
+        "data-analysis",
+        "r",
+        "desktop-app",
+        "academic-tools",
+        "open-science",
+        "foss"
+      ]
+    }
+  ],
+  "funding": {
+    "channels": [
+      {
+        "guid": "bank-transfer",
+        "type": "bank",
+        "address": "Available on request by email",
+        "description": "Bank transfer details can be provided by email for institutional, grant-based, or direct project support."
+      }
+    ],
+    "plans": [
+      {
+        "guid": "metis-2026",
+        "status": "active",
+        "name": "Metis 2026 sustainability grant",
+        "description": "Funding will support Metis from public beta to a stable release. This includes Windows code signing, release infrastructure, documentation, Linux and macOS builds, testing, academic workshops, developer time, bug fixes, and long-term maintenance so the tool can remain free for research and education communities.",
+        "amount": 25000,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "bank-transfer"
+        ]
+      },
+      {
+        "guid": "developer-time",
+        "status": "active",
+        "name": "Developer maintenance support",
+        "description": "Monthly support for continued development, dependency updates, bug fixes, user support, reproducibility improvements, documentation, and maintenance of the Metis desktop application.",
+        "amount": 1500,
+        "currency": "USD",
+        "frequency": "monthly",
+        "channels": [
+          "bank-transfer"
+        ]
+      },
+      {
+        "guid": "goodwill-support",
+        "status": "active",
+        "name": "Goodwill support",
+        "description": "Supporters may contribute any amount to help keep Metis free and accessible for students, researchers, lecturers, and academic communities.",
+        "amount": 0,
+        "currency": "USD",
+        "frequency": "one-time",
+        "channels": [
+          "bank-transfer"
+        ]
+      }
+    ],
+    "history": [
+      {
+        "year": 2026,
+        "income": 0,
+        "expenses": 0,
+        "taxes": 0,
+        "currency": "USD",
+        "description": "Metis version 0.0.1 is currently in public beta and has not yet received structured external funding."
+      }
+    ]
+  }
+}
