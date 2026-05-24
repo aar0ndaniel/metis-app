@@ -61,9 +61,9 @@ function buildTourData(displayName = '', workspacePath = ''): Record<'home' | 'c
   void workspacePath
   const feedbackStep: TourStep = {
     title: 'Send Feedback',
-    content: 'When you are ready to send feedback to the team, click Feedback in the title bar.',
+    content: 'When you are ready to send feedback to the team, open Help and choose Feedback.',
     icon: <ChatCircleText size={30} color={TOUR_ACCENT} weight="regular" />,
-    selector: '#tour-feedback',
+    selector: '#tour-help',
   }
 
   return {
@@ -151,7 +151,7 @@ function HomePreview({ step }: { step: TourStep }) {
             <Cell active={selector === '#tour-grid-view'} h={24}><GridFour size={11} color={TOUR_ACCENT} weight="fill" /></Cell>
             <Cell active={selector === '#tour-list-view'} h={24}><Rows size={11} color={TOUR_ACCENT} weight="fill" /></Cell>
             <Cell active={selector === '#tour-tark'} h={24}><FileText size={11} color={TOUR_ACCENT} weight="fill" /></Cell>
-            <Cell active={selector === '#tour-feedback'} h={24}><ChatCircleText size={11} color={TOUR_ACCENT} weight="regular" /></Cell>
+            <Cell active={selector === '#tour-help'} h={24}><ChatCircleText size={11} color={TOUR_ACCENT} weight="regular" /></Cell>
           </div>
         </div>
         <div style={{ ...panel({ borderRadius: 16, padding: 12, display: 'flex', flexDirection: 'column', gap: 10, minHeight: 96 }), ...(welcome ? focus(true, 16) : {}) }}>
@@ -373,7 +373,7 @@ export default function OnboardingTour({ currentScreen, theme, displayName = '',
         />
       )}
       <div className="fixed pointer-events-auto transition-all duration-300 ease-out" style={{ top: modalPos.top, left: modalPos.left, width: modalPos.width, opacity: modalPos.opacity, transform: `translateY(${modalPos.opacity === 1 ? 0 : 10}px)` }}>
-        <div style={{ position: 'relative', borderRadius: 18, background: 'linear-gradient(180deg, var(--color-surface) 0%, var(--color-panel) 100%)', border: '1px solid var(--color-floating-border-soft)', boxShadow: 'var(--shadow-floating-panel)', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', borderRadius: 18, background: 'linear-gradient(180deg, var(--color-surface) 0%, var(--color-panel) 100%)', border: '1px solid var(--color-floating-border-soft)', boxShadow: 'var(--shadow-modal)', overflow: 'hidden' }}>
           <button onClick={handleSkip} style={{ position: 'absolute', top: 12, right: 12, width: 24, height: 24, borderRadius: '50%', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={12} /></button>
           <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '120px 1fr', gap: compact ? 12 : 14, padding: isWelcomeStep ? '16px 44px 10px 16px' : '14px 42px 10px 14px' }}>
             <TourArtwork step={step} currentStep={currentStep} totalSteps={steps.length} isWelcomeStep={isWelcomeStep} />

@@ -82,6 +82,8 @@ interface Indicator {
   oy?: number
 }
 
+type ConstructShape = 'circle' | 'oval' | 'square'
+
 interface Construct {
   id: string
   name: string
@@ -90,12 +92,14 @@ interface Construct {
   x: number
   y: number
   radius: number
+  ovalWidth?: number
+  ovalHeight?: number
   indicators: Indicator[]
   labelColor: string
   labelBold: boolean
   labelItalic: boolean
   labelSize: number
-  shape?: 'circle' | 'square'
+  shape?: ConstructShape
   indicatorDirection?: 'top' | 'right' | 'bottom' | 'left'
   captionInReport?: string
   weightingMode?: string
@@ -129,7 +133,7 @@ interface GuideLine {
   label?: string
 }
 
-type ResizeHandle = 'tl' | 'tr' | 'bl' | 'br'
+type ResizeHandle = 'tl' | 'tr' | 'bl' | 'br' | 'left' | 'right' | 'top' | 'bottom'
 
 interface SelectionBounds {
   minX: number
@@ -155,6 +159,8 @@ type GroupResizeItem =
       x: number
       y: number
       radius: number
+      ovalWidth?: number
+      ovalHeight?: number
     }
   | {
       id: string
@@ -176,6 +182,10 @@ interface GroupResizeState {
 interface ModelDraftState {
   constructs: Construct[]
   paths: Path[]
+}
+
+interface PersistCanvasSnapshotOptions {
+  workspaceSave?: 'immediate' | 'debounced'
 }
 
 const METIS_STORAGE_PREFIX = 'metis:'
@@ -232,17 +242,93 @@ function clearAutosaveDraft(modelId?: string | null) {
 
 const SWATCH_COLORS = ['#87976B', '#A78BFA', '#60A5FA', '#F97316']
 const DEFAULT_CONSTRUCT_RADIUS = 42
+const OVAL_RX_SCALE = 1.35
+const OVAL_RY_SCALE = 0.82
+const MIN_CONSTRUCT_RADIUS = 20
+const MIN_OVAL_DIMENSION = 40
+const DRAFT_WRITE_DEBOUNCE_MS = 300
+const WORKSPACE_SAVE_DEBOUNCE_MS = 2_000
 const DEFAULT_INDICATOR_STEP = 60
 const DEFAULT_INDICATOR_EDGE_GAP = 60
 const INDICATOR_LABEL_HEIGHT = 22
 const MIN_INDICATOR_LABEL_WIDTH = 44
 
+function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' {
+  return shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function getDefaultOvalDimensions(radius = DEFAULT_CONSTRUCT_RADIUS): { width: number; height: number } {
+  return {
+    width: Math.round(radius * OVAL_RX_SCALE * 2),
+    height: Math.round(radius * OVAL_RY_SCALE * 2),
+  }
+}
+
+function getConstructDimensions(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { width: number; height: number } {
+  if (normalizeConstructShape(construct.shape) === 'oval') {
+    const defaults = getDefaultOvalDimensions(construct.radius)
+    return {
+      width: Math.max(MIN_OVAL_DIMENSION, construct.ovalWidth ?? defaults.width),
+      height: Math.max(MIN_OVAL_DIMENSION, construct.ovalHeight ?? defaults.height),
+    }
+  }
+
+  const diameter = construct.radius * 2
+  return { width: diameter, height: diameter }
+}
+
+function getConstructRadii(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { rx: number; ry: number } {
+  const { width, height } = getConstructDimensions(construct)
+  return { rx: width / 2, ry: height / 2 }
+}
+
+function getConstructEdgeOffset(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, ux: number, uy: number): number {
+  const { rx, ry } = getConstructRadii(construct)
+  return 1 / Math.sqrt((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry))
+}
+
+function isPointInConstruct(construct: Pick<Construct, 'x' | 'y' | 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, x: number, y: number, padding = 0): boolean {
+  const { rx, ry } = getConstructRadii(construct)
+  const paddedRx = rx + padding
+  const paddedRy = ry + padding
+  return ((x - construct.x) ** 2) / (paddedRx ** 2) + ((y - construct.y) ** 2) / (paddedRy ** 2) <= 1
+}
+
+function buildConstructShapePatch(current: Construct, patch: Partial<Construct>): Construct {
+  const next = applyIndicatorAlignmentDefaults(current, patch)
+  const nextShape = normalizeConstructShape(next.shape)
+  const currentShape = normalizeConstructShape(current.shape)
+
+  if (nextShape === 'oval') {
+    const currentDimensions = currentShape === 'oval'
+      ? getConstructDimensions(current)
+      : getDefaultOvalDimensions(current.radius)
+    return {
+      ...next,
+      ovalWidth: next.ovalWidth ?? currentDimensions.width,
+      ovalHeight: next.ovalHeight ?? currentDimensions.height,
+    }
+  }
+
+  if (patch.shape === 'circle' && currentShape === 'oval') {
+    const { width, height } = getConstructDimensions(current)
+    return {
+      ...next,
+      radius: Math.max(MIN_CONSTRUCT_RADIUS, Math.round((width + height) / 4)),
+    }
+  }
+
+  return next
+}
+
 function getIndicatorLayout(construct: Construct, indicator: Indicator, index: number, includeOffsets = true): IndicatorLayout {
   const dir = construct.indicatorAlignment || construct.indicatorDirection || 'bottom'
+  const { rx, ry } = getConstructRadii(construct)
+  const edgeRadius = dir === 'left' || dir === 'right' ? rx : ry
   const labelW = Math.max(MIN_INDICATOR_LABEL_WIDTH, indicator.name.length * 7 + 16)
   const labelH = INDICATOR_LABEL_HEIGHT
   const offset = (index - (construct.indicators.length - 1) / 2) * DEFAULT_INDICATOR_STEP
-  const centerGap = construct.radius + DEFAULT_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
+  const centerGap = edgeRadius + DEFAULT_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
 
   let ix = construct.x
   let iy = construct.y
@@ -317,11 +403,12 @@ function getSelectionBounds(constructs: Construct[], selectedIds: string[], padd
 
     const construct = constructs.find((item) => item.id === selectedId)
     if (!construct) return
+    const { rx, ry } = getConstructRadii(construct)
 
-    minX = Math.min(minX, construct.x - construct.radius)
-    minY = Math.min(minY, construct.y - construct.radius)
-    maxX = Math.max(maxX, construct.x + construct.radius)
-    maxY = Math.max(maxY, construct.y + construct.radius)
+    minX = Math.min(minX, construct.x - rx)
+    minY = Math.min(minY, construct.y - ry)
+    maxX = Math.max(maxX, construct.x + rx)
+    maxY = Math.max(maxY, construct.y + ry)
     foundAny = true
   })
 
@@ -552,16 +639,8 @@ function arrowPath(from: Construct, to: Construct, path?: Path): string {
   if (dist < 1) return ''
   const ux = dx / dist, uy = dy / dist
   
-  const getOffset = (c: Construct, ux: number, uy: number) => {
-    if (c.shape === 'square') {
-      const scale = 1 / Math.max(Math.abs(ux), Math.abs(uy))
-      return c.radius * scale
-    }
-    return c.radius
-  }
-
-  const offF = getOffset(from, ux, uy)
-  const offT = getOffset(to, -ux, -uy)
+  const offF = getConstructEdgeOffset(from, ux, uy)
+  const offT = getConstructEdgeOffset(to, -ux, -uy)
 
   const sx = from.x + ux * offF
   const sy = from.y + uy * offF
@@ -604,12 +683,13 @@ function linePointDistance(px: number, py: number, x1: number, y1: number, x2: n
   return Math.hypot(px - cx, py - cy)
 }
 
-function indicatorPath(cX: number, cY: number, iX: number, iY: number, iW: number, iH: number, type: 'Reflective' | 'Formative', direction: string) {
-  const isHoriz = direction === 'top' || direction === 'bottom'
+function indicatorPath(construct: Construct, iX: number, iY: number, iW: number, iH: number, type: 'Reflective' | 'Formative', direction: string) {
   // Latent edge point
-  const ux = iX - cX, uy = iY - cY
+  const ux = iX - construct.x, uy = iY - construct.y
   const dist = Math.sqrt(ux*ux + uy*uy)
-  const lx = cX + (ux/dist) * 42, ly = cY + (uy/dist) * 42
+  if (dist < 1) return ''
+  const edgeOffset = getConstructEdgeOffset(construct, ux / dist, uy / dist)
+  const lx = construct.x + (ux/dist) * edgeOffset, ly = construct.y + (uy/dist) * edgeOffset
 
   // Indicator edge point
   let ix = iX, iy = iY
@@ -662,6 +742,8 @@ export default function ModelCanvas({
   const [dirtyModels, setDirtyModels] = useState<Record<string, boolean>>({})
   const modelDraftsRef = useRef<Record<string, ModelDraftState>>({})
   const loadedModelIdRef = useRef<string | null>(null)
+  const draftWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingDraftWriteRef = useRef<{ modelId: string; draft: ModelDraftState } | null>(null)
   const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
   const [isDatasetInfoHovered, setIsDatasetInfoHovered] = useState(false)
   const linkedDatasetId = (linkedDataset as any)?.id ?? null
@@ -685,6 +767,42 @@ export default function ModelCanvas({
       },
     })
   }, [activeWs?.id, activeWs?.name, linkedDatasetId, modelId])
+
+  const flushPendingDraftWrite = useCallback(() => {
+    if (draftWriteTimerRef.current) {
+      clearTimeout(draftWriteTimerRef.current)
+      draftWriteTimerRef.current = null
+    }
+
+    const pending = pendingDraftWriteRef.current
+    if (!pending) return
+
+    pendingDraftWriteRef.current = null
+    writeAutosaveDraft(pending.modelId, pending.draft)
+  }, [])
+
+  const cancelPendingDraftWrite = useCallback((targetModelId?: string) => {
+    if (draftWriteTimerRef.current) {
+      clearTimeout(draftWriteTimerRef.current)
+      draftWriteTimerRef.current = null
+    }
+
+    const pending = pendingDraftWriteRef.current
+    if (!pending || (targetModelId && pending.modelId !== targetModelId)) return
+    pendingDraftWriteRef.current = null
+  }, [])
+
+  const scheduleDraftWrite = useCallback((targetModelId: string, draft: ModelDraftState) => {
+    pendingDraftWriteRef.current = { modelId: targetModelId, draft }
+    if (draftWriteTimerRef.current) {
+      clearTimeout(draftWriteTimerRef.current)
+    }
+    draftWriteTimerRef.current = setTimeout(flushPendingDraftWrite, DRAFT_WRITE_DEBOUNCE_MS)
+  }, [flushPendingDraftWrite])
+
+  useEffect(() => {
+    return () => flushPendingDraftWrite()
+  }, [flushPendingDraftWrite])
 
   const canvasTabs = openModelTabs
     .map((tabModelId) => {
@@ -825,6 +943,9 @@ export default function ModelCanvas({
     centerX: number
     centerY: number
     startRadius: number
+    startWidth: number
+    startHeight: number
+    startShape: 'circle' | 'oval'
   } | null>(null)
   const [groupResizing, setGroupResizing] = useState<GroupResizeState | null>(null)
   const [activePathDrag, setActivePathDrag] = useState<{ id: string; tx: number; ty: number } | null>(null)
@@ -893,7 +1014,10 @@ export default function ModelCanvas({
   const [editingPathId, setEditingPathId] = useState<string | null>(null)
   const [pathSettingsPos, setPathSettingsPos] = useState({ x: 0, y: 0 })
   const [constructSizeDraft, setConstructSizeDraft] = useState('')
+  const [constructWidthDraft, setConstructWidthDraft] = useState('')
+  const [constructHeightDraft, setConstructHeightDraft] = useState('')
   const [constructSizeFocused, setConstructSizeFocused] = useState(false)
+  const [constructDimensionsFocused, setConstructDimensionsFocused] = useState(false)
 
   const canvasRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
@@ -972,8 +1096,9 @@ export default function ModelCanvas({
         paths: cloneModelState(paths),
       }
       modelDraftsRef.current[modelId] = nextDraft
-      writeAutosaveDraft(modelId, nextDraft)
+      scheduleDraftWrite(modelId, nextDraft)
     } else {
+      cancelPendingDraftWrite(modelId)
       delete modelDraftsRef.current[modelId]
       clearAutosaveDraft(modelId)
     }
@@ -990,7 +1115,7 @@ export default function ModelCanvas({
       delete next[modelId]
       return next
     })
-  }, [modelId, constructs, paths, isDirty])
+  }, [modelId, constructs, paths, isDirty, cancelPendingDraftWrite, scheduleDraftWrite])
 
   useEffect(() => {
     const handler = () => {
@@ -1005,8 +1130,6 @@ export default function ModelCanvas({
 
   useEffect(() => {
     if (!realtimeEnabled) return
-    const datasetFilePath = resolveDatasetFilePath()
-    if (!datasetFilePath) return
 
     const validConstructs = constructs.filter(c => c.indicators.length >= 1)
     if (!validConstructs.length || !paths.length) return
@@ -1014,6 +1137,9 @@ export default function ModelCanvas({
     if (liveCalcTimer.current) clearTimeout(liveCalcTimer.current)
 
     liveCalcTimer.current = setTimeout(async () => {
+      const datasetFilePath = resolveDatasetFilePath()
+      if (!datasetFilePath) return
+
       const payloadConstructs = constructs
         .map(c => ({
           name: c.name,
@@ -1110,6 +1236,7 @@ export default function ModelCanvas({
     try {
       if (!electronAPI?.saveWorkspace) {
         if (modelId) {
+          cancelPendingDraftWrite(modelId)
           delete modelDraftsRef.current[modelId]
           clearAutosaveDraft(modelId)
         }
@@ -1122,6 +1249,7 @@ export default function ModelCanvas({
       console.log('[ModelCanvas] saveWorkspace res:', res)
       if (res?.success) {
         if (modelId) {
+          cancelPendingDraftWrite(modelId)
           delete modelDraftsRef.current[modelId]
           clearAutosaveDraft(modelId)
           setDirtyModels(prev => {
@@ -1472,22 +1600,15 @@ export default function ModelCanvas({
   // ─── Autosave Loop ──────────────────────────────────────────────────────────
   const constructsRef = useRef(constructs)
   const pathsRef = useRef(paths)
+  const workspaceSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingWorkspaceSnapshotRef = useRef<ModelDraftState | null>(null)
+  const workspaceSaveChainRef = useRef<Promise<void>>(Promise.resolve())
   useEffect(() => { constructsRef.current = constructs }, [constructs])
   useEffect(() => { pathsRef.current = paths }, [paths])
 
-  const persistCanvasSnapshot = useCallback(async (targetConstructs: Construct[], targetPaths: Path[]) => {
-    const snapshot = {
-      constructs: cloneModelState(targetConstructs),
-      paths: cloneModelState(targetPaths),
-    }
-
-    if (modelId) {
-      writeAutosaveDraft(modelId, snapshot)
-    }
-
-    writeSharedStorageValue('canvas-model', JSON.stringify(snapshot))
-
+  const writeWorkspaceSnapshot = useCallback(async (snapshot: ModelDraftState) => {
     if (!activeWs || !currentModel) return
+
     const nowIso = new Date().toISOString()
     const updatedModel = {
       ...currentModel,
@@ -1507,6 +1628,91 @@ export default function ModelCanvas({
       await (window as any).electronAPI.saveWorkspace(updatedWs)
     }
   }, [activeWs, currentModel, modelId, setWorkspaces, workspaces])
+
+  const runWorkspaceSnapshotSave = useCallback(async (snapshot: ModelDraftState) => {
+    const savePromise = workspaceSaveChainRef.current.then(() => writeWorkspaceSnapshot(snapshot))
+    workspaceSaveChainRef.current = savePromise.catch(() => undefined)
+    await savePromise
+  }, [writeWorkspaceSnapshot])
+
+  const flushQueuedWorkspaceSave = useCallback(async () => {
+    if (workspaceSaveTimerRef.current) {
+      clearTimeout(workspaceSaveTimerRef.current)
+      workspaceSaveTimerRef.current = null
+    }
+
+    const snapshot = pendingWorkspaceSnapshotRef.current
+    if (!snapshot) return
+
+    pendingWorkspaceSnapshotRef.current = null
+    await runWorkspaceSnapshotSave(snapshot)
+
+    if (pendingWorkspaceSnapshotRef.current) {
+      await flushQueuedWorkspaceSave()
+    }
+  }, [runWorkspaceSnapshotSave])
+
+  const queueWorkspaceSnapshotSave = useCallback((snapshot: ModelDraftState) => {
+    pendingWorkspaceSnapshotRef.current = snapshot
+    if (workspaceSaveTimerRef.current) {
+      clearTimeout(workspaceSaveTimerRef.current)
+    }
+    workspaceSaveTimerRef.current = setTimeout(() => {
+      void flushQueuedWorkspaceSave()
+    }, WORKSPACE_SAVE_DEBOUNCE_MS)
+  }, [flushQueuedWorkspaceSave])
+
+  useEffect(() => {
+    return () => {
+      if (workspaceSaveTimerRef.current) {
+        clearTimeout(workspaceSaveTimerRef.current)
+        workspaceSaveTimerRef.current = null
+      }
+      void flushQueuedWorkspaceSave()
+    }
+  }, [flushQueuedWorkspaceSave])
+
+  const persistCanvasSnapshot = useCallback(async (
+    targetConstructs: Construct[],
+    targetPaths: Path[],
+    options: PersistCanvasSnapshotOptions = {},
+  ) => {
+    const snapshot = {
+      constructs: cloneModelState(targetConstructs),
+      paths: cloneModelState(targetPaths),
+    }
+    const workspaceSave = options.workspaceSave ?? 'immediate'
+
+    if (modelId) {
+      modelDraftsRef.current[modelId] = snapshot
+      if (workspaceSave === 'debounced') {
+        scheduleDraftWrite(modelId, snapshot)
+      } else {
+        cancelPendingDraftWrite(modelId)
+        writeAutosaveDraft(modelId, snapshot)
+      }
+    }
+
+    writeSharedStorageValue('canvas-model', JSON.stringify(snapshot))
+
+    if (workspaceSave === 'debounced') {
+      queueWorkspaceSnapshotSave(snapshot)
+      return
+    }
+
+    pendingWorkspaceSnapshotRef.current = null
+    if (workspaceSaveTimerRef.current) {
+      clearTimeout(workspaceSaveTimerRef.current)
+      workspaceSaveTimerRef.current = null
+    }
+    await runWorkspaceSnapshotSave(snapshot)
+  }, [
+    cancelPendingDraftWrite,
+    modelId,
+    queueWorkspaceSnapshotSave,
+    runWorkspaceSnapshotSave,
+    scheduleDraftWrite,
+  ])
 
   useEffect(() => {
     const autosaveOn = readSharedStorageValue('prefs:autosaveOn') !== 'false'
@@ -2196,8 +2402,7 @@ export default function ModelCanvas({
     if (trimmed.length > 60) trimmed.shift()
     historyRef.current = trimmed
     setHistIdx(trimmed.length - 1)
-    // Immediately persist the latest state after any edit/move
-    persistCanvasSnapshot(newC, newP)
+    persistCanvasSnapshot(newC, newP, { workspaceSave: 'debounced' })
   }, [histIdx, persistCanvasSnapshot])
 
   // No status sync here anymore
@@ -2428,7 +2633,7 @@ export default function ModelCanvas({
 
   const updateSelected = useCallback((patch: Partial<Construct>) => {
     if (!selectedConstruct) return
-    const newC = constructs.map(c => c.id === selectedConstruct.id ? applyIndicatorAlignmentDefaults(c, patch) : c)
+    const newC = constructs.map(c => c.id === selectedConstruct.id ? buildConstructShapePatch(c, patch) : c)
     setConstructs(newC); commit(newC, paths)
   }, [selectedConstruct, constructs, paths, commit])
 
@@ -2446,6 +2651,27 @@ export default function ModelCanvas({
     setConstructSizeFocused(false)
   }, [constructSizeDraft, selectedConstruct, updateSelected])
 
+  const commitConstructDimensionsDraft = useCallback(() => {
+    if (!selectedConstruct) return
+    const nextWidth = Number(constructWidthDraft)
+    const nextHeight = Number(constructHeightDraft)
+    const currentDimensions = getConstructDimensions(selectedConstruct)
+
+    if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight) || nextWidth <= 0 || nextHeight <= 0) {
+      setConstructWidthDraft(String(Math.round(currentDimensions.width)))
+      setConstructHeightDraft(String(Math.round(currentDimensions.height)))
+      setConstructDimensionsFocused(false)
+      return
+    }
+
+    const width = Math.max(MIN_OVAL_DIMENSION, Math.round(nextWidth))
+    const height = Math.max(MIN_OVAL_DIMENSION, Math.round(nextHeight))
+    updateSelected({ ovalWidth: width, ovalHeight: height })
+    setConstructWidthDraft(String(width))
+    setConstructHeightDraft(String(height))
+    setConstructDimensionsFocused(false)
+  }, [constructHeightDraft, constructWidthDraft, selectedConstruct, updateSelected])
+
   // ── Floating Bar Action Handlers ──────────────────────────────────────────────
   const selectedConstructIds = selected.filter(id => !id.includes(':'))
   const activeSelectedConstructs = constructs.filter(c => selectedConstructIds.includes(c.id))
@@ -2454,6 +2680,25 @@ export default function ModelCanvas({
     if (constructSizeFocused) return
     setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
   }, [constructSizeFocused, selectedConstruct?.id, selectedConstruct?.radius])
+
+  useEffect(() => {
+    if (constructDimensionsFocused) return
+    if (!selectedConstruct) {
+      setConstructWidthDraft('')
+      setConstructHeightDraft('')
+      return
+    }
+    const { width, height } = getConstructDimensions(selectedConstruct)
+    setConstructWidthDraft(String(Math.round(width)))
+    setConstructHeightDraft(String(Math.round(height)))
+  }, [
+    constructDimensionsFocused,
+    selectedConstruct?.id,
+    selectedConstruct?.radius,
+    selectedConstruct?.ovalWidth,
+    selectedConstruct?.ovalHeight,
+    selectedConstruct?.shape,
+  ])
 
   const beginGroupResize = useCallback((e: React.MouseEvent, handle: ResizeHandle) => {
     e.stopPropagation()
@@ -2491,6 +2736,8 @@ export default function ModelCanvas({
         x: construct.x,
         y: construct.y,
         radius: construct.radius,
+        ovalWidth: getConstructDimensions(construct).width,
+        ovalHeight: getConstructDimensions(construct).height,
       })
     })
 
@@ -2548,7 +2795,16 @@ export default function ModelCanvas({
   }
 
   const handleAutoSizeSelected = () => {
-    const newC = constructs.map(c => selectedConstructIds.includes(c.id) ? { ...c, radius: DEFAULT_CONSTRUCT_RADIUS } : c)
+    const defaultOval = getDefaultOvalDimensions(DEFAULT_CONSTRUCT_RADIUS)
+    const newC = constructs.map(c => selectedConstructIds.includes(c.id)
+      ? {
+          ...c,
+          radius: DEFAULT_CONSTRUCT_RADIUS,
+          ...(normalizeConstructShape(c.shape) === 'oval'
+            ? { ovalWidth: defaultOval.width, ovalHeight: defaultOval.height }
+            : {}),
+        }
+      : c)
     setConstructs(newC); commit(newC, paths)
   }
 
@@ -2951,6 +3207,12 @@ export default function ModelCanvas({
           x: groupResizing.anchorX + (snapshot.x - groupResizing.anchorX) * scaleX,
           y: groupResizing.anchorY + (snapshot.y - groupResizing.anchorY) * scaleY,
           radius: Math.max(20, snapshot.radius * radiusScale),
+          ...(normalizeConstructShape(construct.shape) === 'oval'
+            ? {
+                ovalWidth: Math.max(MIN_OVAL_DIMENSION, (snapshot.ovalWidth ?? getDefaultOvalDimensions(snapshot.radius).width) * Math.abs(scaleX)),
+                ovalHeight: Math.max(MIN_OVAL_DIMENSION, (snapshot.ovalHeight ?? getDefaultOvalDimensions(snapshot.radius).height) * Math.abs(scaleY)),
+              }
+            : {}),
         }
       })
 
@@ -2989,11 +3251,60 @@ export default function ModelCanvas({
       setDragGuideLines([])
       const handleSignX = resizing.handle === 'tl' || resizing.handle === 'bl' ? -1 : 1
       const handleSignY = resizing.handle === 'tl' || resizing.handle === 'tr' ? -1 : 1
+
+      if (resizing.startShape === 'oval') {
+        const handleAxis = resizing.handle === 'left' || resizing.handle === 'right'
+          ? 'horizontal'
+          : resizing.handle === 'top' || resizing.handle === 'bottom'
+            ? 'vertical'
+            : 'diagonal'
+
+        if (handleAxis === 'horizontal') {
+          const sideSignX = resizing.handle === 'left' ? -1 : 1
+          const projectedWidth = (mouseX - resizing.centerX) * sideSignX * 2
+          const newWidth = Math.max(MIN_OVAL_DIMENSION, Number.isFinite(projectedWidth) ? projectedWidth : resizing.startWidth)
+          setConstructs(prev => prev.map(c => c.id === resizing.id ? {
+            ...c,
+            ovalWidth: newWidth,
+            ovalHeight: resizing.startHeight,
+          } : c))
+          return
+        }
+
+        if (handleAxis === 'vertical') {
+          const sideSignY = resizing.handle === 'top' ? -1 : 1
+          const projectedHeight = (mouseY - resizing.centerY) * sideSignY * 2
+          const newHeight = Math.max(MIN_OVAL_DIMENSION, Number.isFinite(projectedHeight) ? projectedHeight : resizing.startHeight)
+          setConstructs(prev => prev.map(c => c.id === resizing.id ? {
+            ...c,
+            ovalWidth: resizing.startWidth,
+            ovalHeight: newHeight,
+          } : c))
+          return
+        }
+
+        if (handleAxis === 'diagonal') {
+          const projectedWidth = (mouseX - resizing.centerX) * handleSignX * 2
+          const projectedHeight = (mouseY - resizing.centerY) * handleSignY * 2
+          const widthScale = resizing.startWidth > 0 ? projectedWidth / resizing.startWidth : 1
+          const heightScale = resizing.startHeight > 0 ? projectedHeight / resizing.startHeight : 1
+          const aspectScale = Math.max(0.2, Number.isFinite(widthScale) ? widthScale : 1, Number.isFinite(heightScale) ? heightScale : 1)
+          const newWidth = Math.max(MIN_OVAL_DIMENSION, resizing.startWidth * aspectScale)
+          const newHeight = Math.max(MIN_OVAL_DIMENSION, resizing.startHeight * aspectScale)
+          setConstructs(prev => prev.map(c => c.id === resizing.id ? {
+            ...c,
+            ovalWidth: newWidth,
+            ovalHeight: newHeight,
+          } : c))
+          return
+        }
+      }
+
       const projectedRadius = Math.max(
         (mouseX - resizing.centerX) * handleSignX,
         (mouseY - resizing.centerY) * handleSignY,
       )
-      const newRadius = Math.max(20, Number.isFinite(projectedRadius) ? projectedRadius : resizing.startRadius)
+      const newRadius = Math.max(MIN_CONSTRUCT_RADIUS, Number.isFinite(projectedRadius) ? projectedRadius : resizing.startRadius)
       setConstructs(prev => prev.map(c => c.id === resizing.id ? { ...c, radius: newRadius } : c))
       return
     }
@@ -3134,10 +3445,7 @@ export default function ModelCanvas({
     }
     if (dragRef.current) { commit(constructs, paths); dragRef.current = null }
     if (isConnecting && connectStart && connectEnd) {
-      const over = constructs.find(c => {
-        const d = Math.sqrt(Math.pow(c.x - connectEnd.x, 2) + Math.pow(c.y - connectEnd.y, 2))
-        return d < c.radius + 10
-      })
+      const over = constructs.find(c => isPointInConstruct(c, connectEnd.x, connectEnd.y, 10))
       if (over && over.id !== connectStart) {
         const exists = paths.some((p) => p.kind !== 'moderation' && p.from === connectStart && p.to === over.id)
         if (!exists) {
@@ -3178,10 +3486,7 @@ export default function ModelCanvas({
     }
 
     if (dragPathRef.current && activePathDrag) {
-      const over = constructs.find(c => {
-        const d = Math.sqrt(Math.pow(c.x - activePathDrag.tx, 2) + Math.pow(c.y - activePathDrag.ty, 2))
-        return d < c.radius + 10
-      })
+      const over = constructs.find(c => isPointInConstruct(c, activePathDrag.tx, activePathDrag.ty, 10))
       if (over && over.id !== paths.find(p => p.id === activePathDrag.id)?.from) {
         const newP = paths.map(p => {
           if (p.id === activePathDrag.id) return { ...p, to: over.id }
@@ -3234,10 +3539,7 @@ export default function ModelCanvas({
     const mouseY = (e.clientY - rect.top - panY) / (zoom / 100)
 
     // Check if dropped on existing construct
-    const target = constructs.find(c => {
-      const dist = Math.sqrt(Math.pow(mouseX - c.x, 2) + Math.pow(mouseY - c.y, 2))
-      return dist < c.radius
-    })
+    const target = constructs.find(c => isPointInConstruct(c, mouseX, mouseY))
 
     if (target) {
       // Add to existing
@@ -3268,7 +3570,17 @@ export default function ModelCanvas({
   const onResizeHandleMouseDown = (e: React.MouseEvent, id: string, handle: ResizeHandle) => {
     e.stopPropagation()
     const c = constructs.find(x => x.id === id)!
-    setResizing({ id, handle, centerX: c.x, centerY: c.y, startRadius: c.radius })
+    const { width, height } = getConstructDimensions(c)
+    setResizing({
+      id,
+      handle,
+      centerX: c.x,
+      centerY: c.y,
+      startRadius: c.radius,
+      startWidth: width,
+      startHeight: height,
+      startShape: normalizeConstructShape(c.shape),
+    })
   }
 
   const onPathHandleMouseDown = (e: React.MouseEvent, id: string) => {
@@ -3358,7 +3670,7 @@ export default function ModelCanvas({
     if (activeSelectedConstructs.length < 2) return null
     const minX = Math.min(...activeSelectedConstructs.map(c => c.x))
     const maxX = Math.max(...activeSelectedConstructs.map(c => c.x))
-    const topY = Math.min(...activeSelectedConstructs.map(c => c.y - c.radius))
+    const topY = Math.min(...activeSelectedConstructs.map(c => c.y - getConstructRadii(c).ry))
     
     // Convert to screen space
     const screenX = ((minX + maxX) / 2) * (zoom / 100) + panX
@@ -3975,7 +4287,9 @@ export default function ModelCanvas({
 
             {constructs.map(c => {
               const showConstructBounds = selected.includes(c.id) && !hasUnifiedSelectionBounds
-              const resFontSize = Math.max(9, c.radius * 0.32)
+              const constructRadii = getConstructRadii(c)
+              const isOval = normalizeConstructShape(c.shape) === 'oval'
+              const resFontSize = Math.max(9, Math.min(constructRadii.rx, constructRadii.ry) * 0.36)
               const constructLabelColor = !c.labelColor || c.labelColor === '#FFFFFF'
                 ? 'var(--color-text-primary)'
                 : c.labelColor
@@ -3987,7 +4301,7 @@ export default function ModelCanvas({
                     const { ix, iy, labelW, labelH, dir } = getIndicatorLayout(c, ind, i)
                     const indId = `${c.id}:${ind.name}`
                     const showIndicatorSelection = selected.includes(indId) && !hasUnifiedSelectionBounds
-                    const p = indicatorPath(c.x, c.y, ix, iy, labelW, labelH, c.type, dir)
+                    const p = indicatorPath(c, ix, iy, labelW, labelH, c.type, dir)
                     const liveVal = realtimeEnabled ? liveLoadings[`${c.name}::${ind.name}`] : undefined
                     const hasLive = typeof liveVal === 'number' && Number.isFinite(liveVal)
                     let pathSegments: { seg1: string; seg2: string; midX: number; midY: number } | null = null
@@ -4055,8 +4369,8 @@ export default function ModelCanvas({
                     style={{ cursor: hasUnifiedSelectionBounds && selected.includes(c.id) ? 'default' : 'grab' }}
                   >
                     {/* Shape */}
-                    {c.shape === 'square' ? (
-                      <rect x={-c.radius} y={-c.radius} width={c.radius * 2} height={c.radius * 2} fill={c.color} stroke="none" rx={4} />
+                    {isOval ? (
+                      <ellipse rx={constructRadii.rx} ry={constructRadii.ry} fill={c.color} stroke="none" />
                     ) : (
                       <circle r={c.radius} fill={c.color} stroke="none" />
                     )}
@@ -4079,19 +4393,45 @@ export default function ModelCanvas({
 
                     {/* Bounding Box */}
                     {showConstructBounds && (
-                      <g transform={`translate(${-c.radius},${-c.radius})`}>
-                        <rect width={c.radius * 2} height={c.radius * 2} fill="none" stroke="var(--color-text-primary)" strokeWidth={1} />
-                        {([
-                          { x: 0, y: 0, h: 'tl' }, { x: c.radius * 2, y: 0, h: 'tr' },
-                          { x: 0, y: c.radius * 2, h: 'bl' }, { x: c.radius * 2, y: c.radius * 2, h: 'br' }
-                        ] as Array<{ x: number; y: number; h: ResizeHandle }>).map(h => (
-                          <rect 
-                            key={h.h} x={h.x - 3} y={h.y - 3} width={6} height={6} 
-                            fill="var(--color-text-primary)" stroke={C.secondary} strokeWidth={1}
-                            onMouseDown={e => onResizeHandleMouseDown(e, c.id, h.h)}
-                            style={{ cursor: (h.h === 'tl' || h.h === 'br') ? 'nwse-resize' : 'nesw-resize' }}
-                          />
-                        ))}
+                      <g transform={`translate(${-constructRadii.rx},${-constructRadii.ry})`}>
+                        <rect width={constructRadii.rx * 2} height={constructRadii.ry * 2} fill="none" stroke="var(--color-text-primary)" strokeWidth={1} />
+                        {(() => {
+                          const cornerResizeHandles = [
+                            { x: 0, y: 0, h: 'tl' as ResizeHandle },
+                            { x: constructRadii.rx * 2, y: 0, h: 'tr' as ResizeHandle },
+                            { x: 0, y: constructRadii.ry * 2, h: 'bl' as ResizeHandle },
+                            { x: constructRadii.rx * 2, y: constructRadii.ry * 2, h: 'br' as ResizeHandle },
+                          ]
+                          const sideResizeHandles = isOval ? [
+                            { x: 0, y: constructRadii.ry, h: 'left' as ResizeHandle },
+                            { x: constructRadii.rx * 2, y: constructRadii.ry, h: 'right' as ResizeHandle },
+                            { x: constructRadii.rx, y: 0, h: 'top' as ResizeHandle },
+                            { x: constructRadii.rx, y: constructRadii.ry * 2, h: 'bottom' as ResizeHandle },
+                          ] : []
+                          return [...cornerResizeHandles, ...sideResizeHandles].map((h) => {
+                            const isSideHandle = h.h === 'left' || h.h === 'right' || h.h === 'top' || h.h === 'bottom'
+                            const cursor = h.h === 'left' || h.h === 'right'
+                              ? 'ew-resize'
+                              : h.h === 'top' || h.h === 'bottom'
+                                ? 'ns-resize'
+                                : (h.h === 'tl' || h.h === 'br') ? 'nwse-resize' : 'nesw-resize'
+                            return (
+                              <rect
+                                key={h.h}
+                                x={h.x - (isSideHandle ? 4 : 3)}
+                                y={h.y - (isSideHandle ? 4 : 3)}
+                                width={isSideHandle ? 8 : 6}
+                                height={isSideHandle ? 8 : 6}
+                                rx={isSideHandle ? 4 : 0}
+                                fill={isSideHandle ? C.surface : 'var(--color-text-primary)'}
+                                stroke={C.secondary}
+                                strokeWidth={1}
+                                onMouseDown={e => onResizeHandleMouseDown(e, c.id, h.h)}
+                                style={{ cursor }}
+                              />
+                            )
+                          })
+                        })()}
                       </g>
                     )}
                   </g>
@@ -4396,11 +4736,11 @@ export default function ModelCanvas({
                       cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                     }}
                   >
-                    <Circle size={14} color={(selectedConstruct?.shape || 'circle') === 'circle' ? C.secondary : C.textDim} weight="fill" />
-                    <span style={{ fontSize: 11, color: (selectedConstruct?.shape || 'circle') === 'circle' ? C.secondary : C.textDim, fontWeight: 700 }}>Circle</span>
+                    <Circle size={14} color={normalizeConstructShape(selectedConstruct?.shape) === 'circle' ? C.secondary : C.textDim} weight="fill" />
+                    <span style={{ fontSize: 11, color: normalizeConstructShape(selectedConstruct?.shape) === 'circle' ? C.secondary : C.textDim, fontWeight: 700 }}>Circle</span>
                   </button>
                   <button 
-                    onClick={() => updateSelected({ shape: 'square' })}
+                    onClick={() => updateSelected({ shape: 'oval' })}
                     style={{ 
                       flex: 1, height: 32, borderRadius: 8,
                       border: 'none',
@@ -4409,87 +4749,176 @@ export default function ModelCanvas({
                       cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                     }}
                   >
-                    <SquaresFour size={14} color={selectedConstruct?.shape === 'square' ? C.secondary : C.textDim} weight="fill" />
-                    <span style={{ fontSize: 11, color: selectedConstruct?.shape === 'square' ? C.secondary : C.textDim, fontWeight: 700 }}>Square</span>
+                    <Circle
+                      size={14}
+                      color={normalizeConstructShape(selectedConstruct?.shape) === 'oval' ? C.secondary : C.textDim}
+                      weight="fill"
+                      style={{ transform: 'scaleX(1.35)' }}
+                    />
+                    <span style={{ fontSize: 11, color: normalizeConstructShape(selectedConstruct?.shape) === 'oval' ? C.secondary : C.textDim, fontWeight: 700 }}>Oval</span>
                   </button>
                 </div>
               </div>
 
               {/* Construct Size */}
               <div style={{ padding: '12px 14px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>Size</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={selectedConstruct ? (constructSizeFocused ? constructSizeDraft : Math.round(selectedConstruct.radius * 2)) : ''}
-                    disabled={!selectedConstruct}
-                    onFocus={() => {
-                      if (!selectedConstruct) return
-                      setConstructSizeDraft(String(Math.round(selectedConstruct.radius * 2)))
-                      setConstructSizeFocused(true)
-                    }}
-                    onBlur={() => {
-                      setConstructSizeFocused(false)
-                      setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
-                    }}
-                    onChange={(e) => setConstructSizeDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        commitConstructSizeDraft()
-                      }
-                      if (e.key === 'Escape') {
-                        e.preventDefault()
-                        setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
+                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>
+                  {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) === 'oval' ? 'Width / Height' : 'Size'}
+                </span>
+                {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) === 'oval' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {([
+                      { label: 'W', value: constructWidthDraft, setValue: setConstructWidthDraft },
+                      { label: 'H', value: constructHeightDraft, setValue: setConstructHeightDraft },
+                    ] as const).map((field) => (
+                      <label key={field.label} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontSize: 9, color: C.textDim, fontFamily: 'DM Sans, sans-serif', fontWeight: 800 }}>{field.label}</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={field.value}
+                          onFocus={() => setConstructDimensionsFocused(true)}
+                          onBlur={() => {
+                            setConstructDimensionsFocused(false)
+                            const { width, height } = getConstructDimensions(selectedConstruct)
+                            setConstructWidthDraft(String(Math.round(width)))
+                            setConstructHeightDraft(String(Math.round(height)))
+                          }}
+                          onChange={(e) => field.setValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              commitConstructDimensionsDraft()
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              const { width, height } = getConstructDimensions(selectedConstruct)
+                              setConstructWidthDraft(String(Math.round(width)))
+                              setConstructHeightDraft(String(Math.round(height)))
+                              setConstructDimensionsFocused(false)
+                              e.currentTarget.blur()
+                            }
+                          }}
+                          style={{
+                            minWidth: 0,
+                            height: 26,
+                            borderRadius: 6,
+                            border: `1px solid ${C.border}`,
+                            backgroundColor: C.elevated,
+                            color: C.text,
+                            padding: '0 6px',
+                            fontSize: 10,
+                            fontFamily: 'DM Sans, sans-serif',
+                            outline: 'none',
+                            width: '100%',
+                          }}
+                        />
+                      </label>
+                    ))}
+                    <button
+                      onMouseDown={(e) => {
+                        if (constructDimensionsFocused) e.preventDefault()
+                      }}
+                      onClick={() => {
+                        if (constructDimensionsFocused) {
+                          commitConstructDimensionsDraft()
+                          return
+                        }
+                        const defaults = getDefaultOvalDimensions(DEFAULT_CONSTRUCT_RADIUS)
+                        updateSelected({ radius: DEFAULT_CONSTRUCT_RADIUS, ovalWidth: defaults.width, ovalHeight: defaults.height })
+                      }}
+                      style={{
+                        height: 26,
+                        borderRadius: 6,
+                        border: `1px solid ${C.border}`,
+                        backgroundColor: 'var(--color-border)',
+                        color: C.textSec,
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'DM Sans, sans-serif',
+                        fontWeight: 700,
+                        padding: '0 10px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {constructDimensionsFocused ? 'Use' : 'Reset'}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={selectedConstruct ? (constructSizeFocused ? constructSizeDraft : Math.round(selectedConstruct.radius * 2)) : ''}
+                      disabled={!selectedConstruct}
+                      onFocus={() => {
+                        if (!selectedConstruct) return
+                        setConstructSizeDraft(String(Math.round(selectedConstruct.radius * 2)))
+                        setConstructSizeFocused(true)
+                      }}
+                      onBlur={() => {
                         setConstructSizeFocused(false)
-                        e.currentTarget.blur()
-                      }
-                    }}
-                    style={{
-                      height: 26,
-                      borderRadius: 6,
-                      border: `1px solid ${C.border}`,
-                      backgroundColor: C.elevated,
-                      color: C.text,
-                      padding: '0 6px',
-                      fontSize: 10,
-                      fontFamily: 'DM Sans, sans-serif',
-                      outline: 'none',
-                      opacity: selectedConstruct ? 1 : 0.5,
-                      flex: 1,
-                    }}
-                  />
-                  <button
-                    disabled={!selectedConstruct}
-                    onMouseDown={(e) => {
-                      if (constructSizeFocused) e.preventDefault()
-                    }}
-                    onClick={() => {
-                      if (constructSizeFocused) {
-                        commitConstructSizeDraft()
-                        return
-                      }
-                      updateSelected({ radius: DEFAULT_CONSTRUCT_RADIUS })
-                    }}
-                    style={{
-                      height: 26,
-                      borderRadius: 6,
-                      border: `1px solid ${C.border}`,
-                      backgroundColor: selectedConstruct ? 'var(--color-border)' : C.elevated,
-                      color: selectedConstruct ? C.textSec : C.textMuted,
-                      cursor: selectedConstruct ? 'pointer' : 'not-allowed',
-                      fontSize: 10,
-                      fontFamily: 'DM Sans, sans-serif',
-                      fontWeight: 700,
-                      padding: '0 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {constructSizeFocused ? 'Use size' : 'Auto size'}
-                  </button>
-                </div>
+                        setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
+                      }}
+                      onChange={(e) => setConstructSizeDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          commitConstructSizeDraft()
+                        }
+                        if (e.key === 'Escape') {
+                          e.preventDefault()
+                          setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
+                          setConstructSizeFocused(false)
+                          e.currentTarget.blur()
+                        }
+                      }}
+                      style={{
+                        height: 26,
+                        borderRadius: 6,
+                        border: `1px solid ${C.border}`,
+                        backgroundColor: C.elevated,
+                        color: C.text,
+                        padding: '0 6px',
+                        fontSize: 10,
+                        fontFamily: 'DM Sans, sans-serif',
+                        outline: 'none',
+                        opacity: selectedConstruct ? 1 : 0.5,
+                        flex: 1,
+                      }}
+                    />
+                    <button
+                      disabled={!selectedConstruct}
+                      onMouseDown={(e) => {
+                        if (constructSizeFocused) e.preventDefault()
+                      }}
+                      onClick={() => {
+                        if (constructSizeFocused) {
+                          commitConstructSizeDraft()
+                          return
+                        }
+                        updateSelected({ radius: DEFAULT_CONSTRUCT_RADIUS })
+                      }}
+                      style={{
+                        height: 26,
+                        borderRadius: 6,
+                        border: `1px solid ${C.border}`,
+                        backgroundColor: selectedConstruct ? 'var(--color-border)' : C.elevated,
+                        color: selectedConstruct ? C.textSec : C.textMuted,
+                        cursor: selectedConstruct ? 'pointer' : 'not-allowed',
+                        fontSize: 10,
+                        fontFamily: 'DM Sans, sans-serif',
+                        fontWeight: 700,
+                        padding: '0 10px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {constructSizeFocused ? 'Use size' : 'Auto size'}
+                    </button>
+                  </div>
+                )}
               </div>
 
 
@@ -4784,13 +5213,13 @@ export default function ModelCanvas({
           onClick={triggerModalAlert}
         >
           <div
-            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(e) => e.stopPropagation()}
             style={{ 
               backgroundColor: 'var(--color-elevated)',
               borderRadius: 12,
               border: '1px solid var(--color-border)',
-              boxShadow: '0 16px 40px rgba(0,0,0,0.8)',
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
             <div style={{ padding: 24 }}>
@@ -4881,9 +5310,9 @@ export default function ModelCanvas({
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className={`w-[520px] bg-[var(--color-elevated)] rounded-lg overflow-hidden border border-white/10 shadow-2xl transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`w-[520px] bg-[var(--color-elevated)] rounded-lg overflow-hidden border border-white/10 transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             style={{ 
-              display: 'flex', flexDirection: 'column'
+              display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-modal)'
             }}
           >
             {/* Modal Title Bar */}
@@ -5117,13 +5546,13 @@ export default function ModelCanvas({
           onClick={() => triggerModalAlert()}
         >
           <div
-            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(e) => e.stopPropagation()}
             style={{ 
               backgroundColor: 'var(--color-elevated)',
               borderRadius: 12,
               border: '1px solid var(--color-border)',
-              boxShadow: C.floatingPanelShadow,
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
             <div style={{ padding: '24px 24px 16px' }}>
@@ -5233,11 +5662,11 @@ export default function ModelCanvas({
           }}
         >
           <div
-            className={`w-[420px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`w-[420px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(e) => e.stopPropagation()}
             style={{ 
               backgroundColor: 'var(--color-elevated)', borderRadius: 12, border: '1px solid var(--color-border)',
-              boxShadow: '0 24px 60px rgba(0,0,0,0.9)',
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
             <div style={{ padding: '24px 24px 16px' }}>
@@ -5258,13 +5687,13 @@ export default function ModelCanvas({
                 onClick={() => setCautionModal({ open: false, title: '', message: '' })}
               >
                 <div
-                  className="w-[460px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden"
+                  className="w-[460px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden"
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     backgroundColor: 'var(--color-elevated)',
                     borderRadius: 12,
                     border: '1px solid var(--color-border)',
-                    boxShadow: '0 24px 60px rgba(0,0,0,0.9)',
+                    boxShadow: 'var(--shadow-modal)',
                   }}
                 >
                   <div style={{ padding: '24px 24px 16px' }}>
@@ -5431,7 +5860,7 @@ const ModalSelect = ({ label, id, value, options, activeSelect, setActiveSelect,
       <div style={{ 
         position: 'absolute', top: '100%', left: 0, right: 0, 
         backgroundColor: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 6,
-        marginTop: 2, padding: 4, overflow: 'hidden', boxShadow: '0 8px 16px rgba(0,0,0,0.5)',
+        marginTop: 2, padding: 4, overflow: 'hidden', boxShadow: 'var(--shadow-modal-popover)',
         zIndex: 4100
       }}>
         {options.map((o: string) => (

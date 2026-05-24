@@ -60,3 +60,4 @@ export function isDatasetChild(child: WorkspaceChild | null | undefined): child 
 export function isModelChild(child: WorkspaceChild | null | undefined): child is WorkspaceModelChild {
   return Boolean(child && child.type === 'model')
 }
+

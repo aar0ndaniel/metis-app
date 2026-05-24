@@ -65,6 +65,9 @@ const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
 const METIS_TOUR_COMPLETED_KEY = 'metis:tour-completed'
 const LEGACY_TOUR_COMPLETED_KEY = 'pls:tour-completed'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
+const METIS_FEEDBACK_URL = 'https://metis.emend.it.com/submit-feedback.html'
+const METIS_BUG_REPORT_URL = 'https://github.com/aar0ndaniel/metis-app/issues/new?labels=bug'
+const METIS_CITATION_URL = 'https://metis.emend.it.com/how-to-cite.html'
 
 function getSavedTheme(): AppTheme {
   const raw = localStorage.getItem(METIS_PREF_THEME_KEY) ?? localStorage.getItem(LEGACY_PREF_THEME_KEY)
@@ -128,6 +131,13 @@ function normalizeWorkspacePayload(detail: unknown): Workspace[] | null {
 
   if (detail.workspaces.length > 0 && normalized.length === 0) return null
   return normalized
+}
+
+function collapseWorkspaceFoldersForStartup(workspaces: Workspace[]): Workspace[] {
+  return workspaces.map((workspace) => ({
+    ...workspace,
+    expanded: false,
+  }))
 }
 
 type DatasetImportedPayload = {
@@ -231,7 +241,7 @@ function AppShell() {
         const result = await (window as any).electronAPI?.listWorkspaces?.()
         if (result?.success && Array.isArray(result.workspaces) && result.workspaces.length > 0) {
           const migrated = result.workspaces.map((workspace: Workspace) => migrateWorkspace(workspace))
-          setWorkspaces(migrated)
+          setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
           setActiveWorkspaceId(migrated[0].id)
           addDiagnostic({
             category: 'workspace',
@@ -246,7 +256,7 @@ function AppShell() {
           const parsed = backup ? JSON.parse(backup) : []
           if (Array.isArray(parsed) && parsed.length > 0) {
             const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
-            setWorkspaces(migrated)
+            setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
             setActiveWorkspaceId(migrated[0].id)
             addDiagnostic({
               category: 'workspace',
@@ -279,7 +289,7 @@ function AppShell() {
         const parsed = backup ? JSON.parse(backup) : []
         if (Array.isArray(parsed) && parsed.length > 0) {
           const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
-          setWorkspaces(migrated)
+          setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
           setActiveWorkspaceId(migrated[0].id)
           addDiagnostic({
             category: 'workspace',
@@ -866,6 +876,9 @@ function AppShell() {
       if (action === 'open-tark')        { setTarkOpen(true); return }
       if (action === 'open-about')       { setPrefsInitialTab('updates'); setPrefsOpen(true); return }
       if (action === 'open-docs')        { openMetisExternal(METIS_DOCS_URL); return }
+      if (action === 'open-feedback')    { openMetisExternal(METIS_FEEDBACK_URL); return }
+      if (action === 'open-report-bug')  { openMetisExternal(METIS_BUG_REPORT_URL); return }
+      if (action === 'open-cite-metis')  { openMetisExternal(METIS_CITATION_URL); return }
       if (action === 'open-tour')        { setShowTour(true);  return }
       if (action === 'new-workspace')    { setNewWsOpen(true); return }
       if (action === 'new-model')        { setNewModelOpen(true); return }
@@ -1216,7 +1229,7 @@ function AppShell() {
               background: 'var(--color-surface)',
               border: '1px solid var(--color-border)',
               borderRadius: 14,
-              boxShadow: 'var(--shadow-floating-panel)',
+              boxShadow: 'var(--shadow-modal)',
               overflow: 'hidden',
             }}
           >

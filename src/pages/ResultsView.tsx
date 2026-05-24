@@ -71,12 +71,16 @@ import {
   extractPlsLmComparisonRows,
   extractQ2PredictRows,
   formatBottleneckDisplayValue,
+  formatBottleneckOutcomeLevel,
   formatPreciseNumber,
   getDefaultPanelTableView,
   getPanelTableViews,
+  isBottleneckMetaField,
+  isBottleneckOutcomeField,
   isBootstrapSignificancePanel,
   buildIndirectEffectPairLookup,
   buildTotalEffectPairLookup,
+  normalizeBottleneckRowsForDisplay,
   normalizeBootstrapSignificanceRows,
   normalizeIndexedTableLabel,
   shouldRenderBlankPanelCell,
@@ -1263,10 +1267,11 @@ function formatDisplayValue(
   cellContext?: PanelCellDisplayContext
 ): string {
   if (shouldRenderBlankPanelCell(selectedPanel, header, value, cellContext)) return ''
-  if (value == null) return '—'
   if (selectedPanel === 'bottleneck-table' && !isRowField(header ?? '')) {
+    if (isBottleneckOutcomeField(header)) return formatBottleneckOutcomeLevel(value)
     return formatBottleneckDisplayValue(value)
   }
+  if (value == null) return '—'
   if (header && isPValueHeader(header)) return formatPValueDisplay(value)
 
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -1301,6 +1306,256 @@ function formatDisplayValue(
     return trimmed
   }
   return String(value)
+}
+
+const ADVANCED_RESULT_TABLE_PANELS = new Set([
+  'priority-map',
+  'construct-table',
+  'necessity-check',
+  'bottleneck-table',
+  'cipma-priorities',
+])
+
+function normalizeAdvancedHeader(header?: string): string {
+  return String(header ?? '').trim().replace(/[\s_.()-]+/g, '').toLowerCase()
+}
+
+function normalizeBottleneckConstructHeader(header?: string): string {
+  return String(header ?? '').trim().replace(/[\s_.()%/-]+/g, '').toLowerCase()
+}
+
+function isAdvancedResultTablePanel(analysisMode?: string, selectedPanel?: string): boolean {
+  return analysisMode === 'advanced' && !!selectedPanel && ADVANCED_RESULT_TABLE_PANELS.has(selectedPanel)
+}
+
+function getAdvancedTargetConstruct(analysisResults: any): string {
+  return String(
+    analysisResults?.meta?.analysis_settings?.advanced?.targetConstruct ??
+    analysisResults?.algorithm?.settings?.target_construct ??
+    analysisResults?.algorithm?.settings?.targetConstruct ??
+    ''
+  ).trim()
+}
+
+function isBottleneckTargetConditionColumn(header: string, targetConstruct?: string): boolean {
+  if (!targetConstruct) return false
+  if (isBottleneckOutcomeField(header) || isBottleneckMetaField(header) || isRowField(header)) return false
+  return normalizeBottleneckConstructHeader(header) === normalizeBottleneckConstructHeader(targetConstruct)
+}
+
+function getBottleneckTableHeaders(
+  allHeaders: string[],
+  targetConstruct?: string,
+  includeMetaColumns = false
+): string[] {
+  const metaHeaders = includeMetaColumns
+    ? ['Method', 'Ceiling'].filter((header) => allHeaders.includes(header))
+    : []
+  const dataHeaders = allHeaders.filter((header) =>
+    !isBottleneckMetaField(header) &&
+    !isRowField(header) &&
+    !isBottleneckTargetConditionColumn(header, targetConstruct)
+  )
+  const levelHeader = dataHeaders.find((header) => isBottleneckOutcomeField(header))
+  const conditionHeaders = levelHeader
+    ? dataHeaders.filter((header) => header !== levelHeader)
+    : dataHeaders
+
+  return levelHeader
+    ? [...metaHeaders, levelHeader, ...conditionHeaders]
+    : [...metaHeaders, ...conditionHeaders]
+}
+
+function isAdvancedSemanticHeader(header?: string): boolean {
+  const normalized = normalizeAdvancedHeader(header)
+  return [
+    'priority',
+    'highimportance',
+    'necessary',
+    'sufficient',
+    'important',
+    'importantdriver',
+    'driver',
+  ].includes(normalized)
+}
+
+function isAdvancedBooleanLabel(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'true' || normalized === 'false' || normalized === 'yes' || normalized === 'no'
+}
+
+function shouldRenderAdvancedPriorityPill(header: string, displayValue: string, isLastColumn: boolean): boolean {
+  if (isAdvancedBooleanLabel(displayValue)) return false
+  const normalizedHeader = normalizeAdvancedHeader(header)
+  const normalizedValue = displayValue.trim().toLowerCase()
+  return normalizedHeader === 'priority' || (
+    isLastColumn &&
+    (
+      normalizedValue.includes('low priority') ||
+      normalizedValue.includes('important driver')
+    )
+  )
+}
+
+function isAdvancedNcaEffectHeader(header?: string): boolean {
+  const normalized = normalizeAdvancedHeader(header)
+  return normalized === 'ncad' || normalized === 'd' || normalized === 'effectsize'
+}
+
+function parseAdvancedCellNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const match = String(value ?? '').trim().match(/-?\d+(?:\.\d+)?/)
+  const parsed = match ? Number(match[0]) : NaN
+  return Number.isFinite(parsed) ? parsed : NaN
+}
+
+function getNcaEffectLevel(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 0.3) return 'medium'
+  if (abs >= 0.1) return 'small'
+  return 'weak'
+}
+
+function getAdvancedEffectTextColor(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 0.5) return 'var(--color-success)'
+  if (abs >= 0.3) return 'var(--color-warning)'
+  if (abs >= 0.1) return 'var(--color-danger)'
+  return 'var(--color-text-muted)'
+}
+
+type AdvancedSemanticTone = 'high' | 'moderate' | 'low' | 'neutral'
+
+function classifyAdvancedSemanticTone(value: string): AdvancedSemanticTone {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized || normalized === '—') return 'neutral'
+  if (
+    normalized === 'false' ||
+    normalized === 'no' ||
+    normalized.includes('not necessary') ||
+    normalized.includes('low') ||
+    normalized.includes('weak') ||
+    normalized.includes('concentrate') ||
+    normalized.includes('must improve')
+  ) {
+    return 'low'
+  }
+  if (
+    normalized === 'true' ||
+    normalized === 'yes' ||
+    normalized.includes('high') ||
+    normalized.includes('important driver') ||
+    normalized.includes('keep up') ||
+    normalized.includes('necessary')
+  ) {
+    return 'high'
+  }
+  if (
+    normalized.includes('moderate') ||
+    normalized.includes('medium') ||
+    normalized.includes('standard')
+  ) {
+    return 'moderate'
+  }
+  return 'neutral'
+}
+
+function getAdvancedPriorityBadgeStyle(priority: string) {
+  const tone = classifyAdvancedSemanticTone(priority)
+  if (tone === 'high') {
+    return {
+      color: 'var(--color-success)',
+      background: 'rgb(var(--color-success-rgb) / 0.13)',
+      border: '1px solid rgb(var(--color-success-rgb) / 0.22)',
+    }
+  }
+  if (tone === 'moderate') {
+    return {
+      color: 'var(--color-warning)',
+      background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)',
+      border: '1px solid color-mix(in srgb, var(--color-warning) 26%, transparent)',
+    }
+  }
+  if (tone === 'low') {
+    return {
+      color: 'var(--color-danger)',
+      background: 'rgb(var(--color-danger-rgb) / 0.12)',
+      border: '1px solid rgb(var(--color-danger-rgb) / 0.22)',
+    }
+  }
+  return {
+    color: 'var(--color-text-secondary)',
+    background: 'rgb(var(--color-hover-rgb) / 0.45)',
+    border: '1px solid var(--color-border)',
+  }
+}
+
+function renderAdvancedResultCell({
+  header,
+  rawValue,
+  displayValue,
+  isLastColumn = false,
+}: {
+  header: string
+  rawValue: unknown
+  displayValue: string
+  isLastColumn?: boolean
+}) {
+  if (shouldRenderAdvancedPriorityPill(header, displayValue, isLastColumn)) {
+    return (
+      <span
+        style={{
+          ...getAdvancedPriorityBadgeStyle(displayValue),
+          display: 'inline-flex',
+          alignItems: 'center',
+          minHeight: 22,
+          padding: '0 8px',
+          borderRadius: 999,
+          fontSize: 11,
+          fontWeight: 700,
+          lineHeight: '22px',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {displayValue}
+      </span>
+    )
+  }
+
+  if (isAdvancedSemanticHeader(header)) {
+    return (
+      <span
+        style={{
+          color: getAdvancedPriorityBadgeStyle(displayValue).color,
+          fontWeight: 700,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {displayValue}
+      </span>
+    )
+  }
+
+  if (isAdvancedNcaEffectHeader(header)) {
+    const value = parseAdvancedCellNumber(rawValue)
+    const hasLabel = /[a-z]/i.test(displayValue)
+    const content = Number.isFinite(value) && !hasLabel
+      ? `${formatPreciseNumber(value, 3)} ${getNcaEffectLevel(value)}`
+      : displayValue
+    return (
+      <span
+        className="tabular-nums"
+        style={{
+          color: Number.isFinite(value) ? getAdvancedEffectTextColor(value) : 'var(--color-text-secondary)',
+          fontWeight: 700,
+        }}
+      >
+        {content}
+      </span>
+    )
+  }
+
+  return displayValue
 }
 
 function normalizeRowFields(row: Record<string, unknown>): Record<string, unknown> {
@@ -1555,6 +1810,11 @@ function formatResultTableHeader(header: string, selectedPanel?: string): string
   if (selectedPanel === 'necessity-check' && normalizedHeader === 'd') {
     return 'Effect size (d)'
   }
+  if (selectedPanel === 'bottleneck-table') {
+    if (isBottleneckOutcomeField(header)) return 'Level (%)'
+    if (normalizedHeader === 'ceiling') return 'Ceiling line'
+    if (!isBottleneckMetaField(header) && normalizedHeader !== 'row') return `${String(header ?? '').replace(/_/g, ' ')} required (%)`
+  }
   if (normalizedHeader === 'row') {
     return 'Row'
   }
@@ -1564,14 +1824,20 @@ function formatResultTableHeader(header: string, selectedPanel?: string): string
 function buildExportTableHtml(
   rows: Array<Record<string, unknown>>,
   selectedPanel?: string,
-  getCellContext?: (row: Record<string, unknown>) => PanelCellDisplayContext | undefined
+  getCellContext?: (row: Record<string, unknown>) => PanelCellDisplayContext | undefined,
+  options: { bottleneckTargetConstruct?: string; includeBottleneckMetaColumns?: boolean } = {}
 ): string {
   if (!rows.length) {
     return '<div class="empty">No data available for this section.</div>'
   }
-  const normalizedRows = rows.map((row) => normalizeRowFields(row))
+  const sourceRows = selectedPanel === 'bottleneck-table'
+    ? normalizeBottleneckRowsForDisplay(rows)
+    : rows
+  const normalizedRows = sourceRows.map((row) => normalizeRowFields(row))
   const headers = Array.from(new Set(normalizedRows.flatMap((row) => Object.keys(row))))
-  const orderedHeaders = headers.includes('row') ? ['row', ...headers.filter((h) => h !== 'row')] : headers
+  const orderedHeaders = selectedPanel === 'bottleneck-table'
+    ? getBottleneckTableHeaders(headers, options.bottleneckTargetConstruct, options.includeBottleneckMetaColumns === true)
+    : headers.includes('row') ? ['row', ...headers.filter((h) => h !== 'row')] : headers
   const thead = `<thead><tr>${orderedHeaders.map((h) => `<th>${escapeHtml(formatResultTableHeader(h, selectedPanel))}</th>`).join('')}</tr></thead>`
   const tbody = `<tbody>${normalizedRows.map((row) => {
     const cellContext = getCellContext?.(row)
@@ -2464,44 +2730,48 @@ function PathCoefficientTable({ rows, view }: { rows: PathRow[]; view: ResultsTa
   const { cols, matRows } = buildCrossMatrix(rows)
 
   if (view === 'matrix') {
+    const table = (
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-primary/20">
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10"
+              style={{ minWidth: 70 }}>
+              From \ To
+            </th>
+            {cols.map(col => (
+              <th key={col} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
+                {col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matRows.map((row, idx) => (
+            <tr key={row.id} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 font-semibold text-text-primary border-b border-border/40 sticky left-0 z-10"
+                style={resultsTableRowStyle(idx)}>
+                {row.id}
+              </td>
+              {cols.map(col => {
+                const val = row.data[col]
+                const matchRow = rows.find(r => r.path === `${row.id} → ${col}`)
+                return (
+                  <td key={col} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
+                    {val !== null
+                      ? <span className="font-medium" style={{ color: coefColorFromP(matchRow?.pValue) }}>{formatPreciseNumber(val, getDecimals())}</span>
+                      : <span className="text-text-muted/30">—</span>}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+
     return (
       <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-primary/20">
-              <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10"
-                style={{ minWidth: 70 }}>
-                From \ To
-              </th>
-              {cols.map(col => (
-                <th key={col} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
-                  {col}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matRows.map((row, idx) => (
-              <tr key={row.id} style={resultsTableRowStyle(idx)}>
-                <td className="px-4 py-2 font-semibold text-text-primary border-b border-border/40 sticky left-0 z-10"
-                  style={resultsTableRowStyle(idx)}>
-                  {row.id}
-                </td>
-                {cols.map(col => {
-                  const val = row.data[col]
-                  const matchRow = rows.find(r => r.path === `${row.id} → ${col}`)
-                  return (
-                    <td key={col} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
-                      {val !== null
-                        ? <span className="font-medium" style={{ color: coefColorFromP(matchRow?.pValue) }}>{formatPreciseNumber(val, getDecimals())}</span>
-                        : <span className="text-text-muted/30">—</span>}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {table}
       </div>
     )
   }
@@ -2611,46 +2881,50 @@ function OuterLoadingsTable({
 
   if (view === 'matrix') {
     const { cols, matRows } = buildMeasurementMatrix(sortedRows)
+    const table = (
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-primary/20">
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
+              Indicator
+            </th>
+            {cols.map((construct) => (
+              <th key={construct} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[96px]">
+                {construct}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matRows.map((row, idx) => (
+            <tr key={row.id} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
+                style={resultsTableRowStyle(idx)}>
+                {row.id}
+              </td>
+              {cols.map((construct) => {
+                const val = row.data[construct]
+                return (
+                  <td key={construct} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
+                    {val == null ? (
+                      <span className="text-text-muted/30">—</span>
+                    ) : (
+                      <span className="font-medium" style={{ color: getOuterLoadingColor(val, 'var(--color-text-secondary)') }}>
+                        {fmtNum(val)}
+                      </span>
+                    )}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+
     return (
       <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-primary/20">
-              <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
-                Indicator
-              </th>
-              {cols.map((construct) => (
-                <th key={construct} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[96px]">
-                  {construct}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matRows.map((row, idx) => (
-              <tr key={row.id} style={resultsTableRowStyle(idx)}>
-                <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
-                  style={resultsTableRowStyle(idx)}>
-                  {row.id}
-                </td>
-                {cols.map((construct) => {
-                  const val = row.data[construct]
-                  return (
-                    <td key={construct} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
-                      {val == null ? (
-                        <span className="text-text-muted/30">—</span>
-                      ) : (
-                        <span className="font-medium" style={{ color: getOuterLoadingColor(val, 'var(--color-text-secondary)') }}>
-                          {fmtNum(val)}
-                        </span>
-                      )}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {table}
       </div>
     )
   }
@@ -2859,55 +3133,59 @@ function CrossLoadingsTable({ ar }: { ar: any }) {
   const allKeys = Array.from(new Set(raw.flatMap((r: any) => Object.keys(r))))
   const constructs = allKeys.filter(k => k !== 'row_name' && k !== 'indicator' && k !== 'Indicator')
 
+  const table = (
+    <table className="w-full text-xs border-collapse">
+      <thead>
+        <tr className="bg-primary/20">
+          <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
+            Indicator
+          </th>
+          {constructs.map(c => (
+            <th key={c} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
+              {c}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {raw.map((r: any, idx: number) => {
+          const indicator = String(r.row_name ?? r.indicator ?? r.Indicator ?? '')
+          // Find max absolute loading to highlight the primary construct
+          const vals = constructs.map(c => toNum(r[c], NaN)).filter(v => Number.isFinite(v))
+          const maxAbs = vals.length > 0 ? Math.max(...vals.map(Math.abs)) : NaN
+
+          return (
+            <tr key={idx} style={resultsTableRowStyle(idx)}>
+              <td
+                className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
+                style={resultsTableRowStyle(idx)}
+              >
+                {indicator}
+              </td>
+              {constructs.map(c => {
+                const val = toNum(r[c], NaN)
+                const isPrimary = Number.isFinite(val) && Number.isFinite(maxAbs) && Math.abs(Math.abs(val) - maxAbs) < 0.0001
+                const primaryColor = getOuterLoadingColor(val, 'var(--color-text-secondary)')
+                return (
+                  <td
+                    key={c}
+                    className={`px-4 py-2 text-center border-b border-border/40 tabular-nums ${isPrimary ? 'font-semibold' : 'text-text-secondary'}`}
+                    style={isPrimary ? { color: primaryColor } : undefined}
+                  >
+                    {Number.isFinite(val) ? fmtNum(val) : '—'}
+                  </td>
+                )
+              })}
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
-        <thead>
-          <tr className="bg-primary/20">
-            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
-              Indicator
-            </th>
-            {constructs.map(c => (
-              <th key={c} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {raw.map((r: any, idx: number) => {
-            const indicator = String(r.row_name ?? r.indicator ?? r.Indicator ?? '')
-            // Find max absolute loading to highlight the primary construct
-            const vals = constructs.map(c => toNum(r[c], NaN)).filter(v => Number.isFinite(v))
-            const maxAbs = vals.length > 0 ? Math.max(...vals.map(Math.abs)) : NaN
-
-            return (
-              <tr key={idx} style={resultsTableRowStyle(idx)}>
-                <td
-                  className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
-                  style={resultsTableRowStyle(idx)}
-                >
-                  {indicator}
-                </td>
-                {constructs.map(c => {
-                  const val = toNum(r[c], NaN)
-                  const isPrimary = Number.isFinite(val) && Number.isFinite(maxAbs) && Math.abs(Math.abs(val) - maxAbs) < 0.0001
-                  const primaryColor = getOuterLoadingColor(val, 'var(--color-text-secondary)')
-                  return (
-                    <td
-                      key={c}
-                      className={`px-4 py-2 text-center border-b border-border/40 tabular-nums ${isPrimary ? 'font-semibold' : 'text-text-secondary'}`}
-                      style={isPrimary ? { color: primaryColor } : undefined}
-                    >
-                      {Number.isFinite(val) ? fmtNum(val) : '—'}
-                    </td>
-                  )
-                })}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+      {table}
       <div className="px-4 py-2 text-[10px] text-text-muted">
         Highlighted values indicate the highest loading for each indicator. For reflective constructs, each indicator should load highest on its own construct.
       </div>
@@ -3077,18 +3355,104 @@ function ExecutionLogPanel({ log }: { log: string }) {
   )
 }
 
+function BottleneckDataTable({ rows, targetConstruct }: { rows: Array<Record<string, unknown>>; targetConstruct?: string }) {
+  const normalizedRows = normalizeBottleneckRowsForDisplay(rows).map((row) => normalizeRowFields(row))
+  const groupedRows = new Map<string, Array<Record<string, unknown>>>()
+
+  normalizedRows.forEach((row) => {
+    const ceiling = String(row.Ceiling ?? row.ceiling ?? 'Bottleneck').trim() || 'Bottleneck'
+    const rowsForCeiling = groupedRows.get(ceiling) ?? []
+    rowsForCeiling.push(row)
+    groupedRows.set(ceiling, rowsForCeiling)
+  })
+
+  const ceilingGroups = Array.from(groupedRows.entries()).sort(([a], [b]) => {
+    const rank = (label: string) => /ce[\s_-]*fdh/i.test(label) ? 0 : /cr[\s_-]*fdh/i.test(label) ? 1 : 2
+    return rank(a) - rank(b) || a.localeCompare(b)
+  })
+  const [activeCeiling, setActiveCeiling] = useState(ceilingGroups[0]?.[0] ?? '')
+
+  if (!groupedRows.size) {
+    return <EmptyTableState label="No bottleneck table available for this run." />
+  }
+
+  const activeGroup = ceilingGroups.find(([ceiling]) => ceiling === activeCeiling) ?? ceilingGroups[0]
+  const [ceiling, ceilingRows] = activeGroup
+  const allHeaders = Array.from(new Set(ceilingRows.flatMap((row) => Object.keys(row))))
+  const headers = getBottleneckTableHeaders(allHeaders, targetConstruct, false)
+
+  return (
+    <div className="space-y-3">
+      {ceilingGroups.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-1 border-b border-border/60 px-3 pt-2">
+          {ceilingGroups.map(([groupCeiling]) => {
+            const active = groupCeiling === ceiling
+            return (
+              <button
+                key={groupCeiling}
+                type="button"
+                onClick={() => setActiveCeiling(groupCeiling)}
+                aria-pressed={active}
+                className="px-3 py-2 text-[11px] font-semibold transition-colors"
+                style={{
+                  color: active ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                  borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent',
+                }}
+              >
+                {groupCeiling}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-primary/20">
+              {headers.map((header) => (
+                <th key={header} className="px-4 py-2 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  {formatResultTableHeader(header, 'bottleneck-table')}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ceilingRows.map((row, rowIndex) => (
+              <tr key={`${ceiling}-${rowIndex}`} style={resultsTableRowStyle(rowIndex)}>
+                {headers.map((header) => {
+                  const value = formatDisplayValue(row[header], header, 'bottleneck-table')
+                  return (
+                    <td key={`${ceiling}-${rowIndex}-${header}`} className="px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words">
+                      {value}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="px-4 pb-3 text-[11px] leading-relaxed text-text-muted">
+        Note. Values represent the minimum level of each condition required to achieve a given level of the outcome. NN means not necessary. Values are expressed as percentages of the observed range.
+      </p>
+    </div>
+  )
+}
+
 function GenericDataTable({
   data,
   analysisMode,
   selectedPanel,
   emptyLabel,
   savedModel,
+  analysisResults,
 }: {
   data: any
   analysisMode?: string
   selectedPanel?: string
   emptyLabel?: string
   savedModel?: any
+  analysisResults?: any
 }) {
   const rawRows = rowsFromData(data)
   if (!rawRows.length) {
@@ -3100,7 +3464,15 @@ function GenericDataTable({
     )
   }
 
-  const rows = rawRows.map((row) => normalizeRowFields(row))
+  if (selectedPanel === 'bottleneck-table') {
+    const advancedTargetConstruct = analysisMode === 'advanced' ? getAdvancedTargetConstruct(analysisResults) : ''
+    return <BottleneckDataTable rows={rawRows} targetConstruct={advancedTargetConstruct} />
+  }
+
+  const sourceRows = selectedPanel === 'bottleneck-table'
+    ? normalizeBottleneckRowsForDisplay(rawRows)
+    : rawRows
+  const rows = sourceRows.map((row) => normalizeRowFields(row))
 
   const otherHeaders = Array.from(new Set(rows.flatMap((row) => Object.keys(row)).filter((h) => h !== 'row')))
   const hasRowHeader = rows.some((row) => 'row' in row)
@@ -3116,6 +3488,7 @@ function GenericDataTable({
   const totalEffectPairs = selectedPanel === 'total-effects'
     ? buildTotalEffectPairLookup(savedModel)
     : null
+  const isAdvancedTable = isAdvancedResultTablePanel(analysisMode, selectedPanel)
 
   return (
     <div className="overflow-x-auto">
@@ -3135,7 +3508,7 @@ function GenericDataTable({
 
             return (
               <tr key={rowIndex} style={resultsTableRowStyle(rowIndex)}>
-                {headers.map((header) => {
+                {headers.map((header, headerIndex) => {
                   const isPCol = isPValueHeader(header)
                   const isEffectCell = isSignificanceEffectHeader(header)
                   const significanceColorClass = isBootstrapSignificancePanel && (isPCol || isEffectCell) && pTone
@@ -3149,7 +3522,7 @@ function GenericDataTable({
                   
                   return (
                     <td key={`${rowIndex}-${header}`} className={`px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words ${significanceColorClass || rowClass}`}>
-                      {value}
+                      {isAdvancedTable ? renderAdvancedResultCell({ header, rawValue: row[header], displayValue: value, isLastColumn: headerIndex === headers.length - 1 }) : value}
                     </td>
                   )
                 })}
@@ -3679,7 +4052,7 @@ function TablePanel({
               <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
             )}
             {!SUPPORTED_PANELS.includes(selectedPanel) && !(analysisMode === 'bootstrap' && isBootstrapSignificancePanel(selectedPanel)) && (
-              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} />
+              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} analysisResults={analysisResults} />
             )}
             </>
           ) : null
@@ -3695,7 +4068,7 @@ function TablePanel({
               <ExecutionLogPanel log={execLog} />
             )}
             {!['q2-predict', 'pls-lm-comparison', 'execution-log', 'plsem-mv-error-hist', 'plsem-lv-error-hist'].includes(selectedPanel) && (
-              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} />
+              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} analysisResults={analysisResults} />
             )}
           </>
         )}
@@ -4388,7 +4761,12 @@ export default function ResultsView() {
           item.id,
           indirectEffectPairs || totalEffectPairs
             ? (row) => ({ rowLabel: row.row, indirectEffectPairs, totalEffectPairs })
-            : undefined
+            : undefined,
+          {
+            bottleneckTargetConstruct: analysisMode === 'advanced' && item.id === 'bottleneck-table'
+              ? getAdvancedTargetConstruct(analysisResults)
+              : '',
+          }
         )
 
         if (item.id === 'path-coef') {

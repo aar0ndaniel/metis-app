@@ -193,7 +193,7 @@ function SelectBox({
             width: '100%',
             background: 'var(--color-elevated)',
             border: '1px solid var(--color-border)',
-            boxShadow: '0 8px 20px rgba(0,0,0,0.376)',
+            boxShadow: 'var(--shadow-modal-popover)',
             maxHeight: 240,
             overflowY: 'auto',
           }}
@@ -435,7 +435,7 @@ export default function TarkModal({
           background: 'var(--color-elevated)',
           border: '1px solid var(--color-border)',
           borderRadius: 14,
-          boxShadow: '0 24px 60px rgba(0,0,0,0.7)',
+          boxShadow: 'var(--shadow-modal)',
         }}
       >
         <div

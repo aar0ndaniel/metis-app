@@ -351,7 +351,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     >
       <div
         className="flex flex-col overflow-hidden"
-        style={{ width: 'min(860px, 96vw)', maxHeight: '90vh', background: UI.page, borderRadius: 22, border: 'none', boxShadow: '0 24px 64px rgba(0,0,0,0.28)' }}
+        style={{ width: 'min(860px, 96vw)', maxHeight: '90vh', background: UI.page, borderRadius: 22, border: 'none', boxShadow: 'var(--shadow-modal)' }}
       >
         {/* ── Header ── */}
         <div

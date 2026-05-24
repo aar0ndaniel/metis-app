@@ -7,7 +7,13 @@
 
 import { useState } from 'react'
 import { ANALYSIS_TONE_HEX, getPValueTone, parseSignificancePValue } from '../utils/analysisPalette'
-import { extractQ2PredictRows } from '../results/panelTableData'
+import {
+  extractQ2PredictRows,
+  formatBottleneckDisplayValue,
+  isBottleneckMetaField,
+  isBottleneckOutcomeField,
+  normalizeBottleneckRowsForDisplay,
+} from '../results/panelTableData'
 import type { AnalysisMode } from '../results/panelCatalog'
 import {
   CHART_SUPPORTED_PANELS,
@@ -22,28 +28,33 @@ export { CHART_SUPPORTED_PANELS, getChartConfig, shouldExportChart } from '../re
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const C_PASS   = ANALYSIS_TONE_HEX.pass
-const C_WARN   = 'var(--color-accent)'
+const C_WARN   = 'var(--color-warning)'
 const C_FAIL   = ANALYSIS_TONE_HEX.fail
 const C_ACCENT = 'var(--color-accent)'
+const C_SUCCESS = 'var(--color-success)'
+const C_DANGER = 'var(--color-danger)'
+const C_PRIORITY_LOW = C_DANGER
+const C_PRIORITY_MODERATE = C_WARN
+const C_PRIORITY_HIGH = C_SUCCESS
 const CHART_BG = 'var(--color-elevated)'
 const CHART_GRID = 'var(--color-border)'
 const CHART_TEXT = 'var(--color-text-secondary)'
 const CHART_TEXT_ACTIVE = 'var(--color-text-primary)'
 const CHART_MUTED = 'var(--color-text-muted)'
 const CHART_ON_ACCENT = 'var(--color-on-accent)'
-const CIPMA_NECESSARY_COLOR = '#D96B4D'
-const CIPMA_SUFFICIENT_COLOR = '#4682B4'
+const CIPMA_NECESSARY_COLOR = C_DANGER
+const CIPMA_SUFFICIENT_COLOR = C_SUCCESS
 
 // Multi-construct palette for grouped charts
 const PALETTE = [
   C_ACCENT,
   C_WARN,
   C_PASS,
-  '#B89AF0',
-  '#5EEAD4',
-  '#F472B6',
-  '#FB923C',
-  '#94A3B8',
+  C_SUCCESS,
+  C_DANGER,
+  'var(--color-text-secondary)',
+  'var(--color-title-tab)',
+  'var(--color-text-muted)',
 ]
 
 // Export (static HTML) light-theme colors
@@ -946,6 +957,7 @@ interface PriorityMapItem {
   performance: number
   priority: string
   necessary: boolean
+  target?: string
 }
 
 type PriorityMapVariant = 'priority' | 'cipma'
@@ -963,6 +975,8 @@ interface CeilingSeries {
   crFdh: CeilingPoint[]
 }
 
+const CEILING_AXIS_TICKS = [0, 25, 50, 75, 100]
+
 function buildPriorityMapItems(rows: any[]): PriorityMapItem[] {
   return rows
     .map((row, index) => ({
@@ -971,6 +985,7 @@ function buildPriorityMapItems(rows: any[]): PriorityMapItem[] {
       performance: Number(row?.Performance ?? row?.performance),
       priority: String(row?.Priority ?? row?.priority ?? ''),
       necessary: Boolean(row?.Necessary ?? row?.necessary),
+      target: String(row?.Target ?? row?.target ?? row?.Outcome ?? row?.outcome ?? '').trim() || undefined,
     }))
     .filter((item) => item.label && Number.isFinite(item.importance) && Number.isFinite(item.performance))
 }
@@ -1007,9 +1022,9 @@ function buildCeilingSeries(rows: any[]): CeilingSeries[] {
   rows.forEach((row) => {
     const condition = String(row?.Condition ?? row?.condition ?? row?.Construct ?? row?.construct ?? '').trim()
     const target = String(row?.Target ?? row?.target ?? '').trim()
-    const series = String(row?.Series ?? row?.series ?? '').trim().toLowerCase()
-    const x = Number(row?.X ?? row?.x)
-    const y = Number(row?.Y ?? row?.y)
+    const series = String(row?.Series ?? row?.series ?? row?.Method ?? row?.method ?? row?.Ceiling ?? row?.ceiling ?? '').trim().toLowerCase()
+    const x = Number(row?.X ?? row?.x ?? row?.condition_score ?? row?.Condition_Score ?? row?.conditionValue ?? row?.condition_value)
+    const y = Number(row?.Y ?? row?.y ?? row?.target_score ?? row?.Target_Score ?? row?.targetValue ?? row?.target_value)
     if (!condition || !Number.isFinite(x) || !Number.isFinite(y)) return
 
     const key = `${condition}→${target}`
@@ -1042,10 +1057,12 @@ function buildCeilingSeries(rows: any[]): CeilingSeries[] {
 
 function getPriorityMapColor(priority: string): string {
   const normalized = String(priority ?? '').trim().toLowerCase()
-  if (normalized.includes('concentrate') || normalized.includes('must improve')) return C_WARN
-  if (normalized.includes('keep up') || normalized.includes('monitor')) return C_PASS
-  if (normalized.includes('overkill')) return '#F59E0B'
-  return '#94A3B8'
+  if (normalized.includes('high') || normalized.includes('important') || normalized.includes('keep up') || normalized.includes('true')) return C_PRIORITY_HIGH
+  if (normalized.includes('moderate') || normalized.includes('medium')) return C_PRIORITY_MODERATE
+  if (normalized.includes('low') || normalized.includes('false') || normalized.includes('weak') || normalized.includes('concentrate') || normalized.includes('must improve')) return C_PRIORITY_LOW
+  if (normalized.includes('inverse') || normalized.includes('low level')) return CHART_MUTED
+  if (normalized.includes('overkill')) return C_PRIORITY_MODERATE
+  return C_PRIORITY_MODERATE
 }
 
 function straightLinePath(points: CeilingPoint[], xOf: (value: number) => number, yOf: (value: number) => number) {
@@ -1069,54 +1086,75 @@ function PriorityMapChart({ items, variant = 'priority' }: { items: PriorityMapI
   if (!items.length) return null
 
   const width = 640
-  const height = 300
-  const margin = { left: 56, right: 24, top: 24, bottom: 42 }
+  const height = 330
+  const margin = { left: 70, right: 28, top: 30, bottom: 46 }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
   const importanceMean = items.reduce((sum, item) => sum + item.importance, 0) / items.length
   const performanceMean = items.reduce((sum, item) => sum + item.performance, 0) / items.length
   const minImportance = 0
-  const maxImportance = Math.max(0.6, ...items.map((item) => item.importance), importanceMean)
-  const minPerformance = Math.min(40, ...items.map((item) => item.performance), performanceMean)
-  const maxPerformance = Math.max(100, ...items.map((item) => item.performance), performanceMean)
+  const maxImportance = niceTicks(0, Math.max(0.6, ...items.map((item) => item.importance * 1.12), importanceMean * 1.12), 4).max
+  const minPerformance = 0
+  const maxPerformance = 100
+  const xTicks = niceTicks(minImportance, maxImportance, 4).ticks.filter((tick) => tick >= minImportance && tick <= maxImportance)
+  const yTicks = [0, 25, 50, 75, 100]
   const xOf = (value: number) => margin.left + ((value - minImportance) / Math.max(maxImportance - minImportance, 0.0001)) * plotWidth
   const yOf = (value: number) => margin.top + plotHeight - ((value - minPerformance) / Math.max(maxPerformance - minPerformance, 0.0001)) * plotHeight
+  const targetLabel = items.find((item) => item.target)?.target || 'target construct'
+  const axisTargetLabel = trunc(targetLabel, 34)
+  const meanX = xOf(importanceMean)
+  const meanY = yOf(Math.max(0, Math.min(100, performanceMean)))
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: 'block', userSelect: 'none' }}>
       <rect width={width} height={height} fill={CHART_BG} rx={6} />
-      <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + plotHeight} stroke={CHART_GRID} strokeWidth={1} />
-      <line x1={margin.left} y1={margin.top + plotHeight} x2={margin.left + plotWidth} y2={margin.top + plotHeight} stroke={CHART_GRID} strokeWidth={1} />
-      <line x1={xOf(importanceMean)} y1={margin.top} x2={xOf(importanceMean)} y2={margin.top + plotHeight} stroke={CHART_GRID} strokeWidth={1} strokeDasharray="4 4" opacity={0.8} />
-      <line x1={margin.left} y1={yOf(performanceMean)} x2={margin.left + plotWidth} y2={yOf(performanceMean)} stroke={CHART_GRID} strokeWidth={1} strokeDasharray="4 4" opacity={0.8} />
-      {[0, 0.2, 0.4, 0.6].map((tick) => (
+      <rect
+        x={margin.left}
+        y={margin.top}
+        width={plotWidth}
+        height={plotHeight}
+        fill="transparent"
+        stroke={CHART_GRID}
+        strokeWidth={1.2}
+      />
+      {xTicks.map((tick) => (
         <g key={`x-${tick}`}>
-          <line x1={xOf(tick)} y1={margin.top + plotHeight} x2={xOf(tick)} y2={margin.top + plotHeight + 4} stroke={CHART_GRID} strokeWidth={0.5} />
-          <text x={xOf(tick)} y={height - 16} textAnchor="middle" fontSize={9} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-            {tick.toFixed(tick === 0 ? 0 : 1)}
+          <line x1={xOf(tick)} y1={margin.top} x2={xOf(tick)} y2={margin.top + plotHeight} stroke={CHART_GRID} strokeWidth={0.8} opacity={0.55} />
+          <text x={xOf(tick)} y={height - 20} textAnchor="middle" fontSize={10} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+            {tick === 0 ? '0' : tick.toFixed(maxImportance <= 1 ? 2 : 1)}
           </text>
         </g>
       ))}
-      {[40, 60, 80, 100].map((tick) => (
+      {yTicks.map((tick) => (
         <g key={`y-${tick}`}>
-          <line x1={margin.left - 4} y1={yOf(tick)} x2={margin.left} y2={yOf(tick)} stroke={CHART_GRID} strokeWidth={0.5} />
-          <text x={margin.left - 8} y={yOf(tick) + 3} textAnchor="end" fontSize={9} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+          <line x1={margin.left} y1={yOf(tick)} x2={margin.left + plotWidth} y2={yOf(tick)} stroke={CHART_GRID} strokeWidth={0.8} opacity={0.55} />
+          <text x={margin.left - 10} y={yOf(tick) + 3} textAnchor="end" fontSize={10} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
             {tick}
           </text>
         </g>
       ))}
-      <text x={margin.left + plotWidth / 2} y={height - 4} textAnchor="middle" fontSize={10} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-        Importance →
+      <line x1={meanX} y1={margin.top} x2={meanX} y2={margin.top + plotHeight} stroke={CHART_TEXT} strokeWidth={1.1} strokeDasharray="5 5" opacity={0.85} />
+      <line x1={margin.left} y1={meanY} x2={margin.left + plotWidth} y2={meanY} stroke={CHART_TEXT} strokeWidth={1.1} strokeDasharray="5 5" opacity={0.85} />
+      <text x={Math.min(meanX + 8, margin.left + plotWidth - 110)} y={margin.top + 12} fontSize={10.5} fill={CHART_TEXT} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
+        median importance
       </text>
-      <text x={14} y={margin.top + plotHeight / 2} textAnchor="middle" transform={`rotate(-90, 14, ${margin.top + plotHeight / 2})`} fontSize={10} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-        Performance →
+      <text x={margin.left + 8} y={meanY - 8} fontSize={10.5} fill={CHART_TEXT} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
+        median performance
+      </text>
+      <text x={margin.left + plotWidth / 2} y={height - 5} textAnchor="middle" fontSize={11} fill={CHART_TEXT} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
+        Importance: absolute total effect on {axisTargetLabel}
+      </text>
+      <text x={18} y={margin.top + plotHeight / 2} textAnchor="middle" transform={`rotate(-90, 18, ${margin.top + plotHeight / 2})`} fontSize={11} fill={CHART_TEXT} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
+        Performance (0-100)
       </text>
       {items.map((item, index) => {
         const cx = xOf(item.importance)
-        const cy = yOf(item.performance)
+        const cy = yOf(Math.max(0, Math.min(100, item.performance)))
         const color = getPriorityMapColor(item.priority)
         const isCipma = variant === 'cipma'
         const isHovered = hover === index
+        const labelX = cx > margin.left + plotWidth - 96 ? cx - 12 : cx + 12
+        const textAnchor = cx > margin.left + plotWidth - 96 ? 'end' : 'start'
         return (
           <g key={`${item.label}-${index}`} onMouseEnter={() => setHover(index)} onMouseLeave={() => setHover(null)} style={{ cursor: 'default' }}>
             {!isCipma && item.necessary && (
@@ -1133,9 +1171,9 @@ function PriorityMapChart({ items, variant = 'priority' }: { items: PriorityMapI
                 opacity={0.95}
               />
             ) : (
-              <circle cx={cx} cy={cy} r={isHovered ? 6 : 5} fill={color} opacity={0.95} />
+              <circle cx={cx} cy={cy} r={isHovered ? 7 : 6} fill={color} stroke={CHART_BG} strokeWidth={1.2} opacity={0.96} />
             )}
-            <text x={cx} y={cy - 10} textAnchor="middle" fontSize={9} fill={CHART_TEXT_ACTIVE} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
+            <text x={labelX} y={cy + 4} textAnchor={textAnchor} fontSize={10.5} fill={CHART_TEXT_ACTIVE} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 650 }}>
               {item.label}
             </text>
             {isHovered && (
@@ -1168,7 +1206,7 @@ function PriorityMapChart({ items, variant = 'priority' }: { items: PriorityMapI
 
 const CEILING_SERIES_STYLES = {
   observed: {
-    fill: 'rgb(var(--color-text-primary-rgb) / 0.58)',
+    fill: 'rgb(var(--color-accent-rgb) / 0.52)',
     stroke: 'var(--color-elevated)',
   },
   ceFdh: {
@@ -1176,69 +1214,105 @@ const CEILING_SERIES_STYLES = {
     stroke: 'var(--color-elevated)',
   },
   crFdh: {
-    color: '#F472B6',
+    color: C_SUCCESS,
     stroke: 'var(--color-elevated)',
   },
+}
+
+function normalizeCeilingValue(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value) || !Number.isFinite(min) || !Number.isFinite(max)) return 50
+  if (Math.abs(max - min) < 0.000001) return 50
+  return Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100))
+}
+
+function normalizeCeilingGroup(group: CeilingSeries): CeilingSeries {
+  const allPoints = [...group.observed, ...group.ceFdh, ...group.crFdh]
+  const xValues = allPoints.map((point) => point.x).filter(Number.isFinite)
+  const yValues = allPoints.map((point) => point.y).filter(Number.isFinite)
+  const xMin = Math.min(...xValues)
+  const xMax = Math.max(...xValues)
+  const yMin = Math.min(...yValues)
+  const yMax = Math.max(...yValues)
+  const normalizePoint = (point: CeilingPoint) => ({
+    x: normalizeCeilingValue(point.x, xMin, xMax),
+    y: normalizeCeilingValue(point.y, yMin, yMax),
+  })
+
+  return {
+    ...group,
+    observed: group.observed.map(normalizePoint),
+    ceFdh: group.ceFdh.map(normalizePoint),
+    crFdh: group.crFdh.map(normalizePoint),
+  }
+}
+
+function formatCeilingAxisTick(value: number, suffix = false): string {
+  return `${Math.round(value)}${suffix ? '%' : ''}`
 }
 
 function CeilingLinesChart({ groups }: { groups: CeilingSeries[] }) {
   if (!groups.length) return null
 
   const width = 640
-  const height = 260
-  const margin = { left: 54, right: 20, top: 28, bottom: 38 }
+  const height = 300
+  const margin = { left: 56, right: 48, top: 28, bottom: 42 }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
 
   return (
     <div className="space-y-3">
       {groups.map((group) => {
-        const allPoints = [...group.observed, ...group.ceFdh, ...group.crFdh]
-        const xValues = allPoints.map((point) => point.x)
-        const yValues = allPoints.map((point) => point.y)
-        const xDomain = niceTicks(Math.min(...xValues), Math.max(...xValues), 5)
-        const yDomain = niceTicks(Math.min(...yValues), Math.max(...yValues), 5)
-        const xOf = (value: number) => margin.left + ((value - xDomain.min) / Math.max(xDomain.max - xDomain.min, 0.0001)) * plotWidth
-        const yOf = (value: number) => margin.top + plotHeight - ((value - yDomain.min) / Math.max(yDomain.max - yDomain.min, 0.0001)) * plotHeight
+        const displayGroup = normalizeCeilingGroup(group)
+        const xOf = (value: number) => margin.left + (value / 100) * plotWidth
+        const yOf = (value: number) => margin.top + plotHeight - (value / 100) * plotHeight
+        const conditionLabel = trunc(group.condition, 34)
+        const targetLabel = trunc(group.target || 'Outcome', 24)
         return (
           <svg key={`${group.condition}-${group.target}`} viewBox={`0 0 ${width} ${height}`} width="100%" style={{ display: 'block', userSelect: 'none' }}>
             <rect width={width} height={height} fill={CHART_BG} rx={6} />
-            <text x={margin.left} y={18} fontSize={11} fill={CHART_TEXT_ACTIVE} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
-              {group.condition}{group.target ? ` → ${group.target}` : ''}
-            </text>
-            <line x1={margin.left} y1={margin.top} x2={margin.left} y2={margin.top + plotHeight} stroke={CHART_GRID} strokeWidth={1} />
-            <line x1={margin.left} y1={margin.top + plotHeight} x2={margin.left + plotWidth} y2={margin.top + plotHeight} stroke={CHART_GRID} strokeWidth={1} />
-            {xDomain.ticks.map((tick) => (
+            <rect x={margin.left} y={margin.top} width={plotWidth} height={plotHeight} fill="transparent" stroke={CHART_GRID} strokeWidth={1.2} />
+            <g>
+              <text x={margin.left + 10} y={18} fontSize={10.5} fill={CEILING_SERIES_STYLES.ceFdh.color} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 700 }}>
+                CE-FDH ceiling
+              </text>
+              <line x1={margin.left + 116} y1={15} x2={margin.left + 158} y2={15} stroke={CEILING_SERIES_STYLES.ceFdh.color} strokeWidth={2.6} />
+              <text x={margin.left + 180} y={18} fontSize={10.5} fill={CEILING_SERIES_STYLES.crFdh.color} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 700 }}>
+                CR-FDH
+              </text>
+              <line x1={margin.left + 235} y1={15} x2={margin.left + 277} y2={15} stroke={CEILING_SERIES_STYLES.crFdh.color} strokeWidth={2.4} strokeDasharray="6 4" />
+            </g>
+            {CEILING_AXIS_TICKS.map((tick) => (
               <g key={`x-${tick}`}>
-                <line x1={xOf(tick)} y1={margin.top + plotHeight} x2={xOf(tick)} y2={margin.top + plotHeight + 4} stroke={CHART_GRID} strokeWidth={0.5} />
-                <text x={xOf(tick)} y={height - 16} textAnchor="middle" fontSize={8.5} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                  {tick.toFixed(1)}
+                <line x1={xOf(tick)} y1={margin.top} x2={xOf(tick)} y2={margin.top + plotHeight} stroke={CHART_GRID} strokeWidth={0.8} opacity={0.55} />
+                <text x={xOf(tick)} y={height - 18} textAnchor="middle" fontSize={10} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                  {formatCeilingAxisTick(tick)}
                 </text>
               </g>
             ))}
-            {yDomain.ticks.map((tick) => (
+            {CEILING_AXIS_TICKS.map((tick) => (
               <g key={`y-${tick}`}>
-                <line x1={margin.left - 4} y1={yOf(tick)} x2={margin.left} y2={yOf(tick)} stroke={CHART_GRID} strokeWidth={0.5} />
-                <text x={margin.left - 8} y={yOf(tick) + 3} textAnchor="end" fontSize={8.5} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-                  {tick.toFixed(1)}
+                <line x1={margin.left} y1={yOf(tick)} x2={margin.left + plotWidth} y2={yOf(tick)} stroke={CHART_GRID} strokeWidth={0.8} opacity={0.55} />
+                <text x={margin.left + plotWidth + 9} y={yOf(tick) + 3} textAnchor="start" fontSize={10} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
+                  {formatCeilingAxisTick(tick, true)}
                 </text>
               </g>
             ))}
-            {group.observed.map((point, index) => (
+            {displayGroup.observed.map((point, index) => (
               <circle
                 key={`obs-${index}`}
                 cx={xOf(point.x)}
                 cy={yOf(point.y)}
-                r={3}
+                r={2.8}
                 fill={CEILING_SERIES_STYLES.observed.fill}
                 stroke={CEILING_SERIES_STYLES.observed.stroke}
-                strokeWidth={1.5}
+                strokeWidth={0.8}
+                opacity={0.86}
               />
             ))}
-            {group.ceFdh.length > 1 ? (
-              <path d={stepLinePath(group.ceFdh, xOf, yOf)} fill="none" stroke={CEILING_SERIES_STYLES.ceFdh.color} strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" />
+            {displayGroup.ceFdh.length > 1 ? (
+              <path d={stepLinePath(displayGroup.ceFdh, xOf, yOf)} fill="none" stroke={CEILING_SERIES_STYLES.ceFdh.color} strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" />
             ) : null}
-            {group.ceFdh.map((point, index) => (
+            {displayGroup.ceFdh.map((point, index) => (
               <circle
                 key={`ce-${index}`}
                 cx={xOf(point.x)}
@@ -1249,20 +1323,20 @@ function CeilingLinesChart({ groups }: { groups: CeilingSeries[] }) {
                 strokeWidth={1.5}
               />
             ))}
-            {group.crFdh.length > 1 ? (
-              <path d={straightLinePath(group.crFdh, xOf, yOf)} fill="none" stroke={CEILING_SERIES_STYLES.crFdh.color} strokeWidth={2.4} strokeDasharray="6 4" strokeLinecap="round" />
+            {displayGroup.crFdh.length > 1 ? (
+              <path d={straightLinePath(displayGroup.crFdh, xOf, yOf)} fill="none" stroke={CEILING_SERIES_STYLES.crFdh.color} strokeWidth={2.4} strokeDasharray="6 4" strokeLinecap="round" />
             ) : null}
-            {group.crFdh.map((point, index) => {
+            {displayGroup.crFdh.map((point, index) => {
               const cx = xOf(point.x)
               const cy = yOf(point.y)
               return (
                 <rect
                   key={`cr-${index}`}
-                  x={cx - 3.6}
-                  y={cy - 3.6}
-                  width={7.2}
-                  height={7.2}
-                  rx={1.2}
+                  x={cx - 3.4}
+                  y={cy - 3.4}
+                  width={6.8}
+                  height={6.8}
+                  rx={1.1}
                   fill={CEILING_SERIES_STYLES.crFdh.color}
                   stroke={CEILING_SERIES_STYLES.crFdh.stroke}
                   strokeWidth={1.5}
@@ -1270,11 +1344,11 @@ function CeilingLinesChart({ groups }: { groups: CeilingSeries[] }) {
                 />
               )
             })}
-            <text x={margin.left + plotWidth / 2} y={height - 4} textAnchor="middle" fontSize={9.5} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-              Necessary condition score
+            <text x={margin.left + plotWidth / 2} y={height - 4} textAnchor="middle" fontSize={10.5} fill={CHART_TEXT} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
+              {conditionLabel} range (0-100)
             </text>
-            <text x={14} y={margin.top + plotHeight / 2} textAnchor="middle" transform={`rotate(-90, 14, ${margin.top + plotHeight / 2})`} fontSize={9.5} fill={CHART_MUTED} style={{ fontFamily: 'DM Sans, system-ui, sans-serif' }}>
-              Outcome score
+            <text x={16} y={margin.top + plotHeight / 2} textAnchor="middle" transform={`rotate(-90, 16, ${margin.top + plotHeight / 2})`} fontSize={10.5} fill={CHART_TEXT} style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}>
+              {targetLabel} range (0-100)
             </text>
           </svg>
         )
@@ -1294,7 +1368,11 @@ interface HeatmapMatrix {
   rowLabels: string[]
   colLabels: string[]
   values: Array<Array<number | null>>
+  valueLabels?: string[][]
   legendLabel: string
+  xAxisLabel?: string
+  yAxisLabel?: string
+  missingLabel?: string
 }
 
 interface ScorecardItem {
@@ -1423,40 +1501,47 @@ function buildHtmtConfidenceMatrix(rows: any[]): HeatmapMatrix | null {
   return buildMatrixFromRows(rows)
 }
 
-function buildBottleneckMatrix(rows: any[]): HeatmapMatrix | null {
-  if (!rows.length) return null
+function bottleneckGroupRank(label: string): number {
+  if (/ce[\s_-]*fdh/i.test(label)) return 0
+  if (/cr[\s_-]*fdh/i.test(label)) return 1
+  return 2
+}
 
-  const labelKeys = [
-    'row_name',
-    'row',
-    'rowname',
-    'performance level',
-    'performance_level',
-    'performance',
-    'level',
-    'target',
-    'condition',
-    'construct',
-    'method',
-    'ceiling',
-  ]
-  const normalizedLabelKeys = new Set(labelKeys.map((key) => key.toLowerCase()))
-  const firstLabelValue = (row: any, index: number) => {
-    const keys = Object.keys(row ?? {})
-    const labelKey = keys.find((key) => normalizedLabelKeys.has(key.toLowerCase()) && !['method', 'ceiling'].includes(key.toLowerCase()))
-    const rawLabel = labelKey ? row?.[labelKey] : null
-    const label = String(rawLabel ?? '').trim()
-    const method = String(row?.Method ?? row?.method ?? '').trim()
-    const level = label || `Level ${index + 1}`
-    return method ? `${method} ${level}` : level
+function groupBottleneckRows(rows: any[]): Array<{ method: string; rows: any[] }> {
+  const normalizedRows = normalizeBottleneckRowsForDisplay(rows)
+  const rowMethod = (row: any) => String(row?.Ceiling ?? row?.ceiling ?? row?.Method ?? row?.method ?? 'Bottleneck').trim() || 'Bottleneck'
+  const groups = new Map<string, any[]>()
+
+  normalizedRows.forEach((row) => {
+    const method = rowMethod(row)
+    const groupRows = groups.get(method) ?? []
+    groupRows.push(row)
+    groups.set(method, groupRows)
+  })
+
+  return Array.from(groups.entries())
+    .sort(([a], [b]) => bottleneckGroupRank(a) - bottleneckGroupRank(b) || a.localeCompare(b))
+    .map(([method, groupRows]) => ({ method, rows: groupRows }))
+}
+
+function buildBottleneckMatrixForGroup(sourceRows: any[], selectedMethod: string): HeatmapMatrix | null {
+  if (!sourceRows.length) return null
+
+  const levelLabelValue = (row: any, index: number) => {
+    const key = Object.keys(row ?? {}).find((candidate) => isBottleneckOutcomeField(candidate))
+    const label = key ? String(row?.[key] ?? '').trim() : ''
+    return label || `Level ${index + 1}`
   }
 
   const colLabels = Array.from(
     new Set(
-      rows.flatMap((row) =>
+      sourceRows.flatMap((row) =>
         Object.keys(row ?? {}).filter((key) => {
-          if (normalizedLabelKeys.has(key.toLowerCase())) return false
-          return rows.some((candidate) => Number.isFinite(Number(candidate?.[key])))
+          if (isBottleneckMetaField(key) || isBottleneckOutcomeField(key)) return false
+          return sourceRows.some((candidate) => {
+            const value = candidate?.[key]
+            return Number.isFinite(Number(value)) || String(value ?? '').trim().toUpperCase() === 'NN'
+          })
         }),
       ),
     ),
@@ -1464,21 +1549,35 @@ function buildBottleneckMatrix(rows: any[]): HeatmapMatrix | null {
 
   if (!colLabels.length) return null
 
-  const values = rows.map((row) =>
-    colLabels.map((key) => {
+  const levelLabels = sourceRows.map(levelLabelValue)
+  const values = colLabels.map((key) =>
+    sourceRows.map((row) => {
       const value = Number((row ?? {})[key])
       return Number.isFinite(value) ? value : null
     }),
   )
+  const valueLabels = colLabels.map((key) =>
+    sourceRows.map((row) => formatBottleneckDisplayValue((row ?? {})[key])),
+  )
 
-  if (!values.some((row) => row.some((value) => value != null))) return null
+  if (!values.some((row) => row.some((value) => value != null)) && !valueLabels.some((row) => row.some((value) => value === 'NN'))) return null
 
   return {
-    rowLabels: rows.map(firstLabelValue),
-    colLabels,
+    rowLabels: colLabels,
+    colLabels: levelLabels,
     values,
-    legendLabel: 'Bottleneck level',
+    valueLabels,
+    legendLabel: `${selectedMethod} required level`,
+    xAxisLabel: 'Outcome level (%)',
+    yAxisLabel: 'Construct',
+    missingLabel: 'NN',
   }
+}
+
+function buildBottleneckMatrices(rows: any[]): HeatmapMatrix[] {
+  return groupBottleneckRows(rows)
+    .map(({ method, rows: groupRows }) => buildBottleneckMatrixForGroup(groupRows, method))
+    .filter((matrix): matrix is HeatmapMatrix => matrix != null)
 }
 
 function buildModelFitScorecards(rows: any[]): ScorecardItem[] {
@@ -1643,7 +1742,7 @@ function HeatmapChart({ matrix }: { matrix: HeatmapMatrix }) {
   const cellGap = 4
   const longestRowLabel = Math.max(0, ...matrix.rowLabels.map((label) => label.length))
   const left = Math.min(220, Math.max(136, longestRowLabel * 6 + 36))
-  const top = 58
+  const top = matrix.xAxisLabel ? 72 : 58
   const plotWidth = matrix.colLabels.length * (cellWidth + cellGap) - cellGap
   const plotHeight = matrix.rowLabels.length * (cellHeight + cellGap) - cellGap
   const width = Math.max(640, left + plotWidth + 32)
@@ -1671,9 +1770,34 @@ function HeatmapChart({ matrix }: { matrix: HeatmapMatrix }) {
           </linearGradient>
         </defs>
         <rect width={width} height={height} fill={CHART_BG} rx={6} />
+        {matrix.xAxisLabel ? (
+          <text
+            x={left + plotWidth / 2}
+            y={20}
+            textAnchor="middle"
+            fontSize={10}
+            fill={CHART_TEXT}
+            style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 700 }}
+          >
+            {matrix.xAxisLabel}
+          </text>
+        ) : null}
+        {matrix.yAxisLabel ? (
+          <text
+            x={18}
+            y={top + plotHeight / 2}
+            textAnchor="middle"
+            fontSize={10}
+            fill={CHART_TEXT}
+            transform={`rotate(-90 18 ${top + plotHeight / 2})`}
+            style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 700 }}
+          >
+            {matrix.yAxisLabel}
+          </text>
+        ) : null}
         {matrix.colLabels.map((label, index) => (
           <text
-            key={label}
+            key={`${label}-${index}`}
             x={left + index * (cellWidth + cellGap) + cellWidth / 2}
             y={rotateColumnLabels ? 42 : 34}
             textAnchor="middle"
@@ -1703,6 +1827,7 @@ function HeatmapChart({ matrix }: { matrix: HeatmapMatrix }) {
             const x = left + colIndex * (cellWidth + cellGap)
             const y = top + rowIndex * (cellHeight + cellGap)
             const isHovered = hover?.row === rowIndex && hover?.col === colIndex
+            const displayValue = matrix.valueLabels?.[rowIndex]?.[colIndex] ?? (value == null ? matrix.missingLabel ?? '—' : value.toFixed(2))
             return (
               <g
                 key={`${rowIndex}-${colIndex}`}
@@ -1728,7 +1853,7 @@ function HeatmapChart({ matrix }: { matrix: HeatmapMatrix }) {
                   fill={value != null && Math.abs(value) > maxAbs * 0.58 ? CHART_ON_ACCENT : CHART_TEXT_ACTIVE}
                   style={{ fontFamily: 'DM Sans, system-ui, sans-serif', fontWeight: 600 }}
                 >
-                  {value == null ? '—' : value.toFixed(2)}
+                  {displayValue}
                 </text>
               </g>
             )
@@ -1747,7 +1872,7 @@ function HeatmapChart({ matrix }: { matrix: HeatmapMatrix }) {
             y={Math.max(top + hover.row * (cellHeight + cellGap) - 28, top)}
             lines={[
               `${matrix.rowLabels[hover.row]} × ${matrix.colLabels[hover.col]}`,
-              `${matrix.legendLabel}: ${matrix.values[hover.row]?.[hover.col] == null ? '—' : matrix.values[hover.row]?.[hover.col]?.toFixed(3)}`,
+              `${matrix.legendLabel}: ${matrix.valueLabels?.[hover.row]?.[hover.col] ?? (matrix.values[hover.row]?.[hover.col] == null ? matrix.missingLabel ?? '—' : matrix.values[hover.row]?.[hover.col]?.toFixed(3))}`,
             ]}
             svgWidth={width}
           />
@@ -1925,12 +2050,16 @@ export function ResultChart(props: ResultChartProps) {
     }
 
     case 'bottleneck-table': {
-      const matrix = buildBottleneckMatrix(rawRows('bottleneck-table'))
-      if (!matrix) return <NoChartData />
+      const matrices = buildBottleneckMatrices(rawRows('bottleneck-table'))
+      if (!matrices.length) return <NoChartData />
       return (
-        <div className="p-3 pt-2">
-          <ChartTitle label={getChartTitle(selectedPanel)} />
-          <HeatmapChart matrix={matrix} />
+        <div className="space-y-5 p-3 pt-2">
+          {matrices.map((matrix) => (
+            <div key={matrix.legendLabel}>
+              <ChartTitle label={`${matrix.legendLabel.replace(/ required level$/i, '')} bottleneck heatmap`} />
+              <HeatmapChart matrix={matrix} />
+            </div>
+          ))}
         </div>
       )
     }
@@ -2368,8 +2497,10 @@ export function buildChartSvgForPanel(
     }
 
     if (panel === 'bottleneck-table') {
-      const matrix = buildBottleneckMatrix(rawRows(panel))
-      return matrix ? exportHeatmapChart(matrix, getChartTitle(panel)) : null
+      const matrices = buildBottleneckMatrices(rawRows(panel))
+      return matrices.length
+        ? matrices.map((matrix) => exportHeatmapChart(matrix, `${matrix.legendLabel.replace(/ required level$/i, '')} Bottleneck Heatmap`)).join('')
+        : null
     }
 
     if (panel === 'model-fit') {
@@ -2399,6 +2530,15 @@ function expScaleX(v: number, dMin: number, dMax: number, plotW: number, lMar: n
 
 function expTrunc(s: string, max = 24): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s
+}
+
+function expEscape(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 function exportHBarChart(
@@ -2593,44 +2733,53 @@ function exportGroupedBarChart(
 
 function exportPriorityMapChart(items: PriorityMapItem[], title: string, variant: PriorityMapVariant = 'priority'): string {
   const width = 640
-  const height = 300
-  const margin = { left: 56, right: 24, top: 24, bottom: 42 }
+  const height = 330
+  const margin = { left: 70, right: 28, top: 30, bottom: 46 }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = height - margin.top - margin.bottom
   const importanceMean = items.reduce((sum, item) => sum + item.importance, 0) / items.length
   const performanceMean = items.reduce((sum, item) => sum + item.performance, 0) / items.length
   const minImportance = 0
-  const maxImportance = Math.max(0.6, ...items.map((item) => item.importance), importanceMean)
-  const minPerformance = Math.min(40, ...items.map((item) => item.performance), performanceMean)
-  const maxPerformance = Math.max(100, ...items.map((item) => item.performance), performanceMean)
+  const maxImportance = niceTicks(0, Math.max(0.6, ...items.map((item) => item.importance * 1.12), importanceMean * 1.12), 4).max
+  const minPerformance = 0
+  const maxPerformance = 100
   const xOf = (value: number) => margin.left + ((value - minImportance) / Math.max(maxImportance - minImportance, 0.0001)) * plotWidth
   const yOf = (value: number) => margin.top + plotHeight - ((value - minPerformance) / Math.max(maxPerformance - minPerformance, 0.0001)) * plotHeight
+  const targetLabel = items.find((item) => item.target)?.target || 'target construct'
+  const meanX = xOf(importanceMean)
+  const meanY = yOf(Math.max(0, Math.min(100, performanceMean)))
+  const xTicks = niceTicks(minImportance, maxImportance, 4).ticks.filter((tick) => tick >= minImportance && tick <= maxImportance)
+  const yTicks = [0, 25, 50, 75, 100]
 
-  const xTicks = [0, 0.2, 0.4, 0.6].map((tick) => `
-    <line x1="${xOf(tick)}" y1="${margin.top + plotHeight}" x2="${xOf(tick)}" y2="${margin.top + plotHeight + 4}" stroke="${EXP.border}" stroke-width="0.5"/>
-    <text x="${xOf(tick)}" y="${height - 16}" text-anchor="middle" font-size="9" fill="${EXP.muted}" font-family="system-ui,sans-serif">${tick.toFixed(tick === 0 ? 0 : 1)}</text>
+  const xTickSvg = xTicks.map((tick) => `
+    <line x1="${xOf(tick)}" y1="${margin.top}" x2="${xOf(tick)}" y2="${margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="0.8" opacity="0.55"/>
+    <text x="${xOf(tick)}" y="${height - 20}" text-anchor="middle" font-size="10" fill="${EXP.muted}" font-family="system-ui,sans-serif">${tick === 0 ? '0' : tick.toFixed(maxImportance <= 1 ? 2 : 1)}</text>
   `).join('')
 
-  const yTicks = [40, 60, 80, 100].map((tick) => `
-    <line x1="${margin.left - 4}" y1="${yOf(tick)}" x2="${margin.left}" y2="${yOf(tick)}" stroke="${EXP.border}" stroke-width="0.5"/>
-    <text x="${margin.left - 8}" y="${yOf(tick) + 3}" text-anchor="end" font-size="9" fill="${EXP.muted}" font-family="system-ui,sans-serif">${tick}</text>
+  const yTickSvg = yTicks.map((tick) => `
+    <line x1="${margin.left}" y1="${yOf(tick)}" x2="${margin.left + plotWidth}" y2="${yOf(tick)}" stroke="${EXP.border}" stroke-width="0.8" opacity="0.55"/>
+    <text x="${margin.left - 10}" y="${yOf(tick) + 3}" text-anchor="end" font-size="10" fill="${EXP.muted}" font-family="system-ui,sans-serif">${tick}</text>
   `).join('')
 
   const isCipma = variant === 'cipma'
   const points = items.map((item) => {
     const color = getPriorityMapColor(item.priority)
+    const cx = xOf(item.importance)
+    const cy = yOf(Math.max(0, Math.min(100, item.performance)))
     const halo = !isCipma && item.necessary
-      ? `<circle cx="${xOf(item.importance)}" cy="${yOf(item.performance)}" r="9" fill="none" stroke="${C_WARN}" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.6"/>`
+      ? `<circle cx="${cx}" cy="${cy}" r="9" fill="none" stroke="${C_WARN}" stroke-width="1.2" stroke-dasharray="3 2" opacity="0.6"/>`
       : ''
     const marker = isCipma
       ? item.necessary
-        ? `<circle cx="${xOf(item.importance)}" cy="${yOf(item.performance)}" r="5" fill="${CIPMA_NECESSARY_COLOR}" stroke="${CIPMA_NECESSARY_COLOR}" stroke-width="1.2" opacity="0.95"/>`
-        : `<circle cx="${xOf(item.importance)}" cy="${yOf(item.performance)}" r="5" fill="none" stroke="${CIPMA_SUFFICIENT_COLOR}" stroke-width="1.6" opacity="0.95"/>`
-      : `<circle cx="${xOf(item.importance)}" cy="${yOf(item.performance)}" r="5" fill="${color}" opacity="0.95"/>`
+        ? `<circle cx="${cx}" cy="${cy}" r="5" fill="${CIPMA_NECESSARY_COLOR}" stroke="${CIPMA_NECESSARY_COLOR}" stroke-width="1.2" opacity="0.95"/>`
+        : `<circle cx="${cx}" cy="${cy}" r="5" fill="none" stroke="${CIPMA_SUFFICIENT_COLOR}" stroke-width="1.6" opacity="0.95"/>`
+      : `<circle cx="${cx}" cy="${cy}" r="5" fill="${color}" stroke="${EXP.bg}" stroke-width="1.2" opacity="0.95"/>`
+    const labelX = cx > margin.left + plotWidth - 96 ? cx - 12 : cx + 12
+    const textAnchor = cx > margin.left + plotWidth - 96 ? 'end' : 'start'
     return `
       ${halo}
       ${marker}
-      <text x="${xOf(item.importance)}" y="${yOf(item.performance) - 10}" text-anchor="middle" font-size="9" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="600">${expTrunc(item.label, 16)}</text>
+      <text x="${labelX}" y="${cy + 4}" text-anchor="${textAnchor}" font-size="10.5" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="650">${expEscape(expTrunc(item.label, 16))}</text>
     `
   }).join('')
   const legend = isCipma
@@ -2644,14 +2793,15 @@ function exportPriorityMapChart(items: PriorityMapItem[], title: string, variant
     <figcaption style="font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;font-family:system-ui,sans-serif">${title}</figcaption>
     <svg viewBox="0 0 ${width} ${height}" width="100%" style="display:block;border-radius:6px">
       <rect width="${width}" height="${height}" fill="${EXP.bg}" rx="6"/>
-      <line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="1"/>
-      <line x1="${margin.left}" y1="${margin.top + plotHeight}" x2="${margin.left + plotWidth}" y2="${margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="1"/>
-      <line x1="${xOf(importanceMean)}" y1="${margin.top}" x2="${xOf(importanceMean)}" y2="${margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="1" stroke-dasharray="4 4" opacity="0.8"/>
-      <line x1="${margin.left}" y1="${yOf(performanceMean)}" x2="${margin.left + plotWidth}" y2="${yOf(performanceMean)}" stroke="${EXP.border}" stroke-width="1" stroke-dasharray="4 4" opacity="0.8"/>
-      ${xTicks}
-      ${yTicks}
-      <text x="${margin.left + plotWidth / 2}" y="${height - 4}" text-anchor="middle" font-size="10" fill="${EXP.muted}" font-family="system-ui,sans-serif">Importance →</text>
-      <text x="14" y="${margin.top + plotHeight / 2}" text-anchor="middle" transform="rotate(-90, 14, ${margin.top + plotHeight / 2})" font-size="10" fill="${EXP.muted}" font-family="system-ui,sans-serif">Performance →</text>
+      <rect x="${margin.left}" y="${margin.top}" width="${plotWidth}" height="${plotHeight}" fill="transparent" stroke="${EXP.border}" stroke-width="1.2"/>
+      <line x1="${meanX}" y1="${margin.top}" x2="${meanX}" y2="${margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="1" stroke-dasharray="4 4" opacity="0.8"/>
+      <line x1="${margin.left}" y1="${meanY}" x2="${margin.left + plotWidth}" y2="${meanY}" stroke="${EXP.border}" stroke-width="1" stroke-dasharray="4 4" opacity="0.8"/>
+      <text x="${Math.min(meanX + 8, margin.left + plotWidth - 110)}" y="${margin.top + 12}" font-size="10.5" fill="${EXP.muted}" font-family="system-ui,sans-serif" font-weight="600">median importance</text>
+      <text x="${margin.left + 8}" y="${meanY - 8}" font-size="10.5" fill="${EXP.muted}" font-family="system-ui,sans-serif" font-weight="600">median performance</text>
+      ${xTickSvg}
+      ${yTickSvg}
+      <text x="${margin.left + plotWidth / 2}" y="${height - 5}" text-anchor="middle" font-size="11" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="600">Importance: absolute total effect on ${expEscape(expTrunc(targetLabel, 28))}</text>
+      <text x="18" y="${margin.top + plotHeight / 2}" text-anchor="middle" transform="rotate(-90, 18, ${margin.top + plotHeight / 2})" font-size="11" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="600">Performance (0-100)</text>
       ${points}
       ${legend}
     </svg>
@@ -2660,49 +2810,59 @@ function exportPriorityMapChart(items: PriorityMapItem[], title: string, variant
 
 function exportCeilingLineChart(groups: CeilingSeries[], title: string): string {
   const width = 640
-  const chartHeight = 248
+  const chartHeight = 300
   const gap = 14
-  const margin = { left: 54, right: 20, top: 28, bottom: 38 }
+  const margin = { left: 56, right: 48, top: 28, bottom: 42 }
   const plotWidth = width - margin.left - margin.right
   const plotHeight = chartHeight - margin.top - margin.bottom
   const totalHeight = groups.length * chartHeight + Math.max(groups.length - 1, 0) * gap
 
   const charts = groups.map((group, groupIndex) => {
     const offsetY = groupIndex * (chartHeight + gap)
-    const allPoints = [...group.observed, ...group.ceFdh, ...group.crFdh]
-    const xValues = allPoints.map((point) => point.x)
-    const yValues = allPoints.map((point) => point.y)
-    const xDomain = niceTicks(Math.min(...xValues), Math.max(...xValues), 5)
-    const yDomain = niceTicks(Math.min(...yValues), Math.max(...yValues), 5)
-    const xOf = (value: number) => margin.left + ((value - xDomain.min) / Math.max(xDomain.max - xDomain.min, 0.0001)) * plotWidth
-    const yOf = (value: number) => offsetY + margin.top + plotHeight - ((value - yDomain.min) / Math.max(yDomain.max - yDomain.min, 0.0001)) * plotHeight
-    const xTicks = xDomain.ticks.map((tick) => `
-      <line x1="${xOf(tick)}" y1="${offsetY + margin.top + plotHeight}" x2="${xOf(tick)}" y2="${offsetY + margin.top + plotHeight + 4}" stroke="${EXP.border}" stroke-width="0.5"/>
-      <text x="${xOf(tick)}" y="${offsetY + chartHeight - 16}" text-anchor="middle" font-size="8.5" fill="${EXP.muted}" font-family="system-ui,sans-serif">${tick.toFixed(1)}</text>
+    const displayGroup = normalizeCeilingGroup(group)
+    const xOf = (value: number) => margin.left + (value / 100) * plotWidth
+    const yOf = (value: number) => offsetY + margin.top + plotHeight - (value / 100) * plotHeight
+    const xTicks = CEILING_AXIS_TICKS.map((tick) => `
+      <line x1="${xOf(tick)}" y1="${offsetY + margin.top}" x2="${xOf(tick)}" y2="${offsetY + margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="0.8" opacity="0.55"/>
+      <text x="${xOf(tick)}" y="${offsetY + chartHeight - 18}" text-anchor="middle" font-size="10" fill="${EXP.muted}" font-family="system-ui,sans-serif">${formatCeilingAxisTick(tick)}</text>
     `).join('')
-    const yTicks = yDomain.ticks.map((tick) => `
-      <line x1="${margin.left - 4}" y1="${yOf(tick)}" x2="${margin.left}" y2="${yOf(tick)}" stroke="${EXP.border}" stroke-width="0.5"/>
-      <text x="${margin.left - 8}" y="${yOf(tick) + 3}" text-anchor="end" font-size="8.5" fill="${EXP.muted}" font-family="system-ui,sans-serif">${tick.toFixed(1)}</text>
+    const yTicks = CEILING_AXIS_TICKS.map((tick) => `
+      <line x1="${margin.left}" y1="${yOf(tick)}" x2="${margin.left + plotWidth}" y2="${yOf(tick)}" stroke="${EXP.border}" stroke-width="0.8" opacity="0.55"/>
+      <text x="${margin.left + plotWidth + 9}" y="${yOf(tick) + 3}" text-anchor="start" font-size="10" fill="${EXP.muted}" font-family="system-ui,sans-serif">${formatCeilingAxisTick(tick, true)}</text>
     `).join('')
-    const observed = group.observed.map((point) =>
-      `<circle cx="${xOf(point.x)}" cy="${yOf(point.y)}" r="2.1" fill="${EXP.text}" opacity="0.28"/>`
+    const observed = displayGroup.observed.map((point) =>
+      `<circle cx="${xOf(point.x)}" cy="${yOf(point.y)}" r="2.8" fill="${CEILING_SERIES_STYLES.observed.fill}" stroke="${EXP.bg}" stroke-width="0.8" opacity="0.86"/>`
     ).join('')
-    const cePath = group.ceFdh.length > 1
-      ? `<path d="${stepLinePath(group.ceFdh, xOf, yOf)}" fill="none" stroke="${C_ACCENT}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>`
+    const cePath = displayGroup.ceFdh.length > 1
+      ? `<path d="${stepLinePath(displayGroup.ceFdh, xOf, yOf)}" fill="none" stroke="${CEILING_SERIES_STYLES.ceFdh.color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>`
       : ''
-    const crPath = group.crFdh.length > 1
-      ? `<path d="${straightLinePath(group.crFdh, xOf, yOf)}" fill="none" stroke="${C_PASS}" stroke-width="2" stroke-dasharray="5 4" stroke-linecap="round"/>`
+    const cePoints = displayGroup.ceFdh.map((point) =>
+      `<circle cx="${xOf(point.x)}" cy="${yOf(point.y)}" r="4" fill="${CEILING_SERIES_STYLES.ceFdh.color}" stroke="${EXP.bg}" stroke-width="1.5"/>`
+    ).join('')
+    const crPath = displayGroup.crFdh.length > 1
+      ? `<path d="${straightLinePath(displayGroup.crFdh, xOf, yOf)}" fill="none" stroke="${CEILING_SERIES_STYLES.crFdh.color}" stroke-width="2.4" stroke-dasharray="6 4" stroke-linecap="round"/>`
       : ''
+    const crPoints = displayGroup.crFdh.map((point) => {
+      const cx = xOf(point.x)
+      const cy = yOf(point.y)
+      return `<rect x="${cx - 3.4}" y="${cy - 3.4}" width="6.8" height="6.8" rx="1.1" fill="${CEILING_SERIES_STYLES.crFdh.color}" stroke="${EXP.bg}" stroke-width="1.5" transform="rotate(45 ${cx} ${cy})"/>`
+    }).join('')
     return `
       <rect x="0" y="${offsetY}" width="${width}" height="${chartHeight}" fill="${EXP.bg}" rx="6"/>
-      <text x="${margin.left}" y="${offsetY + 18}" font-size="11" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="600">${group.condition}${group.target ? ` → ${group.target}` : ''}</text>
-      <line x1="${margin.left}" y1="${offsetY + margin.top}" x2="${margin.left}" y2="${offsetY + margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="1"/>
-      <line x1="${margin.left}" y1="${offsetY + margin.top + plotHeight}" x2="${margin.left + plotWidth}" y2="${offsetY + margin.top + plotHeight}" stroke="${EXP.border}" stroke-width="1"/>
+      <rect x="${margin.left}" y="${offsetY + margin.top}" width="${plotWidth}" height="${plotHeight}" fill="transparent" stroke="${EXP.border}" stroke-width="1.2"/>
+      <text x="${margin.left + 10}" y="${offsetY + 18}" font-size="10.5" fill="${CEILING_SERIES_STYLES.ceFdh.color}" font-family="system-ui,sans-serif" font-weight="700">CE-FDH ceiling</text>
+      <line x1="${margin.left + 116}" y1="${offsetY + 15}" x2="${margin.left + 158}" y2="${offsetY + 15}" stroke="${CEILING_SERIES_STYLES.ceFdh.color}" stroke-width="2.6"/>
+      <text x="${margin.left + 180}" y="${offsetY + 18}" font-size="10.5" fill="${CEILING_SERIES_STYLES.crFdh.color}" font-family="system-ui,sans-serif" font-weight="700">CR-FDH</text>
+      <line x1="${margin.left + 235}" y1="${offsetY + 15}" x2="${margin.left + 277}" y2="${offsetY + 15}" stroke="${CEILING_SERIES_STYLES.crFdh.color}" stroke-width="2.4" stroke-dasharray="6 4"/>
       ${xTicks}
       ${yTicks}
       ${observed}
       ${cePath}
+      ${cePoints}
       ${crPath}
+      ${crPoints}
+      <text x="${margin.left + plotWidth / 2}" y="${offsetY + chartHeight - 4}" text-anchor="middle" font-size="10.5" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="600">${expEscape(expTrunc(group.condition, 32))} range (0-100)</text>
+      <text x="16" y="${offsetY + margin.top + plotHeight / 2}" text-anchor="middle" transform="rotate(-90, 16, ${offsetY + margin.top + plotHeight / 2})" font-size="10.5" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="600">${expEscape(expTrunc(group.target || 'Outcome', 24))} range (0-100)</text>
     `
   }).join('')
 
@@ -2791,7 +2951,7 @@ function exportHeatmapChart(matrix: HeatmapMatrix, title: string): string {
   const cellGap = 4
   const longestRowLabel = Math.max(0, ...matrix.rowLabels.map((label) => label.length))
   const left = Math.min(220, Math.max(136, longestRowLabel * 6 + 36))
-  const top = 58
+  const top = matrix.xAxisLabel ? 72 : 58
   const plotWidth = matrix.colLabels.length * (cellWidth + cellGap) - cellGap
   const plotHeight = matrix.rowLabels.length * (cellHeight + cellGap) - cellGap
   const width = Math.max(640, left + plotWidth + 32)
@@ -2808,6 +2968,8 @@ function exportHeatmapChart(matrix: HeatmapMatrix, title: string): string {
   )
   const rotateColumnLabels = matrix.colLabels.length > 7 || matrix.colLabels.some((label) => label.length > 10)
 
+  const axisSvg = `${matrix.xAxisLabel ? `<text x="${left + plotWidth / 2}" y="20" text-anchor="middle" font-size="10" fill="${EXP.text}" font-family="system-ui,sans-serif" font-weight="700">${expEscape(matrix.xAxisLabel)}</text>` : ''}${matrix.yAxisLabel ? `<text x="18" y="${top + plotHeight / 2}" text-anchor="middle" font-size="10" fill="${EXP.text}" transform="rotate(-90 18 ${top + plotHeight / 2})" font-family="system-ui,sans-serif" font-weight="700">${expEscape(matrix.yAxisLabel)}</text>` : ''}`
+
   const labelsSvg = matrix.colLabels.map((label, index) =>
     `<text x="${left + index * (cellWidth + cellGap) + cellWidth / 2}" y="${rotateColumnLabels ? 42 : 34}" text-anchor="middle" font-size="9" fill="${EXP.muted}" ${rotateColumnLabels ? `transform="rotate(-28 ${left + index * (cellWidth + cellGap) + cellWidth / 2} 42)"` : ''} font-family="system-ui,sans-serif">${expTrunc(label, 12)}</text>`
   ).join('') + matrix.rowLabels.map((label, rowIndex) =>
@@ -2820,9 +2982,10 @@ function exportHeatmapChart(matrix: HeatmapMatrix, title: string): string {
       const y = top + rowIndex * (cellHeight + cellGap)
       const fill = value == null ? 'rgba(255,255,255,0.03)' : heatColor(value, minValue, maxValue)
       const textFill = value != null && Math.abs(value) > maxAbs * 0.58 ? '#111111' : EXP.text
+      const displayValue = matrix.valueLabels?.[rowIndex]?.[colIndex] ?? (value == null ? matrix.missingLabel ?? '—' : value.toFixed(2))
       return `
         <rect x="${x}" y="${y}" width="${cellWidth}" height="${cellHeight}" rx="5" fill="${fill}" stroke="${EXP.border}" stroke-width="0.45"/>
-        <text x="${x + cellWidth / 2}" y="${y + cellHeight / 2 + 3}" text-anchor="middle" font-size="9" fill="${textFill}" font-family="system-ui,sans-serif" font-weight="600">${value == null ? '—' : value.toFixed(2)}</text>
+        <text x="${x + cellWidth / 2}" y="${y + cellHeight / 2 + 3}" text-anchor="middle" font-size="9" fill="${textFill}" font-family="system-ui,sans-serif" font-weight="600">${expEscape(displayValue)}</text>
       `
     }).join('')
   ).join('')
@@ -2831,6 +2994,7 @@ function exportHeatmapChart(matrix: HeatmapMatrix, title: string): string {
     <figcaption style="font-size:11px;font-weight:600;color:#6B7280;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;font-family:system-ui,sans-serif">${title}</figcaption>
     <svg width="${width}" height="${height}" style="display:block;min-width:${width}px;border-radius:6px">
       <rect width="${width}" height="${height}" fill="${EXP.bg}" rx="6"/>
+      ${axisSvg}
       ${labelsSvg}
       ${cellsSvg}
       <text x="${left}" y="${height - 14}" font-size="9" fill="${EXP.muted}" font-family="system-ui,sans-serif">Higher intensity = larger absolute ${matrix.legendLabel.toLowerCase()}</text>

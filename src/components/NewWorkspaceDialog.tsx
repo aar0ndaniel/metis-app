@@ -34,7 +34,7 @@ export default function NewWorkspaceDialog({ onClose, onCreate }: Props) {
           backgroundColor: 'var(--color-surface)',
           borderRadius: 14,
           border: '1px solid var(--color-border-subtle)',
-          boxShadow: '0 16px 40px rgba(0,0,0,0.8)',
+          boxShadow: 'var(--shadow-modal)',
         }}
       >
         {/* Title bar */}

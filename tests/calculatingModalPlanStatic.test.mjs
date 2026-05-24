@@ -92,7 +92,7 @@ assert.doesNotMatch(plumberSource, /coerce_boot_array|run-bootstrap-chunk|finali
 assert.match(plumberSource, /assemble_bootstrap_response <- function/, 'R API should share bootstrap response assembly for the single bootstrap route.')
 assert.match(plumberSource, /"\/run-bootstrap"/, 'R API should expose the single /run-bootstrap route.')
 
-assert.match(titleBarSource, /ChatCircleText/, 'TitleBar should render a feedback icon.')
-assert.match(titleBarSource, />Feedback</, 'TitleBar should show Feedback text beside the Tark entry point.')
+assert.match(titleBarSource, /label: 'Feedback'[\s\S]*action: 'open-feedback'/, 'TitleBar should keep Feedback available from Help.')
+assert.doesNotMatch(titleBarSource, /id="tour-feedback"|ChatCircleText/, 'TitleBar should not render the old feedback button near the window controls.')
 
 console.log('PASS calculating modal plan static coverage')

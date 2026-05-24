@@ -206,7 +206,7 @@ function SelectField({
         {open && (
           <div
             className="absolute z-20 left-0 right-0"
-            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: '4px 0' }}
+            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-modal-popover)', padding: '4px 0' }}
           >
             {options.map(o => (
               <button
@@ -259,7 +259,7 @@ function WorkspaceSelectField({
         {open && hasOptions && (
           <div
             className="absolute z-20 left-0 right-0"
-            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: '4px 0', maxHeight: 196, overflowY: 'auto' }}
+            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-modal-popover)', padding: '4px 0', maxHeight: 196, overflowY: 'auto' }}
           >
             {options.map((workspace) => {
               const datasetCount = countWorkspaceDatasets(workspace)
@@ -614,7 +614,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
           backgroundColor: 'var(--color-surface)',
           borderRadius: 16,
           border: '1px solid var(--color-border)',
-          boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+          boxShadow: 'var(--shadow-modal)',
           overflow: 'hidden',
         }}
       >

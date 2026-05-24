@@ -26,9 +26,14 @@ import { stripModelDisplayName, stripWorkspaceDisplayName } from '../utils/displ
 import DatasetManagerModal from '../components/DatasetManagerModal'
 import { getWorkspaceDatasets, migrateWorkspace } from '../utils/datasetWorkspace'
 import AppLogo from '../components/AppLogo'
+import type { Workspace, WorkspaceChild } from '../types/workspace'
 
 // ─── Workspace color swatches ─────────────────────────────────────────────────
 const WS_COLORS = ['#87976B','#A78BFA','#FFB547','#32D583','#6366F1','#60A5FA','#F97316','#E879F9']
+type WorkspacePanelKind = 'datasets' | 'results'
+type ConstructShape = 'circle' | 'oval' | 'square'
+const OVAL_RX_SCALE = 1.35
+const OVAL_RY_SCALE = 0.82
 
 // ─── Context Menu ─────────────────────────────────────────────────────────────
 interface CtxMenu {
@@ -167,39 +172,13 @@ function SidebarContextMenu({
             ? 'Delete Workspace'
             : menu.kind === 'dataset'
               ? 'Delete Dataset'
-              : menu.kind === 'result'
+            : menu.kind === 'result'
                 ? 'Delete Saved Result'
                 : 'Delete Model'}
         </span>
       </button>
     </div>
   )
-}
-
-// ─── Data Types ──────────────────────────────────────────────────────────────
-export interface WorkspaceChild {
-  id: string
-  name: string
-  type: 'model' | 'dataset' | 'result'
-  badge?: 'Calculated' | 'Draft'
-  createdAt?: string
-  updatedAt?: string
-  meta?: string
-  filePath?: string   // for datasets: original file path (used to re-open)
-  headers?: string[]  // for datasets: column names
-  linkedModelId?: string
-  state?: any         // for models: constructs, paths, etc.
-  stats?: { r2?: string; srmr?: string }
-}
-
-export interface Workspace {
-  id: string
-  name: string
-  color: string
-  expanded: boolean
-  pinned?: boolean
-  path?: string
-  children: WorkspaceChild[]
 }
 
 // ─── Helper: hex → alpha color ───────────────────────────────────────────────
@@ -299,8 +278,10 @@ interface PreviewConstruct {
   x: number
   y: number
   radius?: number
+  ovalWidth?: number
+  ovalHeight?: number
   color?: string
-  shape?: 'circle' | 'square'
+  shape?: ConstructShape
 }
 
 interface PreviewPath {
@@ -317,12 +298,16 @@ function inferTimestampFromId(id: string): string | undefined {
   return new Date(numeric).toISOString()
 }
 
+function getAnalysisSavedAt(item: WorkspaceChild): string | undefined {
+  return 'state' in item ? (item.state as any)?.analysis?.savedAt : undefined
+}
+
 function resolveUpdatedAt(item: WorkspaceChild): string | undefined {
-  return item.updatedAt || item.state?.analysis?.savedAt || item.createdAt || inferTimestampFromId(item.id)
+  return item.updatedAt || getAnalysisSavedAt(item) || item.createdAt || inferTimestampFromId(item.id)
 }
 
 function resolveCreatedAt(item: WorkspaceChild): string | undefined {
-  return item.createdAt || inferTimestampFromId(item.id) || item.updatedAt || item.state?.analysis?.savedAt
+  return item.createdAt || inferTimestampFromId(item.id) || item.updatedAt || getAnalysisSavedAt(item)
 }
 
 function resolveSortTime(item: WorkspaceChild): number {
@@ -367,6 +352,24 @@ function formatRelativeAge(value?: string): string {
   return pluralize(weeks, 'week', 'weeks')
 }
 
+function getSidebarDatasetSummary(datasets: Array<{ id: string; name: string }>) {
+  if (!datasets.length) return null
+  return {
+    id: `datasets-${datasets[0].id}`,
+    label: datasets.length === 1 ? datasets[0].name : `Datasets · ${datasets.length}`,
+    count: datasets.length,
+  }
+}
+
+function getSidebarResultSummary(results: Array<{ id: string; name: string }>) {
+  if (!results.length) return null
+  return {
+    id: `results-${results[0].id}`,
+    label: results.length === 1 ? results[0].name : `Saved Results · ${results.length}`,
+    count: results.length,
+  }
+}
+
 function getModelSnapshot(model: WorkspaceChild): { constructs: PreviewConstruct[]; paths: PreviewPath[] } {
   const rawState = ((model as any).state ?? (model as any).data ?? {}) as any
   const constructs = Array.isArray(rawState.constructs)
@@ -375,6 +378,29 @@ function getModelSnapshot(model: WorkspaceChild): { constructs: PreviewConstruct
   const paths = Array.isArray(rawState.paths) ? rawState.paths.filter((path: any) => path?.from && path?.to) : []
 
   return { constructs, paths }
+}
+
+function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' {
+  return shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function getPreviewConstructRadii(construct: PreviewConstruct): { rx: number; ry: number } {
+  const radius = construct.radius ?? 42
+  if (normalizeConstructShape(construct.shape) === 'oval') {
+    return {
+      rx: Math.max(40, construct.ovalWidth ?? Math.round(radius * OVAL_RX_SCALE * 2)) / 2,
+      ry: Math.max(40, construct.ovalHeight ?? Math.round(radius * OVAL_RY_SCALE * 2)) / 2,
+    }
+  }
+
+  return { rx: radius, ry: radius }
+}
+
+function getPreviewEdgeOffset(construct: PreviewConstruct, ux: number, uy: number, scale: number): number {
+  const { rx, ry } = getPreviewConstructRadii(construct)
+  const scaledRx = Math.max(8, Math.min(14, rx * scale * 0.5))
+  const scaledRy = Math.max(8, Math.min(14, ry * scale * 0.5))
+  return 1 / Math.sqrt((ux * ux) / (scaledRx * scaledRx) + (uy * uy) / (scaledRy * scaledRy))
 }
 
 function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; accentColor: string }) {
@@ -412,10 +438,10 @@ function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; ac
     )
   }
 
-  const minX = Math.min(...constructs.map((construct) => construct.x - (construct.radius ?? 42)))
-  const minY = Math.min(...constructs.map((construct) => construct.y - (construct.radius ?? 42)))
-  const maxX = Math.max(...constructs.map((construct) => construct.x + (construct.radius ?? 42)))
-  const maxY = Math.max(...constructs.map((construct) => construct.y + (construct.radius ?? 42)))
+  const minX = Math.min(...constructs.map((construct) => construct.x - getPreviewConstructRadii(construct).rx))
+  const minY = Math.min(...constructs.map((construct) => construct.y - getPreviewConstructRadii(construct).ry))
+  const maxX = Math.max(...constructs.map((construct) => construct.x + getPreviewConstructRadii(construct).rx))
+  const maxY = Math.max(...constructs.map((construct) => construct.y + getPreviewConstructRadii(construct).ry))
   const sourceWidth = Math.max(maxX - minX, 1)
   const sourceHeight = Math.max(maxY - minY, 1)
 
@@ -461,8 +487,9 @@ function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; ac
             const dx = x2 - x1
             const dy = y2 - y1
             const dist = Math.sqrt(dx * dx + dy * dy)
-            const r1 = Math.max(8, Math.min(14, (from.radius ?? 42) * scale * 0.5))
-            const r2 = Math.max(8, Math.min(14, (to.radius ?? 42) * scale * 0.5))
+            if (dist < 1) return null
+            const r1 = getPreviewEdgeOffset(from, dx / dist, dy / dist, scale)
+            const r2 = getPreviewEdgeOffset(to, -dx / dist, -dy / dist, scale)
             
             if (dist < r1 + r2 + 2) return null
             
@@ -493,17 +520,18 @@ function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; ac
           {constructs.map((construct) => {
             const centerX = mapX(construct.x)
             const centerY = mapY(construct.y)
-            const radius = Math.max(8, Math.min(14, (construct.radius ?? 42) * scale * 0.5))
+            const { rx, ry } = getPreviewConstructRadii(construct)
+            const scaledRx = Math.max(8, Math.min(14, rx * scale * 0.5))
+            const scaledRy = Math.max(8, Math.min(14, ry * scale * 0.5))
 
             return (
               <g key={construct.id}>
-                {construct.shape === 'square' ? (
-                  <rect
-                    x={centerX - radius}
-                    y={centerY - radius}
-                    width={radius * 2}
-                    height={radius * 2}
-                    rx={4}
+                {normalizeConstructShape(construct.shape) === 'oval' ? (
+                  <ellipse
+                    cx={centerX}
+                    cy={centerY}
+                    rx={scaledRx}
+                    ry={scaledRy}
                     fill={hexToRgba(accentColor, 0.15)}
                     stroke={accentColor}
                     strokeWidth="1.2"
@@ -512,7 +540,7 @@ function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; ac
                   <circle
                     cx={centerX}
                     cy={centerY}
-                    r={radius}
+                    r={scaledRx}
                     fill={hexToRgba(accentColor, 0.15)}
                     stroke={accentColor}
                     strokeWidth="1.2"
@@ -610,9 +638,9 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
           boxShadow: '0 10px 22px rgb(var(--color-accent-rgb) / 0.18)',
         }}
       >
-        <Plus size={14} weight="bold" color="'var(--color-on-accent)'" />
+        <Plus size={14} weight="bold" color="var(--color-on-accent)" />
         <span style={{ color: 'var(--color-on-accent)', fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: 700 }}>
-          Create your first model
+          Create Model
         </span>
       </button>
     </div>
@@ -637,6 +665,10 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const [expandedResultsByWorkspace, setExpandedResultsByWorkspace] = useState<Record<string, boolean>>({})
+  const datasetsPanelRef = useRef<HTMLDivElement>(null)
+  const resultsPanelRef = useRef<HTMLDivElement>(null)
+  const [pendingPanelFocus, setPendingPanelFocus] = useState<{ workspaceId: string; panel: WorkspacePanelKind; nonce: number } | null>(null)
+  const [highlightedPanel, setHighlightedPanel] = useState<{ workspaceId: string; panel: WorkspacePanelKind; nonce: number } | null>(null)
 
   // Dialog visibility for dataset replacement only; workspace/model dialogs live in App.tsx.
   const [showDatasetChoice, setShowDatasetChoice] = useState(false)
@@ -966,6 +998,12 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
     })
   }, [navigate, resolveDatasetContext, setActiveId])
 
+  const openWorkspaceChild = useCallback((child: WorkspaceChild) => {
+    if (isCurrentlyRenaming(child.id)) return
+    setActiveId(child.id)
+    navigate(`/canvas/${child.id}`)
+  }, [navigate, renamingId, setActiveId])
+
   const openDatasetManager = useCallback((datasetId?: string) => {
     if (datasetId) {
       const resolved = resolveDatasetContext(datasetId)
@@ -975,6 +1013,37 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
     setShowDatasetChoice(true)
   }, [resolveDatasetContext, setActiveId])
   const resultsExpanded = activeWorkspace ? !!expandedResultsByWorkspace[activeWorkspace.id] : false
+  const isResultsPanelHighlighted = highlightedPanel?.workspaceId === activeWorkspace?.id && highlightedPanel?.panel === 'results'
+  const isDatasetsPanelHighlighted = highlightedPanel?.workspaceId === activeWorkspace?.id && highlightedPanel?.panel === 'datasets'
+
+  const focusWorkspacePanel = useCallback((workspaceId: string, panel: WorkspacePanelKind) => {
+    const focus = { workspaceId, panel, nonce: Date.now() }
+    setActiveId(workspaceId)
+    setHighlightedPanel(focus)
+    setPendingPanelFocus(focus)
+    if (panel === 'results') {
+      setExpandedResultsByWorkspace((prev) => ({
+        ...prev,
+        [workspaceId]: true,
+      }))
+    }
+  }, [setActiveId])
+
+  useEffect(() => {
+    if (!pendingPanelFocus || activeWorkspace?.id !== pendingPanelFocus.workspaceId) return
+    const target = pendingPanelFocus.panel === 'datasets' ? datasetsPanelRef.current : resultsPanelRef.current
+    const frameId = window.requestAnimationFrame(() => {
+      target?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    })
+    const timeoutId = window.setTimeout(() => {
+      setHighlightedPanel((current) => current?.nonce === pendingPanelFocus.nonce ? null : current)
+      setPendingPanelFocus((current) => current?.nonce === pendingPanelFocus.nonce ? null : current)
+    }, 1800)
+    return () => {
+      window.cancelAnimationFrame(frameId)
+      window.clearTimeout(timeoutId)
+    }
+  }, [activeWorkspace?.id, pendingPanelFocus, resultsExpanded])
 
   const toggleResultsExpanded = () => {
     if (!activeWorkspace) return
@@ -1045,6 +1114,13 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
             const isExpanded = ws.expanded
             const isActive = activeId === ws.id || ws.children.some((c) => c.id === activeId)
             const isDragOver = dragOverWsId === ws.id
+            const sidebarWorkspace = migrateWorkspace(ws as any)
+            const sidebarDatasets = getWorkspaceDatasets(sidebarWorkspace as any)
+            const sidebarResults = [...sidebarWorkspace.children.filter((c) => c.type === 'result')].sort((a, b) => resolveSortTime(b) - resolveSortTime(a))
+            const datasetSummary = getSidebarDatasetSummary(sidebarDatasets)
+            const resultSummary = getSidebarResultSummary(sidebarResults)
+            const datasetSummaryId = datasetSummary ? `sidebar-${ws.id}-datasets` : ''
+            const resultSummaryId = resultSummary ? `sidebar-${ws.id}-results` : ''
 
             return (
               <div
@@ -1222,24 +1298,12 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                         </button>
                       ))}
 
-                      {ws.children.filter((c) => c.type === 'result').map((child) => (
+                      {resultSummary && (
                         <button
-                          key={child.id}
-                          onClick={() => {
-                            setActiveId(child.id)
-                            const fallbackModelId = ws.children.find((c) => c.type === 'model')?.id
-                            const linkedModelId = child.linkedModelId || fallbackModelId || child.id
-                            navigate(`/results/${linkedModelId}`, {
-                              state: {
-                                savedResultId: child.id,
-                                savedAnalysis: child.state?.analysis,
-                                savedModelSnapshot: child.state?.modelSnapshot,
-                              },
-                            })
-                          }}
-                          onMouseEnter={() => setHoveredId(child.id)}
+                          key={resultSummary.id}
+                          onClick={() => focusWorkspacePanel(ws.id, 'results')}
+                          onMouseEnter={() => setHoveredId(resultSummaryId)}
                           onMouseLeave={() => setHoveredId(null)}
-                          onContextMenu={(e) => openCtxMenu(e, child.id, 'result')}
                           className="flex items-center w-full text-left transition-colors"
                           style={{
                             width: 'calc(100% - 16px)',
@@ -1249,28 +1313,27 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                             margin: '0 8px',
                             paddingLeft: 27,
                             paddingRight: 10,
-                            background: activeId === child.id
-                              ? `linear-gradient(180deg, ${hexToRgba(ws.color, 0.11)} 0%, rgba(255,255,255,0.018) 100%)`
-                              : hoveredId === child.id
+                            background: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'results'
+                              ? `linear-gradient(180deg, ${hexToRgba(ws.color, 0.13)} 0%, rgba(255,255,255,0.02) 100%)`
+                              : hoveredId === resultSummaryId
                                 ? hexToRgba(ws.color, 0.12)
                                 : 'transparent',
-                            border: activeId === child.id
-                              ? `1px solid ${hexToRgba(ws.color, 0.14)}`
-                              : hoveredId === child.id
+                            border: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'results'
+                              ? `1px solid ${hexToRgba(ws.color, 0.2)}`
+                              : hoveredId === resultSummaryId
                                 ? `1px solid ${hexToRgba(ws.color, 0.22)}`
                                 : '1px solid transparent',
-                            boxShadow: activeId === child.id
+                            boxShadow: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'results'
                               ? 'inset 0 1px 0 rgba(255,255,255,0.045)'
-                              : hoveredId === child.id
+                              : hoveredId === resultSummaryId
                                 ? 'inset 0 1px 0 rgba(255,255,255,0.02)'
                                 : 'none',
-                            backdropFilter: activeId === child.id ? 'blur(8px) saturate(106%)' : 'none',
-                            borderRadius: activeId === child.id || hoveredId === child.id ? 8 : 0,
+                            borderRadius: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'results' || hoveredId === resultSummaryId ? 8 : 0,
                           }}
                         >
                           <FileCode size={12} style={{ flexShrink: 0, color: 'rgb(var(--color-accent-rgb) / 0.72)' }} />
                           <span style={{
-                            color: activeId === child.id ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                            color: 'var(--color-text-secondary)',
                             fontFamily: 'DM Sans, sans-serif',
                             fontSize: 11,
                             fontWeight: 500,
@@ -1279,74 +1342,59 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                             whiteSpace: 'nowrap',
                             flex: 1,
                           }}>
-                            {child.name}
+                            {resultSummary.label}
                           </span>
                         </button>
-                      ))}
+                      )}
 
-                      {ws.children.filter((c) => c.type === 'dataset').map((child) => (
+                      {datasetSummary && (
                         <button
-                          key={child.id}
-                          onClick={() => setActiveId(child.id)}
-                          onMouseEnter={() => setHoveredId(child.id)}
+                          key={datasetSummary.id}
+                          onClick={() => openDatasetManager(sidebarDatasets[0]?.id)}
+                          onMouseEnter={() => setHoveredId(datasetSummaryId)}
                           onMouseLeave={() => setHoveredId(null)}
-                          onContextMenu={(e) => openCtxMenu(e, child.id, 'dataset')}
-                          className="flex flex-col w-full text-left transition-colors"
+                          className="flex items-center w-full text-left transition-colors"
                           style={{
                             width: 'calc(100% - 16px)',
                             boxSizing: 'border-box',
+                            gap: 6,
+                            height: 28,
                             margin: '0 8px',
                             paddingLeft: 27,
                             paddingRight: 10,
-                            paddingTop: 5,
-                            paddingBottom: 5,
-                            background: activeId === child.id
-                              ? `linear-gradient(180deg, ${hexToRgba(ws.color, 0.11)} 0%, rgba(255,255,255,0.018) 100%)`
-                              : hoveredId === child.id
+                            background: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'datasets'
+                              ? `linear-gradient(180deg, ${hexToRgba(ws.color, 0.13)} 0%, rgba(255,255,255,0.02) 100%)`
+                              : hoveredId === datasetSummaryId
                                 ? hexToRgba(ws.color, 0.12)
                                 : 'transparent',
-                            border: activeId === child.id
-                              ? `1px solid ${hexToRgba(ws.color, 0.14)}`
-                              : hoveredId === child.id
+                            border: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'datasets'
+                              ? `1px solid ${hexToRgba(ws.color, 0.2)}`
+                              : hoveredId === datasetSummaryId
                                 ? `1px solid ${hexToRgba(ws.color, 0.22)}`
                                 : '1px solid transparent',
-                            boxShadow: activeId === child.id
+                            boxShadow: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'datasets'
                               ? 'inset 0 1px 0 rgba(255,255,255,0.045)'
-                              : hoveredId === child.id
+                              : hoveredId === datasetSummaryId
                                 ? 'inset 0 1px 0 rgba(255,255,255,0.02)'
                                 : 'none',
-                            backdropFilter: activeId === child.id ? 'blur(8px) saturate(106%)' : 'none',
-                            borderRadius: activeId === child.id || hoveredId === child.id ? 8 : 0,
+                            borderRadius: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'datasets' || hoveredId === datasetSummaryId ? 8 : 0,
                           }}
                         >
-                          <div className="flex items-center" style={{ gap: 6 }}>
-                            <FileCsv size={12} color="#32D583" style={{ flexShrink: 0 }} />
-                            <span style={{
-                              color: 'var(--color-text-secondary)',
-                              fontFamily: 'DM Sans, sans-serif',
-                              fontSize: 11,
-                              fontWeight: 500,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              flex: 1,
-                            }}>
-                              {child.name}
-                            </span>
-                          </div>
-                          {child.meta && (
-                            <span style={{
-                              color: 'var(--color-text-muted)',
-                              fontFamily: 'DM Sans, sans-serif',
-                              fontSize: 10,
-                              paddingLeft: 18,
-                              marginTop: 1,
-                            }}>
-                              {child.meta}
-                            </span>
-                          )}
+                          <FileCsv size={12} color="#32D583" style={{ flexShrink: 0 }} />
+                          <span style={{
+                            color: 'var(--color-text-secondary)',
+                            fontFamily: 'DM Sans, sans-serif',
+                            fontSize: 11,
+                            fontWeight: 500,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                            flex: 1,
+                          }}>
+                            {datasetSummary.label}
+                          </span>
                         </button>
-                      ))}
+                      )}
                     </div>
                   </div>
                 ) : (
@@ -1510,7 +1558,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                   boxShadow: '0 8px 18px rgb(var(--color-accent-rgb) / 0.16)',
                 }}
               >
-                <Plus size={14} weight="bold" color="'var(--color-on-accent)'" />
+                <Plus size={14} weight="bold" color="var(--color-on-accent)" />
                 <span style={{ color: 'var(--color-on-accent)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>
                   New Model
                 </span>
@@ -1531,7 +1579,9 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
             >
               {models.length === 0 ? (
                 <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'center', minHeight: 520 }}>
-                  <EmptyState onAdd={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'new-model' } }))} />
+                  <EmptyState
+                    onAdd={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'new-model' } }))}
+                  />
                 </div>
               ) : (
                 models.map((model) => (
@@ -1547,11 +1597,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                     }}
                   >
                     <button
-                      onClick={() => {
-                        if (isCurrentlyRenaming(model.id)) return
-                        setActiveId(model.id)
-                        navigate(`/canvas/${model.id}`)
-                      }}
+                      onClick={() => openWorkspaceChild(model)}
                       className="w-full transition-transform duration-150"
                       style={{
                         padding: 0,
@@ -1644,17 +1690,15 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
 
               {models.length === 0 ? (
                 <div style={{ display: 'flex', justifyContent: 'center', minHeight: 520 }}>
-                  <EmptyState onAdd={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'new-model' } }))} />
+                  <EmptyState
+                    onAdd={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'new-model' } }))}
+                  />
                 </div>
               ) : (
                 models.map((model) => (
                   <button
                     key={model.id}
-                    onClick={() => {
-                      if (isCurrentlyRenaming(model.id)) return
-                      setActiveId(model.id)
-                      navigate(`/canvas/${model.id}`)
-                    }}
+                    onClick={() => openWorkspaceChild(model)}
                     onMouseEnter={() => setHoveredId(model.id)}
                     onMouseLeave={() => setHoveredId(null)}
                     onContextMenu={(e) => openCtxMenu(e, model.id, 'model')}
@@ -1712,7 +1756,20 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
 
         {/* Saved results section */}
         {results.length > 0 && (
-          <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div
+            ref={resultsPanelRef}
+            style={{
+              marginTop: 6,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              borderRadius: 12,
+              padding: isResultsPanelHighlighted ? 10 : 0,
+              backgroundColor: isResultsPanelHighlighted ? 'rgb(var(--color-accent-rgb) / 0.08)' : 'transparent',
+              border: isResultsPanelHighlighted ? '1px solid rgb(var(--color-accent-rgb) / 0.24)' : '1px solid transparent',
+              transition: 'background-color 180ms ease, border-color 180ms ease, padding 180ms ease',
+            }}
+          >
             <div className="flex items-center justify-between">
               <button
                 onClick={toggleResultsExpanded}
@@ -1809,7 +1866,17 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
         )}
 
         {datasets.length > 0 && (
-          <div style={{ marginTop: 10 }}>
+          <div
+            ref={datasetsPanelRef}
+            style={{
+              marginTop: 10,
+              borderRadius: 12,
+              padding: isDatasetsPanelHighlighted ? 10 : 0,
+              backgroundColor: isDatasetsPanelHighlighted ? 'rgb(var(--color-accent-rgb) / 0.08)' : 'transparent',
+              border: isDatasetsPanelHighlighted ? '1px solid rgb(var(--color-accent-rgb) / 0.24)' : '1px solid transparent',
+              transition: 'background-color 180ms ease, border-color 180ms ease, padding 180ms ease',
+            }}
+          >
             <span style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 14, fontWeight: 600 }}>
               Dataset
             </span>
@@ -1948,7 +2015,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
               background: 'var(--color-page)',
               borderRadius: 14,
               border: '1px solid var(--color-border)',
-              boxShadow: '0 24px 60px rgba(0,0,0,0.8)',
+              boxShadow: 'var(--shadow-modal)',
               display: 'flex',
               flexDirection: 'column',
               overflow: 'hidden',

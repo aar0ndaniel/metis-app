@@ -1,0 +1,47 @@
+import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const workspaceRoot = path.resolve(__dirname, '..')
+const chartsSource = await fs.readFile(path.join(workspaceRoot, 'src/components/ResultsCharts.tsx'), 'utf8')
+const resultsViewSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
+
+assert.match(chartsSource, /median importance/, 'Advanced priority map should label the median importance line.')
+assert.match(chartsSource, /median performance/, 'Advanced priority map should label the median performance line.')
+assert.match(chartsSource, /Importance: absolute total effect on/, 'Priority map x-axis should match the requested IPMA chart language.')
+assert.match(chartsSource, /Performance \(0-100\)/, 'Priority map y-axis should match the requested IPMA chart language.')
+assert.match(chartsSource, /CE-FDH ceiling/, 'NCA ceiling chart should label the CE-FDH ceiling line.')
+assert.match(chartsSource, /CR-FDH/, 'NCA ceiling chart should label the CR-FDH line.')
+assert.match(chartsSource, /normalizeCeilingGroup/, 'NCA ceiling chart should normalize raw construct scores into a visible 0-100 display range.')
+assert.match(chartsSource, /CEILING_AXIS_TICKS/, 'NCA ceiling chart should use stable 0-100 axis ticks.')
+assert.match(chartsSource, /var\(--color-accent\)/, 'Advanced charts should use the app accent token.')
+assert.match(chartsSource, /var\(--color-success\)/, 'Advanced charts should use the app success token.')
+assert.doesNotMatch(chartsSource, /#4682B4/, 'Advanced charts should not use the old indigo/blue hardcoded series color.')
+assert.doesNotMatch(chartsSource, /#B89AF0/, 'Advanced chart palette should not retain purple/indigo as an advanced highlight color.')
+
+assert.match(resultsViewSource, /isAdvancedResultTablePanel/, 'ResultsView should identify advanced-analysis result tables.')
+assert.match(resultsViewSource, /getAdvancedPriorityBadgeStyle/, 'Advanced result tables should render priority badges.')
+assert.match(resultsViewSource, /classifyAdvancedSemanticTone/, 'Advanced result badges should use semantic high, moderate, and low tones.')
+assert.match(resultsViewSource, /isAdvancedBooleanLabel/, 'Advanced boolean values should be detected separately from priority labels.')
+assert.match(resultsViewSource, /shouldRenderAdvancedPriorityPill/, 'Advanced result tables should limit pill styling to priority labels.')
+assert.match(resultsViewSource, /if \(shouldRenderAdvancedPriorityPill\(header, displayValue, isLastColumn\)\)/, 'Priority labels should use the only advanced pill path.')
+assert.match(resultsViewSource, /color: getAdvancedPriorityBadgeStyle\(displayValue\)\.color/, 'Advanced true and false values should keep semantic text color without a pill surface.')
+assert.match(resultsViewSource, /isLastColumn: headerIndex === headers\.length - 1/, 'Advanced result cells should know whether they are in the last column.')
+assert.match(resultsViewSource, /renderAdvancedResultCell/, 'Advanced result tables should use custom cell rendering.')
+assert.match(resultsViewSource, /formatResultTableHeader\(header, selectedPanel\)/, 'Advanced result tables should still use existing header formatting.')
+assert.match(resultsViewSource, /function BottleneckDataTable/, 'Bottleneck tables should use a dedicated grouped table renderer.')
+assert.match(resultsViewSource, /getAdvancedTargetConstruct/, 'Bottleneck tables should read the selected advanced-analysis target construct.')
+assert.match(resultsViewSource, /isBottleneckTargetConditionColumn/, 'Bottleneck tables should exclude the selected outcome construct from condition columns.')
+assert.match(resultsViewSource, /selectedPanel === 'bottleneck-table'[\s\S]*<BottleneckDataTable rows=\{rawRows\} targetConstruct=\{advancedTargetConstruct\}/, 'Bottleneck tables should render CE-FDH and CR-FDH groups with target-aware columns.')
+assert.match(resultsViewSource, /setActiveCeiling/, 'Bottleneck tables should switch CE-FDH and CR-FDH with tabs.')
+assert.match(resultsViewSource, /includeMetaColumns = false/, 'Bottleneck tables should hide repeated Method and Ceiling columns when the ceiling is already shown in tabs.')
+assert.match(resultsViewSource, /Level \(%\)/, 'Bottleneck tables should show the target level without adding an outcome construct column.')
+assert.match(resultsViewSource, /Values represent the minimum level of each condition required to achieve a given level of the outcome/, 'Bottleneck tables should explain how to read bottleneck values.')
+assert.match(resultsViewSource, /NN means not necessary/, 'Bottleneck tables should explain NN values.')
+assert.match(resultsViewSource, /percentages of the observed range/, 'Bottleneck tables should explain the percentage scale.')
+assert.doesNotMatch(resultsViewSource, /borderRight: isAdvancedTable/, 'Advanced result tables should keep the same table shell as other ResultsView tables.')
+assert.doesNotMatch(resultsViewSource, /borderCollapse: 'separate'/, 'Advanced result tables should not use a separate table design.')
+
+console.log('PASS advanced results visual contract')

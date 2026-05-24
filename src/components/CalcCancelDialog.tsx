@@ -30,7 +30,10 @@ export default function CalcCancelDialog({ intent, onCancel, onConfirm }: CalcCa
       role="dialog"
       aria-modal="true"
     >
-      <div className="bg-neutral-900 text-neutral-100 rounded-xl shadow-2xl px-6 py-5 w-[380px] max-w-[90vw]">
+      <div
+        className="bg-neutral-900 text-neutral-100 rounded-xl px-6 py-5 w-[380px] max-w-[90vw]"
+        style={{ boxShadow: 'var(--shadow-modal)' }}
+      >
         <h3 className="text-base font-medium mb-1">{headline}</h3>
         <p className="text-sm text-neutral-400 mb-5">{body}</p>
         <div className="flex justify-end gap-2">

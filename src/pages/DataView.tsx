@@ -942,9 +942,9 @@ export default function DataView({ workspaces }: DataViewProps) {
                       borderRight: '1px solid var(--color-border)',
                       userSelect: 'none',
                       background: isHighlighted
-                        ? 'rgb(var(--color-hover-rgb) / 0.95)'
+                        ? 'rgb(var(--color-accent-rgb) / 0.16)'
                         : isSelected
-                          ? 'rgb(var(--color-hover-rgb) / 0.75)'
+                          ? 'rgb(var(--color-accent-rgb) / 0.10)'
                           : 'var(--color-surface)',
                     }}
                   >
@@ -1022,7 +1022,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                       height: rowHeight,
                       borderRight: '1px solid var(--color-border)',
                       userSelect: 'none',
-                      background: isSelectedRow ? 'rgb(var(--color-hover-rgb) / 0.85)' : rowIndex % 2 === 0 ? 'var(--color-surface)' : 'var(--color-elevated)',
+                      background: isSelectedRow ? 'rgb(var(--color-accent-rgb) / 0.12)' : rowIndex % 2 === 0 ? 'var(--color-surface)' : 'var(--color-elevated)',
                     }}
                     >
                       <button
@@ -1055,11 +1055,11 @@ export default function DataView({ workspaces }: DataViewProps) {
                         borderRight: '1px solid var(--color-border)',
                         userSelect: 'none',
                         background: isSelectedRow && selectedColumnSet.has(columnIndex)
-                          ? 'rgb(var(--color-hover-rgb) / 0.95)'
+                          ? 'rgb(var(--color-accent-rgb) / 0.16)'
                           : isSelectedRow
-                            ? 'rgb(var(--color-hover-rgb) / 0.75)'
+                            ? 'rgb(var(--color-accent-rgb) / 0.10)'
                             : selectedColumnSet.has(columnIndex)
-                              ? 'rgb(var(--color-hover-rgb) / 0.55)'
+                              ? 'rgb(var(--color-accent-rgb) / 0.07)'
                               : baseRowBackground,
                       }}
                       onDoubleClick={() => setEditingCell({ rowIndex, columnIndex })}
@@ -1125,7 +1125,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                   insertRowAfter(activeRowAppendIndex)
                   setContextMenu(null)
                 }}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1142,7 +1142,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               </button>
               <button
                 onClick={() => deleteRowIndices(activeRowDeletion)}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action data-view-context-action-warning w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1162,7 +1162,7 @@ export default function DataView({ workspaces }: DataViewProps) {
             <>
               <button
                 onClick={() => setContextMenu((prev) => prev ? { ...prev, panel: 'base' } : prev)}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1181,7 +1181,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                 <button
                   key={operation}
                   onClick={() => runCompute(operation)}
-                  className="w-full flex items-center justify-between"
+                  className="data-view-context-action w-full flex items-center justify-between"
                   style={{
                     height: 34,
                     borderRadius: 10,
@@ -1207,7 +1207,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                   insertColumnAfter(activeColumnAppendIndex)
                   setContextMenu(null)
                 }}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1225,7 +1225,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               {activeColumnDeletion.length > 1 && (
                 <button
                   onClick={() => setContextMenu((prev) => prev ? { ...prev, panel: 'compute' } : prev)}
-                  className="w-full flex items-center justify-between"
+                  className="data-view-context-action w-full flex items-center justify-between"
                   style={{
                     height: 34,
                     borderRadius: 10,
@@ -1243,7 +1243,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               )}
               <button
                 onClick={() => deleteColumnIndices(activeColumnDeletion)}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action data-view-context-action-warning w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1277,7 +1277,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               border: '1px solid var(--color-border)',
               borderRadius: 14,
               overflow: 'hidden',
-              boxShadow: '0 28px 70px rgba(0,0,0,0.45)',
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
             <div
@@ -1287,13 +1287,13 @@ export default function DataView({ workspaces }: DataViewProps) {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                borderBottom: '1px solid var(--color-danger)',
-                background: 'var(--color-danger)',
+                borderBottom: '1px solid var(--color-border)',
+                background: 'var(--color-elevated)',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <WarningCircle size={16} color="var(--color-on-danger)" weight="fill" />
-                <span style={{ color: 'var(--color-on-danger)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>
+                <WarningCircle size={16} color="var(--color-warning)" weight="fill" />
+                <span style={{ color: 'var(--color-warning)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>
                   Unsaved dataset changes
                 </span>
               </div>
@@ -1305,11 +1305,11 @@ export default function DataView({ workspaces }: DataViewProps) {
                   width: 24,
                   height: 24,
                   borderRadius: 7,
-                  border: '1px solid rgba(255,255,255,0.32)',
-                  background: 'rgba(255,255,255,0.12)',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
                 }}
               >
-                <X size={12} color="var(--color-on-danger)" weight="bold" />
+                <X size={12} color="var(--color-text-muted)" weight="bold" />
               </button>
             </div>
 
@@ -1325,13 +1325,14 @@ export default function DataView({ workspaces }: DataViewProps) {
                   setShowUnsavedExitModal(false)
                   navigate(returnTo)
                 }}
+                className="data-view-unsaved-discard"
                 style={{
                   height: 34,
                   padding: '0 14px',
                   borderRadius: 10,
                   border: 'none',
-                  background: 'var(--color-danger)',
-                  color: 'var(--color-on-danger)',
+                  background: 'rgb(var(--color-warning-rgb) / 0.92)',
+                  color: 'var(--color-on-accent)',
                   fontFamily: 'DM Sans, sans-serif',
                   fontSize: 12,
                   fontWeight: 700,
@@ -1347,20 +1348,21 @@ export default function DataView({ workspaces }: DataViewProps) {
                   navigate(returnTo)
                 }}
                 disabled={saving}
+                className="data-view-unsaved-save"
                 style={{
                   height: 34,
                   padding: '0 14px',
                   borderRadius: 10,
-                  border: '1px solid rgba(135,151,107,0.34)',
-                  background: '#87976B',
-                  color: 'var(--color-on-accent)',
+                  border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                  background: 'transparent',
+                  color: 'var(--color-text-primary)',
                   fontFamily: 'DM Sans, sans-serif',
                   fontSize: 12,
                   fontWeight: 700,
                   opacity: saving ? 0.7 : 1,
                 }}
               >
-                Save dataset
+                Save changes
               </button>
             </div>
           </div>

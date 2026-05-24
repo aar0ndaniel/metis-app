@@ -64,7 +64,7 @@ export default function NewModelDialog({
           backgroundColor: 'var(--color-surface)',
           borderRadius: 14,
           border: '1px solid var(--color-border-subtle)',
-          boxShadow: '0 16px 40px rgba(0,0,0,0.8)',
+          boxShadow: 'var(--shadow-modal)',
         }}
       >
         {/* Title bar */}
@@ -158,7 +158,7 @@ export default function NewModelDialog({
                     backgroundColor: 'var(--color-surface)',
                     borderRadius: 8,
                     border: '1px solid var(--color-border-subtle)',
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                    boxShadow: 'var(--shadow-modal-popover)',
                     padding: '4px 0',
                   }}
                 >

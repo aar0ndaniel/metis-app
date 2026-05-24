@@ -34,6 +34,8 @@ interface CanvasIndicator {
   oy?: number
 }
 
+type CanvasConstructShape = 'circle' | 'oval' | 'square'
+
 export interface CanvasConstruct {
   id: string
   name: string
@@ -42,7 +44,10 @@ export interface CanvasConstruct {
   x: number
   y: number
   radius: number
+  ovalWidth?: number
+  ovalHeight?: number
   indicators: CanvasIndicator[]
+  shape?: CanvasConstructShape
   indicatorDirection?: 'top' | 'right' | 'bottom' | 'left'
   indicatorAlignment?: 'top' | 'right' | 'bottom' | 'left'
   folded?: boolean
@@ -110,19 +115,59 @@ const STEP = 60
 const EDGE_GAP = 60
 const LABEL_H = 22
 const MIN_LABEL_W = 44
+const OVAL_RX_SCALE = 1.35
+const OVAL_RY_SCALE = 0.82
+
+function normalizeConstructShape(shape?: CanvasConstructShape): 'circle' | 'oval' {
+  return shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function getDefaultOvalDimensions(radius: number): { width: number; height: number } {
+  return {
+    width: Math.round(radius * OVAL_RX_SCALE * 2),
+    height: Math.round(radius * OVAL_RY_SCALE * 2),
+  }
+}
+
+function getCanvasConstructRadii(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { rx: number; ry: number } {
+  if (normalizeConstructShape(construct.shape) === 'oval') {
+    const defaults = getDefaultOvalDimensions(construct.radius)
+    return {
+      rx: Math.max(40, construct.ovalWidth ?? defaults.width) / 2,
+      ry: Math.max(40, construct.ovalHeight ?? defaults.height) / 2,
+    }
+  }
+
+  return { rx: construct.radius, ry: construct.radius }
+}
+
+function getCanvasConstructEdgeOffset(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, ux: number, uy: number): number {
+  const { rx, ry } = getCanvasConstructRadii(construct)
+  return 1 / Math.sqrt((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry))
+}
+
+function getCanvasConstructEdgePoint(construct: CanvasConstruct, ux: number, uy: number): { x: number; y: number } {
+  const offset = getCanvasConstructEdgeOffset(construct, ux, uy)
+  return {
+    x: construct.x + ux * offset,
+    y: construct.y + uy * offset,
+  }
+}
 
 // ─── Arrow & Path Helpers (identical to ModelCanvas) ─────────────────────────
 
-/** Split edge-to-edge path between two construct circles, leaving a gap for the label. */
+/** Split edge-to-edge path between two construct shapes, leaving a gap for the label. */
 function arrowPathSplit(from: CanvasConstruct, to: CanvasConstruct, p: CanvasPath, gap = 40): [string, string, { mx: number; my: number }] {
   const dx = to.x - from.x, dy = to.y - from.y
   const dist = Math.sqrt(dx * dx + dy * dy)
   if (dist < 1) return ['', '', { mx: 0, my: 0 }]
   const ux = dx / dist, uy = dy / dist
-  const startX = from.x + ux * from.radius
-  const startY = from.y + uy * from.radius
-  const endX = to.x - ux * to.radius
-  const endY = to.y - uy * to.radius
+  const start = getCanvasConstructEdgePoint(from, ux, uy)
+  const end = getCanvasConstructEdgePoint(to, -ux, -uy)
+  const startX = start.x
+  const startY = start.y
+  const endX = end.x
+  const endY = end.y
 
   if (p.style === 'curved') {
     const curvature = p.curvature || 40
@@ -170,10 +215,12 @@ function fullArrowPath(from: CanvasConstruct, to: CanvasConstruct, p: CanvasPath
   const dist = Math.sqrt(dx * dx + dy * dy)
   if (dist < 1) return ''
   const ux = dx / dist, uy = dy / dist
-  const startX = from.x + ux * from.radius
-  const startY = from.y + uy * from.radius
-  const endX = to.x - ux * to.radius
-  const endY = to.y - uy * to.radius
+  const start = getCanvasConstructEdgePoint(from, ux, uy)
+  const end = getCanvasConstructEdgePoint(to, -ux, -uy)
+  const startX = start.x
+  const startY = start.y
+  const endX = end.x
+  const endY = end.y
 
   if (p.style === 'curved') {
     const curvature = p.curvature || 40
@@ -432,13 +479,13 @@ export default function PathDiagram({
   // ── Dynamic viewBox from bounding box of all elements ──────────────────────
   const PAD = 80
   const allX: number[] = [
-    ...cs.map(c => c.x - c.radius - 5),
-    ...cs.map(c => c.x + c.radius + 5),
+    ...cs.map(c => c.x - getCanvasConstructRadii(c).rx - 5),
+    ...cs.map(c => c.x + getCanvasConstructRadii(c).rx + 5),
     ...allIndicators.flatMap(i => [i.ix - i.labelW / 2, i.ix + i.labelW / 2]),
   ]
   const allY: number[] = [
-    ...cs.map(c => c.y - c.radius - 5),
-    ...cs.map(c => c.y + c.radius + 5),
+    ...cs.map(c => c.y - getCanvasConstructRadii(c).ry - 5),
+    ...cs.map(c => c.y + getCanvasConstructRadii(c).ry + 5),
     ...allIndicators.map(i => i.iy - LABEL_H / 2),
     ...allIndicators.map(i => i.iy + LABEL_H / 2),
   ]
@@ -486,9 +533,9 @@ export default function PathDiagram({
         const uy = ind.iy - c.y
         const dist = Math.sqrt(ux * ux + uy * uy)
         if (dist < 1) return null
-        const r = c.radius
-        const startX = c.x + (ux / dist) * r
-        const startY = c.y + (uy / dist) * r
+        const start = getCanvasConstructEdgePoint(c, ux / dist, uy / dist)
+        const startX = start.x
+        const startY = start.y
         let ix = ind.ix, iy = ind.iy
         if      (dir === 'top')    iy += LABEL_H / 2
         else if (dir === 'bottom') iy -= LABEL_H / 2
@@ -520,12 +567,11 @@ export default function PathDiagram({
           else if (dir === 'right')  iEndX -= ind.labelW / 2
           const cDist = Math.sqrt((ind.ix - c.x) ** 2 + (ind.iy - c.y) ** 2)
           if (cDist < 1) return null
-          const lx2 = c.x + ((ind.ix - c.x) / cDist) * c.radius
-          const ly2 = c.y + ((ind.iy - c.y) / cDist) * c.radius
+          const latentEdge = getCanvasConstructEdgePoint(c, (ind.ix - c.x) / cDist, (ind.iy - c.y) / cDist)
           return (
             <g key={`mp-${ind.constructId}-${ind.name}`}>
               <path
-                d={`M${lx2},${ly2} L${iEndX},${iEndY}`}
+                d={`M${latentEdge.x},${latentEdge.y} L${iEndX},${iEndY}`}
                 fill="none"
                 stroke={c.color}
                 strokeWidth={1.2}
@@ -677,7 +723,7 @@ export default function PathDiagram({
         </g>
       )})}
 
-      {/* ── Construct circles ── */}
+      {/* ── Construct shapes ── */}
       {cs.map(c => {
         const scores   = lookupConstructScores(c.id)
         const isR2Mode = constructMode === 'R-square' || constructMode === 'R-square adjusted'
@@ -685,6 +731,8 @@ export default function PathDiagram({
         const scoreVal = showCon && (!isR2Mode || incoming) ? getConstructScore(scores, constructMode) : undefined
         const hasScore = scoreVal !== undefined && Number.isFinite(scoreVal)
         const r        = c.radius
+        const { rx, ry } = getCanvasConstructRadii(c)
+        const isOval = normalizeConstructShape(c.shape) === 'oval'
         const isSelected = selectedConstructIds.includes(c.id)
         const tooltipItems: Array<{ label: string; value?: number }> = [
           { label: 'R-Square', value: incoming ? scores.r2 : undefined },
@@ -708,11 +756,21 @@ export default function PathDiagram({
             style={{ cursor: interactive ? 'grab' : 'default' }}
           >
             {/* Outer glow ring */}
-            <circle cx={c.x} cy={c.y} r={r + 5}
-              fill="none" stroke={c.color} strokeWidth={1} opacity={0.12} />
-            {/* Main filled circle */}
-            <circle cx={c.x} cy={c.y} r={r}
-              fill={c.color + '20'} stroke={c.color} strokeWidth={isSelected ? 3 : 2} />
+            {isOval ? (
+              <ellipse cx={c.x} cy={c.y} rx={rx + 5} ry={ry + 5}
+                fill="none" stroke={c.color} strokeWidth={1} opacity={0.12} />
+            ) : (
+              <circle cx={c.x} cy={c.y} r={r + 5}
+                fill="none" stroke={c.color} strokeWidth={1} opacity={0.12} />
+            )}
+            {/* Main filled shape */}
+            {isOval ? (
+              <ellipse cx={c.x} cy={c.y} rx={rx} ry={ry}
+                fill={c.color + '20'} stroke={c.color} strokeWidth={isSelected ? 3 : 2} />
+            ) : (
+              <circle cx={c.x} cy={c.y} r={r}
+                fill={c.color + '20'} stroke={c.color} strokeWidth={isSelected ? 3 : 2} />
+            )}
 
             {hasScore ? (
               /* Score mode: big number + small label */
@@ -755,8 +813,8 @@ export default function PathDiagram({
                 style={{ cursor: 'nwse-resize' }}
               >
                 <circle
-                  cx={c.x + r * 0.72}
-                  cy={c.y + r * 0.72}
+                  cx={c.x + rx * 0.72}
+                  cy={c.y + ry * 0.72}
                   r={5}
                   fill="var(--color-accent)"
                   stroke="var(--color-border)"
@@ -768,7 +826,7 @@ export default function PathDiagram({
             {hoveredConstructId === c.id && (
               <g pointerEvents="none">
                 <rect
-                  x={c.x + r + 16}
+                  x={c.x + rx + 16}
                   y={c.y - tooltipHeight / 2}
                   width={tooltipWidth}
                   height={tooltipHeight}
@@ -779,7 +837,7 @@ export default function PathDiagram({
                   opacity={0.96}
                 />
                 <text
-                  x={c.x + r + 28}
+                  x={c.x + rx + 28}
                   y={c.y - tooltipHeight / 2 + 18}
                   fill="var(--color-text-primary)"
                   fontSize={10}
@@ -791,7 +849,7 @@ export default function PathDiagram({
                 {tooltipItems.map((item, index) => (
                   <g key={`${c.id}-${item.label}`}>
                     <text
-                      x={c.x + r + 28}
+                      x={c.x + rx + 28}
                       y={c.y - tooltipHeight / 2 + 40 + index * 18}
                       fill="var(--color-text-secondary)"
                       fontSize={8.5}
@@ -800,7 +858,7 @@ export default function PathDiagram({
                       {item.label}
                     </text>
                     <text
-                      x={c.x + r + tooltipWidth - 12}
+                      x={c.x + rx + tooltipWidth - 12}
                       y={c.y - tooltipHeight / 2 + 40 + index * 18}
                       fill="var(--color-text-primary)"
                       fontSize={8.5}
@@ -834,11 +892,12 @@ function getSelectedBounds(
 
   constructs.forEach((construct) => {
     if (!selectedConstructIds.includes(construct.id)) return
+    const { rx, ry } = getCanvasConstructRadii(construct)
     boxes.push({
-      left: construct.x - construct.radius - 8,
-      right: construct.x + construct.radius + 8,
-      top: construct.y - construct.radius - 8,
-      bottom: construct.y + construct.radius + 8,
+      left: construct.x - rx - 8,
+      right: construct.x + rx + 8,
+      top: construct.y - ry - 8,
+      bottom: construct.y + ry + 8,
     })
   })
 
@@ -869,9 +928,11 @@ function getSelectedBounds(
 
 function getIndicatorLayout(c: CanvasConstruct, ind: CanvasIndicator, index: number) {
   const dir = c.indicatorAlignment || c.indicatorDirection || 'bottom'
+  const { rx, ry } = getCanvasConstructRadii(c)
+  const edgeRadius = dir === 'left' || dir === 'right' ? rx : ry
   const labelW = Math.max(MIN_LABEL_W, ind.name.length * 7 + 16)
   const offset = (index - (c.indicators.length - 1) / 2) * STEP
-  const centerGap = c.radius + EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : LABEL_H / 2)
+  const centerGap = edgeRadius + EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : LABEL_H / 2)
 
   let ix = c.x
   let iy = c.y

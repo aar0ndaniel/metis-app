@@ -9,8 +9,6 @@ import {
   NotePencil,
   CaretRight,
   Check,
-  ChatCircleText,
-  FileText,
 } from '@phosphor-icons/react'
 import AppLogo from './AppLogo'
 import { APP_BRAND_NAME } from '../config/appBranding'
@@ -29,13 +27,20 @@ interface TitleBarProps {
   theme?: 'Dark' | 'Light'
 }
 
-const TITLEBAR_OLIVE = '#87976B'
+function buildTarkMenu(): MenuItem[] {
+  return [
+    { type: 'item', label: 'Create Tark Report', action: 'open-tark' },
+  ]
+}
 
 function buildHelpMenu(): MenuItem[] {
   return [
     { type: 'item', label: 'Documentation', shortcut: 'F1', action: 'open-docs' },
     { type: 'item', label: 'Getting Started', action: 'open-tour' },
-    { type: 'item', label: 'PLS-SEM Reference' },
+    { type: 'separator' },
+    { type: 'item', label: 'Feedback', action: 'open-feedback' },
+    { type: 'item', label: 'Report a Bug', action: 'open-report-bug' },
+    { type: 'item', label: 'Cite Metis', action: 'open-cite-metis' },
     { type: 'separator' },
     { type: 'item', label: `About ${APP_BRAND_NAME}`, action: 'open-about' },
   ]
@@ -137,9 +142,9 @@ function MenuDropdown({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [hoveredSubmenu, setHoveredSubmenu] = useState<number | null>(null)
-  const menuItemColor = 'var(--color-text-primary)'
-  const menuMutedColor = 'var(--color-title-tab)'
-  const menuDisabledColor = 'var(--color-text-dim)'
+  const menuItemColor = 'var(--color-title-menu-text)'
+  const menuMutedColor = 'var(--color-title-menu-muted)'
+  const menuDisabledColor = 'var(--color-title-menu-disabled)'
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -179,7 +184,7 @@ function MenuDropdown({
           return (
             <button
               key={i}
-              className={`w-full flex items-center gap-2 px-3.5 h-8 transition-colors ${item.disabled ? 'cursor-default' : 'hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
+              className={`titlebar-menu-row w-full flex items-center gap-2 px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled cursor-default' : ''}`}
               onClick={handleClick}
             >
               {item.checked && !item.disabled && <Check size={12} color={menuItemColor} />}
@@ -200,7 +205,7 @@ function MenuDropdown({
               onMouseLeave={() => setHoveredSubmenu(null)}
             >
               <button
-                className={`w-full flex items-center justify-between px-3.5 h-8 transition-colors ${hoveredSubmenu === i ? 'bg-[rgb(var(--color-hover-rgb)/0.75)]' : 'hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'} ${item.disabled ? 'opacity-50 cursor-default' : ''}`}
+                className={`titlebar-menu-row w-full flex items-center justify-between px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled opacity-50 cursor-default' : ''}`}
                 onClick={item.disabled ? undefined : () => {}}
               >
                 <span className="text-[13px]" style={{ color: item.disabled ? menuDisabledColor : menuItemColor, fontFamily: 'Inter, DM Sans, sans-serif' }}>
@@ -219,7 +224,7 @@ function MenuDropdown({
         }
 
         // Regular item
-        const textColor = item.disabled ? menuDisabledColor : menuItemColor
+        const textColor = item.disabled ? menuDisabledColor : item.color ?? menuItemColor
         const scColor = item.disabled ? menuDisabledColor : menuMutedColor
 
         const handleClick = item.disabled ? undefined : () => {
@@ -232,9 +237,7 @@ function MenuDropdown({
         return (
           <button
             key={i}
-            className={`w-full flex items-center justify-between gap-2 px-3.5 h-8 transition-colors ${
-              item.disabled ? 'cursor-default' : 'hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'
-            }`}
+            className={`titlebar-menu-row w-full flex items-center justify-between gap-2 px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled cursor-default' : ''}`}
             onClick={handleClick}
           >
             <span className="flex items-center gap-2">
@@ -302,9 +305,6 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
       if (action === 'view:toggle-vars') setShowVars(v => !v)
       if (action === 'view:toggle-props') setShowProps(v => !v)
       if (action === 'view:toggle-zoom-control') setShowZoomControl(v => !v)
-      if (action === 'open-feedback') {
-        void window.electronAPI?.openExternal?.('https://metis.emend.it.com/feedback.html')
-      }
       
       const st = e.detail?.status
       if (st) {
@@ -374,7 +374,8 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
     { label: 'Edit', items: buildEditMenu(currentScreen, status), width: 220 },
     { label: 'View', items: buildViewMenu(currentScreen, showVars, showProps, showZoomControl), width: 230 },
     { label: 'Analysis', items: buildAnalysisMenu(currentScreen, status), width: 230 },
-    { label: 'Help', items: buildHelpMenu(), width: 220 },
+    { label: 'Tark it', items: buildTarkMenu(), width: 220 },
+    { label: 'Help', items: buildHelpMenu(), width: 240 },
   ]
 
   const logoVariant = theme === 'Light' ? 'black' : 'white'
@@ -436,10 +437,11 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
           <div key={menu.label} className="relative">
             <div className="relative h-full flex items-center">
             <button
-              className="px-3 h-7 rounded-[6px] text-[13px] font-medium transition-colors outline-none"
+              id={menu.label === 'Tark it' ? 'tour-tark' : menu.label === 'Help' ? 'tour-help' : undefined}
+              className="px-3 h-7 rounded-[6px] text-[13px] font-medium outline-none"
               style={{
-                color: openMenu === menu.label ? 'var(--color-text-primary)' : 'var(--color-title-tab)',
-                backgroundColor: openMenu === menu.label ? 'rgb(var(--color-text-primary-rgb) / 0.08)' : 'transparent',
+                color: openMenu === menu.label ? 'var(--color-text-secondary-alt)' : 'var(--color-title-tab)',
+                backgroundColor: 'transparent',
                 fontFamily: 'Inter, DM Sans, sans-serif'
               }}
               onClick={() => toggleMenu(menu.label)}
@@ -513,78 +515,6 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
 
       {/* Spacer (fills remaining space, also drag region) */}
       <div className="flex-1 h-full" />
-
-      <div
-        className="no-drag flex items-center"
-        style={{
-          gap: 6,
-          ...({ WebkitAppRegion: 'no-drag' } as any),
-        }}
-      >
-        {/* Tark report entry point */}
-        <button
-          id="tour-tark"
-          className="no-drag flex items-center justify-center transition-opacity hover:opacity-80"
-          style={{
-            height: 24,
-            borderRadius: 8,
-            border: 'none',
-            background: 'transparent',
-            color: TITLEBAR_OLIVE,
-            padding: '0 5px',
-            gap: 5,
-            fontFamily: 'Matter, "DM Sans", sans-serif',
-            fontSize: 11,
-            fontWeight: 600,
-            width: 'fit-content',
-            maxWidth: 'min(320px, 32vw)',
-            overflow: 'hidden',
-            flexShrink: 1,
-          }}
-          title="Tark journal-ready report"
-          aria-label="Open Tark"
-          onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'open-tark' } }))}
-        >
-          <FileText size={14} weight="fill" color={TITLEBAR_OLIVE} />
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              minWidth: 0,
-              width: 'fit-content',
-              maxWidth: 'min(282px, 28vw)',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'clip', whiteSpace: 'nowrap' }}>Tark it</span>
-          </span>
-        </button>
-
-        <button
-          id="tour-feedback"
-          className="no-drag flex items-center justify-center transition-opacity hover:opacity-80"
-          style={{
-            height: 24,
-            borderRadius: 8,
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--color-title-tab)',
-            padding: '0 5px',
-            gap: 5,
-            fontFamily: 'Matter, "DM Sans", sans-serif',
-            fontSize: 11,
-            fontWeight: 600,
-            flexShrink: 0,
-          }}
-          title="Send feedback to the team"
-          aria-label="Send feedback"
-          onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'open-feedback' } }))}
-        >
-          <ChatCircleText size={14} weight="regular" color="var(--color-title-tab)" />
-          <span style={{ whiteSpace: 'nowrap' }}>Feedback</span>
-        </button>
-      </div>
 
       {/* Window controls */}
       <div

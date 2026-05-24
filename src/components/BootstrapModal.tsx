@@ -136,7 +136,7 @@ function SelectBox({
             width: '100%',
             background: 'var(--color-elevated)',
             border: '1px solid var(--color-border)',
-            boxShadow: '0 8px 20px rgba(0,0,0,0.376)',
+            boxShadow: 'var(--shadow-modal-popover)',
           }}
         >
           {options.map((option) => (
@@ -222,7 +222,7 @@ export default function BootstrapModal({ onClose, onRun, isRunning = false }: Bo
           background: 'var(--color-elevated)',
           border: '1px solid var(--color-border)',
           borderRadius: 14,
-          boxShadow: '0 24px 60px rgba(0,0,0,0.7)',
+          boxShadow: 'var(--shadow-modal)',
         }}
       >
         <div

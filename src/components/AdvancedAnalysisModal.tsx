@@ -125,7 +125,7 @@ function ModalSelect({
             backgroundColor: 'var(--color-surface)',
             border: '1px solid var(--color-border)',
             borderRadius: 8,
-            boxShadow: '0 14px 32px rgba(0,0,0,0.34)',
+            boxShadow: 'var(--shadow-modal-popover)',
             padding: 6,
             maxHeight: 240,
             overflowY: 'auto',
@@ -308,8 +308,8 @@ export default function AdvancedAnalysisModal({
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className="w-[520px] rounded-lg overflow-hidden border border-white/10 shadow-2xl"
-        style={{ backgroundColor: 'var(--color-elevated)', display: 'flex', flexDirection: 'column', borderColor: 'var(--color-border)' }}
+        className="w-[520px] rounded-lg overflow-hidden border border-white/10"
+        style={{ backgroundColor: 'var(--color-elevated)', display: 'flex', flexDirection: 'column', borderColor: 'var(--color-border)', boxShadow: 'var(--shadow-modal)' }}
       >
         <div
           style={{

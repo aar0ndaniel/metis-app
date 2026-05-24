@@ -2432,17 +2432,100 @@ normalize_nca_summary_rows <- function(summary_obj, allowed_names) {
   filter_rows_by_construct(rows, allowed_names)
 }
 
-normalize_bottleneck_rows <- function(summary_obj, method_keys = c("ce_fdh", "cr_fdh")) {
+normalize_bottleneck_name <- function(value) {
+  tolower(gsub("[[:space:]_.()%/-]+", "", as.character(value %||% "")))
+}
+
+is_bottleneck_meta_column <- function(column_name) {
+  normalize_bottleneck_name(column_name) %in% c("method", "ceiling", "ceilingline", "ceilingmethod")
+}
+
+is_bottleneck_outcome_column <- function(column_name) {
+  normalize_bottleneck_name(column_name) %in% c(
+    "outcomelevel",
+    "outcome",
+    "desiredoutcome",
+    "desiredoutcomelevel",
+    "targetlevel",
+    "performancelevel",
+    "level",
+    "row",
+    "rowname"
+  )
+}
+
+looks_like_outcome_levels <- function(values) {
+  nums <- suppressWarnings(as.numeric(unlist(values, use.names = FALSE)))
+  finite <- is.finite(nums)
+  if (sum(finite) < min(3L, length(values))) return(FALSE)
+
+  nums <- nums[finite]
+  if (any(nums < 0 | nums > 100)) return(FALSE)
+  if (length(nums) > 1L && any(diff(nums) < 0)) return(FALSE)
+  length(unique(nums)) >= min(3L, length(nums))
+}
+
+infer_bottleneck_outcome_key <- function(method_rows) {
+  all_keys <- unique(unlist(lapply(method_rows, names), use.names = FALSE))
+  all_keys <- all_keys[!vapply(all_keys, is_bottleneck_meta_column, logical(1))]
+  if (!length(all_keys)) return(NULL)
+
+  explicit <- all_keys[vapply(all_keys, is_bottleneck_outcome_column, logical(1))]
+  if (length(explicit)) return(list(key = explicit[[1]], restore_condition = FALSE))
+
+  first_key <- all_keys[[1]]
+  first_values <- lapply(method_rows, function(row) row[[first_key]] %||% NA)
+  if (looks_like_outcome_levels(first_values)) {
+    return(list(key = first_key, restore_condition = TRUE))
+  }
+
+  NULL
+}
+
+normalize_bottleneck_rows <- function(summary_obj, method_keys = c("ce_fdh", "cr_fdh"), predictor_names = character(0), target_construct = NULL) {
   bottleneck <- summary_obj$bottleneck %||% list()
   rows <- list()
+  predictor_names <- as.character(predictor_names %||% character(0))
+  predictor_names <- predictor_names[!is.na(predictor_names) & nzchar(predictor_names)]
+  target_construct <- as.character(target_construct %||% "")
+  if (nzchar(target_construct)) {
+    predictor_names <- predictor_names[predictor_names != target_construct]
+  }
   for (method_key in method_keys) {
     method_rows <- as_rows(bottleneck[[method_key]])
     if (!length(method_rows)) next
+    outcome_info <- infer_bottleneck_outcome_key(method_rows)
+    outcome_key <- outcome_info$key %||% NULL
+    restore_condition <- isTRUE(outcome_info$restore_condition)
+    all_keys <- unique(unlist(lapply(method_rows, names), use.names = FALSE))
+    raw_condition_keys <- all_keys[
+      !vapply(all_keys, is_bottleneck_meta_column, logical(1)) &
+        !vapply(all_keys, is_bottleneck_outcome_column, logical(1)) &
+        !(all_keys %in% outcome_key)
+    ]
+    if (nzchar(target_construct)) {
+      raw_condition_keys <- raw_condition_keys[raw_condition_keys != target_construct]
+    }
+    condition_keys <- if (length(predictor_names)) predictor_names else raw_condition_keys
+    if (restore_condition && (!length(predictor_names) || outcome_key %in% predictor_names)) {
+      condition_keys <- unique(c(outcome_key, condition_keys))
+    }
+    condition_keys <- unique(condition_keys)
+
     for (row in method_rows) {
-      rows[[length(rows) + 1L]] <- c(
-        list(Method = nca_method_label(method_key), Ceiling = method_key),
-        row
+      normalized <- list(
+        Method = "NCA",
+        Ceiling = nca_method_label(method_key),
+        Outcome_Level = if (!is.null(outcome_key)) row[[outcome_key]] %||% NULL else NULL
       )
+      for (condition_key in condition_keys) {
+        normalized[[condition_key]] <- if (restore_condition && identical(condition_key, outcome_key)) {
+          "NN"
+        } else {
+          row[[condition_key]] %||% "NN"
+        }
+      }
+      rows[[length(rows) + 1L]] <- normalized
     }
   }
   rows
@@ -2661,7 +2744,7 @@ run_advanced_sections <- function(payload, data, core, timings = NULL) {
     NULL
   }
   bottleneck_table <- if (!is.null(bottleneck_source)) {
-    normalize_bottleneck_rows(bottleneck_source)
+    normalize_bottleneck_rows(bottleneck_source, predictor_names = predecessor_names, target_construct = target_construct)
   } else {
     list()
   }
