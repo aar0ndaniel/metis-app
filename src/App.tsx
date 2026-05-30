@@ -39,6 +39,7 @@ import type {
 } from './types/workspace'
 
 type AppTheme = 'Dark' | 'Light'
+type ThemePreference = AppTheme | 'Auto'
 
 interface WelcomeContext {
   displayName: string
@@ -62,6 +63,10 @@ const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
 const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
+const METIS_PREF_ACCENT_COLOR_KEY = 'metis:prefs:accentColor'
+const LEGACY_PREF_ACCENT_COLOR_KEY = 'pls:prefs:accentColour'
+const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
+const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
 const METIS_TOUR_COMPLETED_KEY = 'metis:tour-completed'
 const LEGACY_TOUR_COMPLETED_KEY = 'pls:tour-completed'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
@@ -69,9 +74,34 @@ const METIS_FEEDBACK_URL = 'https://metis.emend.it.com/submit-feedback.html'
 const METIS_BUG_REPORT_URL = 'https://github.com/aar0ndaniel/metis-app/issues/new?labels=bug'
 const METIS_CITATION_URL = 'https://metis.emend.it.com/how-to-cite.html'
 
-function getSavedTheme(): AppTheme {
+const APP_ACCENT_OPTIONS: Record<string, { color: string; rgb: string; onAccent: string }> = {
+  '#C6A24B': { color: '#C6A24B', rgb: '198 162 75', onAccent: '#181818' },
+  '#87976B': { color: '#87976B', rgb: '135 151 107', onAccent: '#10150B' },
+  '#2F8FB3': { color: '#2F8FB3', rgb: '47 143 179', onAccent: '#FFFFFF' },
+}
+
+function normalizeThemePreference(raw: string | null): ThemePreference {
+  if (raw === 'Auto' || raw === 'auto') return 'Auto'
+  if (raw === 'Light' || raw === 'light') return 'Light'
+  return 'Dark'
+}
+
+function getSystemTheme(): AppTheme {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'Dark'
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'Light' : 'Dark'
+}
+
+function resolveThemePreference(preference: ThemePreference): AppTheme {
+  return preference === 'Auto' ? getSystemTheme() : preference
+}
+
+function getSavedThemePreference(): ThemePreference {
   const raw = localStorage.getItem(METIS_PREF_THEME_KEY) ?? localStorage.getItem(LEGACY_PREF_THEME_KEY)
-  return raw === 'Light' ? 'Light' : 'Dark'
+  return normalizeThemePreference(raw)
+}
+
+function getSavedTheme(): AppTheme {
+  return resolveThemePreference(getSavedThemePreference())
 }
 
 function getInstallerPreviewTheme(): AppTheme {
@@ -85,6 +115,35 @@ function readStartupFontScale(): string {
   if (raw === 'Large') return 'large'
   if (raw === 'Extra Large') return 'extra-large'
   return 'default'
+}
+
+function readSavedAccentColor(): string {
+  const raw = localStorage.getItem(METIS_PREF_ACCENT_COLOR_KEY) ?? localStorage.getItem(LEGACY_PREF_ACCENT_COLOR_KEY)
+  const normalized = raw?.toUpperCase()
+  return normalized && APP_ACCENT_OPTIONS[normalized] ? normalized : '#C6A24B'
+}
+
+function readSavedInterfaceContrast(): number {
+  const raw = localStorage.getItem(METIS_PREF_INTERFACE_CONTRAST_KEY) ?? localStorage.getItem(LEGACY_PREF_INTERFACE_CONTRAST_KEY)
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 68
+}
+
+function applySavedVisualPreferences() {
+  const root = document.documentElement
+  root.setAttribute('data-font-scale', readStartupFontScale())
+
+  const accent = APP_ACCENT_OPTIONS[readSavedAccentColor()] ?? APP_ACCENT_OPTIONS['#C6A24B']
+  root.style.setProperty('--color-accent', accent.color)
+  root.style.setProperty('--color-accent-rgb', accent.rgb)
+  root.style.setProperty('--color-on-accent', accent.onAccent)
+  document.body.style.setProperty('--color-accent', accent.color)
+  document.body.style.setProperty('--color-accent-rgb', accent.rgb)
+  document.body.style.setProperty('--color-on-accent', accent.onAccent)
+
+  const contrast = readSavedInterfaceContrast()
+  const contrastPercent = Math.max(0, Math.min(160, 100 + (contrast - 68)))
+  root.style.setProperty('--app-interface-contrast-filter', `contrast(${contrastPercent}%)`)
 }
 
 function openMetisExternal(url: string) {
@@ -190,7 +249,8 @@ function AppShell() {
   const location  = useLocation()
   const navigate  = useNavigate()
   const isInstallerPreview = location.pathname.startsWith('/installer-preview') || location.pathname.startsWith('/setup-wizard')
-  const [theme, setTheme] = useState<AppTheme>(() => isInstallerPreview ? 'Light' : getSavedTheme())
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => isInstallerPreview ? 'Light' : getSavedThemePreference())
+  const [theme, setTheme] = useState<AppTheme>(() => isInstallerPreview ? 'Light' : resolveThemePreference(getSavedThemePreference()))
   const [prefsOpen,      setPrefsOpen]      = useState(false)
   const [tarkOpen, setTarkOpen] = useState(false)
   const [prefsInitialTab, setPrefsInitialTab] = useState<'general' | 'updates'>('general')
@@ -309,7 +369,7 @@ function AppShell() {
   }, [isInstallerPreview])
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-font-scale', readStartupFontScale())
+    applySavedVisualPreferences()
   }, [])
 
   useEffect(() => {
@@ -391,26 +451,60 @@ function AppShell() {
   }, [theme])
 
   useEffect(() => {
-    const readCurrentTheme = () => isInstallerPreview ? getInstallerPreviewTheme() : getSavedTheme()
-    const handlePreferencesUpdate = () => setTheme(readCurrentTheme())
+    const readCurrentThemePreference = () => isInstallerPreview ? getInstallerPreviewTheme() : getSavedThemePreference()
+    const applyCurrentPreferences = () => {
+      applySavedVisualPreferences()
+      const nextPreference = readCurrentThemePreference()
+      setThemePreference(nextPreference)
+      setTheme(resolveThemePreference(nextPreference))
+    }
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === INSTALLER_PREF_THEME_KEY || event.key === METIS_PREF_THEME_KEY || event.key === LEGACY_PREF_THEME_KEY) {
-        setTheme(readCurrentTheme())
+      if (
+        event.key === INSTALLER_PREF_THEME_KEY ||
+        event.key === METIS_PREF_THEME_KEY ||
+        event.key === LEGACY_PREF_THEME_KEY ||
+        event.key === METIS_PREF_FONT_SCALE_KEY ||
+        event.key === METIS_PREF_ACCENT_COLOR_KEY ||
+        event.key === LEGACY_PREF_ACCENT_COLOR_KEY ||
+        event.key === METIS_PREF_INTERFACE_CONTRAST_KEY ||
+        event.key === LEGACY_PREF_INTERFACE_CONTRAST_KEY
+      ) {
+        applyCurrentPreferences()
       }
     }
 
     if (isInstallerPreview) {
+      setThemePreference('Light')
       setTheme('Light')
     } else {
-      setTheme(getSavedTheme())
+      applyCurrentPreferences()
     }
-    window.addEventListener('pls:preferences-updated', handlePreferencesUpdate)
+    const handleThemePreview = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (detail && detail.theme && detail.preference) {
+        setThemePreference(detail.preference)
+        setTheme(detail.theme)
+      }
+    }
+    window.addEventListener('pls:preferences-updated', applyCurrentPreferences)
     window.addEventListener('storage', handleStorage)
+    window.addEventListener('pls:theme-preview', handleThemePreview)
     return () => {
-      window.removeEventListener('pls:preferences-updated', handlePreferencesUpdate)
+      window.removeEventListener('pls:preferences-updated', applyCurrentPreferences)
       window.removeEventListener('storage', handleStorage)
+      window.removeEventListener('pls:theme-preview', handleThemePreview)
     }
   }, [isInstallerPreview])
+
+  useEffect(() => {
+    if (isInstallerPreview || themePreference !== 'Auto' || typeof window === 'undefined' || !window.matchMedia) return
+    const systemThemeQuery = window.matchMedia('(prefers-color-scheme: light)')
+    const handleSystemThemeChange = () => setTheme(resolveThemePreference('Auto'))
+    systemThemeQuery.addEventListener?.('change', handleSystemThemeChange)
+    return () => {
+      systemThemeQuery.removeEventListener?.('change', handleSystemThemeChange)
+    }
+  }, [isInstallerPreview, themePreference])
 
   useEffect(() => {
     if (location.pathname.startsWith('/canvas/')) {

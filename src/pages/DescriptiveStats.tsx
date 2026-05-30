@@ -63,9 +63,9 @@ const ROWS: StatRow[] = [
 const CONSTRUCT_COLORS: Record<string, string> = {
   ATT: '#87976B',
   BI: '#87976B',
-  DC: '#B7923F',
+  DC: '#DC6973',
   PEOU: '#D96B4D',
-  PU: '#B7923F',
+  PU: '#DC6973',
   SE: '#A78BFA',
 }
 

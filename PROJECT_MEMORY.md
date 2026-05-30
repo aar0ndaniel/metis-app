@@ -4,6 +4,35 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-05-27 — Higher-order construct modal planning
+
+- `2026-05-27T19:48:31+00:00` — User requested that the Facebook second-order construct question be solved in Metis, beginning with a Pencil redesign of the construct modal before implementation.
+- `2026-05-27T19:48:31+00:00` — Product direction to preserve: constructs remain lower-order by default; the construct modal should add a checkbox/toggle to mark the selected construct as a higher-order construct (HOC).
+- `2026-05-27T19:48:31+00:00` — When HOC mode is enabled, the user still selects the HOC measurement type as Reflective or Formative. The connected lower-order construct/sub-dimension relationship then determines whether the model is reflective-reflective, reflective-formative, formative-reflective, or formative-formative.
+- `2026-05-27T19:48:31+00:00` — Important UX conflict: if a user selects Reflective for the HOC but draws LOC-to-HOC arrows that imply Formative, Metis should not silently rewrite the model. The preferred flow to explore is a warning that explains the selected measurement type conflicts with the current path direction and asks the user to either keep the selected type or switch to the implied type.
+- `2026-05-27T19:48:31+00:00` — Alternative flow to explore in the Pencil modal: when HOC mode is active, let the user select LOCs/sub-dimensions directly and have Metis draw the correct arrows automatically. Concern recorded: this may add friction because users may not remember every LOC already present on the canvas.
+- `2026-05-27T19:48:31+00:00` — Status: completed. Redesign is approved, HOC/LOC data model is specified, warning/arrow-correction behavior is implemented, and the full Metis implementation plus verification are complete and type checked.
+- `2026-05-28T17:10:00+00:00` — Integrated SEMinR-native higher-order construct (HOC) calculation and reporting into Metis (PLSLogic) using the two-stage approach (`seminr::higher_composite()`).
+  - *What was intended*: Enable HOC definitions on the canvas, dynamically identify HOC-LOC links as measurement paths rather than structural paths, send constructs with HOC metadata to Plumber R backend, invoke `higher_composite` for estimation, extract loadings/weights/VIF, display HOC dimensions tables in ResultsView, and include them in exported HTML reports.
+  - *What actually happened*: Successfully implemented all intended parts.
+    - Updated `ModelCanvas.tsx` to enrich analysis payloads with HOC metadata (`is_higher_order`, `higher_order_type`, `dimensions`) and separate HOC-LOC measurement links from structural paths. Added warning modal in UI for HOC path direction conflicts.
+    - Updated `plumber.R` `build_measurement()` to handle HOCs via `seminr::higher_composite()`, and added `extract_hoc_results()` helper to safely extract outer loadings, outer weights, and collinearity VIF values for formative HOCs.
+    - Updated `ResultsView.tsx` with a premium HOC results component (`HOCResultsTable`) and embedded it into "Outer Loadings" and "Outer Weights" tabs. Added custom HTML generation for HOC tables inside shareable reports exported from ResultsView.
+    - Fixed a block-scoped duplicate variable declaration slop in `ModelCanvas.tsx`'s `buildAnalysisPayload()` and ensured it returns `hocDimensions` correctly.
+    - Verified all features via typescript compiler (`npx tsc --noEmit` passing successfully) and automated test suite coverage (`node tests/modelCanvasHocStatic.test.mjs` and related tests passing successfully).
+- `2026-05-29T04:38:23+00:00` — Reviewed and fixed the HOC/second-order plumbing across ModelCanvas, ResultsView, and Plumber.
+  - *What was intended*: Confirm that the two-way HOC drawing UX works, make all analysis entry points send correct HOC metadata, prevent HOC measurement links from being swallowed as structural paths or vice versa, validate HOC dimensions server-side, report HOC loadings/weights/VIF in results, and check security/performance risks.
+  - *What actually happened*: Completed and verified.
+    - Added shared `src/utils/plsModelPayload.ts` so canvas realtime runs, standard analysis, Bootstrap, PLSpredict, Advanced Analysis, and ResultsView reruns all build the same HOC-aware payload.
+    - Added explicit HOC path roles (`measurement` vs `structural`) so HOC-to-LOC links become lower-order dimensions only when intended. New HOC/non-HOC paths ask for the role first; legacy unmarked paths can be corrected from path settings.
+    - Updated `r-api/plumber.R` validation so HOCs may omit indicators but must declare valid lower-order dimensions, cannot reference themselves, cannot reference unknown constructs, and cannot use another HOC as a dimension.
+    - Verified `seminr::higher_composite()` two-stage estimation with an R smoke test on `seminr::mobi`; HOC loadings, weights, and VIF values were returned for the lower-order dimensions.
+    - Fixed HOC VIF extraction to read `summary_obj$validity$vif_items`.
+    - Updated dependency security: production audit and full audit now report `found 0 vulnerabilities`. `tmp` is resolved to `0.2.7`, `uuid` is pinned via override to exact `11.1.1`, non-forced audit fixes updated compatible tooling packages, and Electron is pinned to exact `40.10.2` rather than jumping to the latest major.
+    - Fixed the ResultsView/TitleBar divider regression caught by `tests/resultsViewWorkspaceShell.test.mjs`.
+  - *Verification*: `node tests\hocPayloadContract.test.mjs`, `node tests\rApiHocStatic.test.mjs`, `node tests\modelCanvasHocStatic.test.mjs`, `node tests\modelCanvasLightPopups.test.mjs`, `node tests\securityHardening.test.mjs`, `node tests\resultsViewWorkspaceShell.test.mjs`, `node tests\rApiBootstrapStatic.test.mjs`, `node tests\rApiCvpatStatic.test.mjs`, R HOC smoke test through `Rscript.exe`, `cmd /c npm run typecheck`, `cmd /c npm audit --audit-level=moderate`, `cmd /c npm audit --omit=dev --audit-level=high`, and `git diff --check`.
+- `2026-05-27T19:48:31+00:00` — Supporting pending note exists at `docs/superpowers/specs/2026-05-27-hoc-loc-construct-modal-design.md`; it is a project-memory/design note, not an implementation record.
+
 ## 2026-05-23 — ModelCanvas performance and title-bar support menu updates
 
 - `2026-05-23T20:43:29.2817805+00:00` — User reported Metis was slow in dev mode and provided repeated `workspace:save` logs. Investigation found `ModelCanvas` was doing expensive workspace `.ada` saves too often during canvas edits, while real-time calculation was resolving dataset paths before its debounce.

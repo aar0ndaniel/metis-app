@@ -94,6 +94,7 @@ import {
   readPlsPredictSettingsFromState,
   type PlsPredictSettings,
 } from '../utils/plsPredictSettings'
+import { buildPlsModelPayloadParts, type HocPathRole } from '../utils/plsModelPayload'
 import { useCalculationDispatch, useIsCalculating, type CalcPhase } from '../state/calculationContext'
 
 // ─── Display mode option lists (from Pencil ui.pen spec) ─────────────────────
@@ -144,6 +145,16 @@ interface ReliabilityRow {
   rhoCc: string
   ave: string
   status: 'pass' | 'neutral'
+}
+
+interface HOCResultRow {
+  hoc_construct: string
+  loc_construct: string
+  hoc_type: string
+  loc_type: string
+  loading: number | null
+  weight: number | null
+  vif: number | null
 }
 
 interface OuterLoadingRow {
@@ -1929,8 +1940,9 @@ interface CanvasConstruct {
   indicatorDirection?: 'top' | 'right' | 'bottom' | 'left'
   indicatorAlignment?: 'top' | 'right' | 'bottom' | 'left'
   folded?: boolean
+  isHigherOrder?: boolean
 }
-interface CanvasPath { id: string; from: string; to: string }
+interface CanvasPath { id: string; from: string; to: string; kind?: 'direct' | 'moderation'; targetPathId?: string; hocRole?: HocPathRole }
 
 const METIS_STORAGE_PREFIX = 'metis:'
 const LEGACY_STORAGE_PREFIX = 'pls:'
@@ -2860,6 +2872,107 @@ function ReliabilityTable({ rows }: { rows: ReliabilityRow[] }) {
   )
 }
 
+function parseHOCResults(ar: any): HOCResultRow[] {
+  return ar?.final_results?.hoc_results ?? []
+}
+
+function HOCResultsTable({ rows }: { rows: HOCResultRow[] }) {
+  if (!rows || !rows.length) return null
+
+  return (
+    <div className="overflow-x-auto mb-6 border border-border/40 rounded-lg">
+      <div className="border-b border-border/40 px-4 py-3 bg-primary/5">
+        <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider">Higher-Order Constructs</h3>
+        <p className="text-[10px] text-text-muted mt-0.5">Outer measurement model results for hierarchical components</p>
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-primary/20">
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Higher-Order Construct
+            </th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Lower-Order Dimension
+            </th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              HOC Type
+            </th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              LOC Type
+            </th>
+            <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Loading
+            </th>
+            <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Weight
+            </th>
+            <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              VIF
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40">
+                {row.hoc_construct}
+              </td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40 font-medium">
+                {row.loc_construct}
+              </td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40">
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${
+                  row.hoc_type === 'formative'
+                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                    : 'bg-primary/10 text-primary border border-primary/20'
+                }`}>
+                  {row.hoc_type}
+                </span>
+              </td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40">
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${
+                  row.loc_type === 'formative'
+                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                    : 'bg-primary/10 text-primary border border-primary/20'
+                }`}>
+                  {row.loc_type}
+                </span>
+              </td>
+              <td className="px-4 py-2 text-right border-b border-border/40 tabular-nums">
+                {row.loading != null && !isNaN(row.loading) ? (
+                  <span className="font-semibold" style={{ color: getOuterLoadingColor(row.loading, 'var(--color-text-secondary)') }}>
+                    {fmtNum(row.loading)}
+                  </span>
+                ) : (
+                  <span className="text-text-muted/30">—</span>
+                )}
+              </td>
+              <td className="px-4 py-2 text-right border-b border-border/40 tabular-nums">
+                {row.weight != null && !isNaN(row.weight) ? (
+                  <span className="font-semibold text-text-secondary">
+                    {fmtNum(row.weight)}
+                  </span>
+                ) : (
+                  <span className="text-text-muted/30">—</span>
+                )}
+              </td>
+              <td className="px-4 py-2 text-right border-b border-border/40 tabular-nums">
+                {row.vif != null && !isNaN(row.vif) ? (
+                  <span className={`font-semibold ${row.vif >= 5 ? 'text-rose-500' : row.vif >= 3 ? 'text-amber-500' : 'text-text-secondary'}`}>
+                    {fmtNum(row.vif)}
+                  </span>
+                ) : (
+                  <span className="text-text-muted/30">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function OuterLoadingsTable({
   rows,
   label,
@@ -3645,6 +3758,7 @@ function TablePanel({
   const reliRows      = parseReliability(analysisResults)
   const loadingRows   = parseOuterLoadings(analysisResults)
   const weightRows    = parseOuterWeights(analysisResults)
+  const hocRows       = parseHOCResults(analysisResults)
   const vifSections   = parseVIF(analysisResults, savedModel)
   const modelFitRows  = parseModelFit(analysisResults)
   const execLog       = parseExecutionLog(analysisResults)
@@ -4034,13 +4148,33 @@ function TablePanel({
             {selectedPanel === 'reliability'    && <ReliabilityTable rows={reliRows} />}
             {analysisMode === 'bootstrap' ? (
               <>
-                {selectedPanel === 'outer-loadings' && <BootstrapLoadingTable rows={bootLoadingRows} label={emptyStateLabel} view={bootstrapIntervalView} />}
-                {selectedPanel === 'outer-weights'  && <BootstrapLoadingTable rows={bootWeightRows} label={emptyStateLabel} view={bootstrapIntervalView} />}
+                {selectedPanel === 'outer-loadings' && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <BootstrapLoadingTable rows={bootLoadingRows} label={emptyStateLabel} view={bootstrapIntervalView} />
+                  </>
+                )}
+                {selectedPanel === 'outer-weights'  && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <BootstrapLoadingTable rows={bootWeightRows} label={emptyStateLabel} view={bootstrapIntervalView} />
+                  </>
+                )}
               </>
             ) : (
               <>
-                {selectedPanel === 'outer-loadings' && <OuterLoadingsTable rows={loadingRows} view={tableView} />}
-                {selectedPanel === 'outer-weights'  && <OuterLoadingsTable rows={weightRows} label={emptyStateLabel} mode="outer-weights" view={tableView} />}
+                {selectedPanel === 'outer-loadings' && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <OuterLoadingsTable rows={loadingRows} view={tableView} />
+                  </>
+                )}
+                {selectedPanel === 'outer-weights'  && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <OuterLoadingsTable rows={weightRows} label={emptyStateLabel} mode="outer-weights" view={tableView} />
+                  </>
+                )}
               </>
             )}
             {selectedPanel === 'cross-loadings' && <CrossLoadingsTable ar={analysisResults} />}
@@ -4356,26 +4490,15 @@ export default function ResultsView() {
       return null
     }
 
-    const constructs = model.constructs
-      .map((construct) => ({
-        name: construct.name,
-        type: construct.type,
-        indicators: construct.indicators.map((indicator) => indicator.name).filter(Boolean),
-      }))
-      .filter((construct) => construct.indicators.length > 0)
+    const payloadParts = buildPlsModelPayloadParts(model.constructs, model.paths)
+    const constructs = payloadParts.constructs
 
     if (!constructs.length) {
       dispatchToast('warning', 'No constructs', 'No construct indicators found in saved model state.')
       return null
     }
 
-    const constructNameById = new Map(model.constructs.map((construct) => [construct.id, construct.name]))
-    const paths = model.paths
-      .map((path) => ({
-        from: constructNameById.get(path.from) || path.from,
-        to: constructNameById.get(path.to) || path.to,
-      }))
-      .filter((path) => !!path.from && !!path.to && path.from !== path.to)
+    const paths = payloadParts.paths
 
     if (!paths.length) {
       dispatchToast('warning', 'No structural paths', 'No valid structural paths found in saved model state.')
@@ -4695,6 +4818,43 @@ export default function ResultsView() {
     }
   }, [generateRScript, modelId])
 
+function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
+  if (!hocRows || !hocRows.length) return ''
+  const rowsHtml = hocRows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.hoc_construct)}</td>
+      <td>${escapeHtml(row.loc_construct)}</td>
+      <td><span class="badge ${row.hoc_type}">${escapeHtml(row.hoc_type)}</span></td>
+      <td><span class="badge ${row.loc_type}">${escapeHtml(row.loc_type)}</span></td>
+      <td style="text-align: right;">${row.loading != null && !isNaN(row.loading) ? fmtNum(row.loading) : '—'}</td>
+      <td style="text-align: right;">${row.weight != null && !isNaN(row.weight) ? fmtNum(row.weight) : '—'}</td>
+      <td style="text-align: right;">${row.vif != null && !isNaN(row.vif) ? fmtNum(row.vif) : '—'}</td>
+    </tr>
+  `).join('')
+
+  return `
+    <div style="margin-bottom: 24px;">
+      <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #f0f0f5; text-transform: uppercase; letter-spacing: 0.5px;">Higher-Order Constructs</h3>
+      <table class="result-table">
+        <thead>
+          <tr>
+            <th style="text-align: left;">Higher-Order Construct</th>
+            <th style="text-align: left;">Lower-Order Dimension</th>
+            <th style="text-align: left;">HOC Type</th>
+            <th style="text-align: left;">LOC Type</th>
+            <th style="text-align: right;">Loading</th>
+            <th style="text-align: right;">Weight</th>
+            <th style="text-align: right;">VIF</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
   const handleExportHtml = useCallback(async () => {
     try {
       const electronAPI = (window as any).electronAPI
@@ -4833,9 +4993,13 @@ export default function ResultsView() {
             ]),
           )
         }
+        const exportHocRows = parseHOCResults(analysisResults)
+        const hocExportHtml = (item.id === 'outer-loadings' || item.id === 'outer-weights') && exportHocRows.length > 0
+          ? buildExportHocTableHtml(exportHocRows)
+          : ''
         const body = item.id === 'execution-log'
           ? `<pre class="exec-log">${escapeHtml(parseExecutionLog(analysisResults))}</pre>`
-          : tableHtml
+          : `${hocExportHtml}${tableHtml}`
         const copyButton = /<table[\s>]/i.test(body)
           ? `<button type="button" class="copy-table-button" title="Copy table for Word" aria-label="Copy ${escapeHtml(item.label)} table">${EXPORT_COPY_ICON_SVG}</button>`
           : ''
@@ -4878,6 +5042,9 @@ export default function ResultsView() {
     tr:nth-child(even) td { background:#F8FAFC; }
     .empty { color:var(--muted); font-size:13px; padding:12px; border:1px dashed var(--line); border-radius:10px; background:#FFFFFF; }
     .exec-log { margin:0; background:#F8FAFC; border:1px solid var(--line); border-radius:10px; padding:12px; font-size:12px; white-space:pre-wrap; }
+    .badge { display:inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge.reflective { background: rgba(135,151,107,0.15); color: var(--brand); border: 1px solid rgba(135,151,107,0.3); }
+    .badge.formative { background: rgba(198,162,75,0.15); color: var(--indicator); border: 1px solid rgba(198,162,75,0.3); }
   </style>
 </head>
 <body>

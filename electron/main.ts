@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, screen, type Rectangle } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -24,6 +24,7 @@ const DEFAULT_PLUMBER_PORT = Number(process.env.METIS_PLUMBER_PORT || '8765')
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 let installerWindow: BrowserWindow | null = null
+let lastNormalMainWindowBounds: Rectangle | null = null
 let plumberProcess: ChildProcess | null = null
 let plumberBaseUrl = `http://${DEFAULT_PLUMBER_HOST}:${DEFAULT_PLUMBER_PORT}`
 let resolvedRscript = ''
@@ -224,6 +225,36 @@ function focusMainWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore()
   if (!mainWindow.isVisible()) mainWindow.show()
   mainWindow.focus()
+}
+
+function isWorkAreaSizedWindow(win: BrowserWindow): boolean {
+  if (win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return false
+
+  const bounds = win.getBounds()
+  const { workArea } = screen.getDisplayMatching(bounds)
+  const tolerance = 2
+
+  return (
+    Math.abs(bounds.x - workArea.x) <= tolerance &&
+    Math.abs(bounds.y - workArea.y) <= tolerance &&
+    Math.abs(bounds.width - workArea.width) <= tolerance &&
+    Math.abs(bounds.height - workArea.height) <= tolerance
+  )
+}
+
+function getMainWindowState(win = mainWindow) {
+  const isMaximized = !!win && !win.isDestroyed() && (win.isMaximized() || isWorkAreaSizedWindow(win))
+  return { isMaximized }
+}
+
+function rememberNormalMainWindowBounds(win: BrowserWindow) {
+  if (win.isDestroyed() || win.isMinimized() || win.isMaximized() || isWorkAreaSizedWindow(win)) return
+  lastNormalMainWindowBounds = win.getBounds()
+}
+
+function sendMainWindowState(win = mainWindow) {
+  if (!win || win.isDestroyed()) return
+  win.webContents.send('window:state-changed', getMainWindowState(win))
 }
 
 function queueOpenWorkspaceFile(filePath: string) {
@@ -2297,6 +2328,7 @@ function createWindow() {
 
   if (isSetup) {
     mainWindow = win
+    lastNormalMainWindowBounds = win.getBounds()
   } else {
     installerWindow = win
   }
@@ -2304,10 +2336,24 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     if (isSetup) {
       scheduleSplashFallback()
+      sendMainWindowState(win)
     } else {
       win.show()
     }
   })
+
+  if (isSetup) {
+    const syncWindowState = () => {
+      rememberNormalMainWindowBounds(win)
+      sendMainWindowState(win)
+    }
+
+    win.on('maximize', syncWindowState)
+    win.on('unmaximize', syncWindowState)
+    win.on('restore', syncWindowState)
+    win.on('resize', syncWindowState)
+    win.on('move', syncWindowState)
+  }
 
   win.webContents.on('did-fail-load', () => {
     revealMainWindow()
@@ -2587,10 +2633,24 @@ ipcMain.on('install:close', () => {
 // ─── Window controls ──────────────────────────────────────────────────────────
 ipcMain.on('window:minimize', () => mainWindow?.minimize())
 ipcMain.on('window:maximize', () => {
-  if (mainWindow?.isMaximized()) mainWindow.unmaximize()
-  else mainWindow?.maximize()
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  if (getMainWindowState(mainWindow).isMaximized) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else if (lastNormalMainWindowBounds) {
+      mainWindow.setBounds(lastNormalMainWindowBounds, true)
+    }
+    sendMainWindowState(mainWindow)
+    return
+  }
+
+  rememberNormalMainWindowBounds(mainWindow)
+  mainWindow.maximize()
+  sendMainWindowState(mainWindow)
 })
 ipcMain.on('window:close', () => mainWindow?.close())
+ipcMain.handle('window:isMaximized', () => getMainWindowState().isMaximized)
 
 // ─── File / Directory dialogs ─────────────────────────────────────────────────
 ipcMain.handle('dialog:openDirectory', async (_, options) => {

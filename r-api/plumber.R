@@ -408,27 +408,79 @@ validate_constructs_payload <- function(constructs_payload) {
       stop(sprintf("constructs[%s].type must be Reflective or Formative.", idx))
     }
 
+    is_higher_order <- isTRUE(construct$is_higher_order %||% construct$isHigherOrder)
+    indicator_min_len <- if (is_higher_order) 0L else 1L
     indicators <- unique(require_string_array(
-      construct$indicators,
+      construct$indicators %||% list(),
       sprintf("constructs[%s].indicators", idx),
-      min_len = 1L,
+      min_len = indicator_min_len,
       max_len = max_indicators_per_construct,
       max_chars = 120
     ))
+
+    higher_order_type <- tolower(as.character(construct$higher_order_type %||% construct$higherOrderType %||% con_type))
+    if (!(higher_order_type %in% c("reflective", "formative"))) {
+      stop(sprintf("constructs[%s].higher_order_type must be reflective or formative.", idx))
+    }
+
+    dimensions <- character(0)
+    if (is_higher_order) {
+      dimensions <- unique(require_string_array(
+        construct$dimensions %||% construct$lowerOrderConstructs %||% list(),
+        sprintf("constructs[%s].dimensions", idx),
+        min_len = 1L,
+        max_len = max_constructs,
+        max_chars = 120
+      ))
+    }
 
     if (tolower(con_name) %in% tolower(seen_names)) {
       stop(sprintf("Duplicate construct name: %s", con_name))
     }
     seen_names <- c(seen_names, con_name)
 
-    normalized[[idx]] <- list(
+    normalized_construct <- list(
       name = con_name,
       type = if (identical(con_type, "formative")) "Formative" else "Reflective",
       indicators = as.list(indicators)
     )
+
+    if (is_higher_order) {
+      normalized_construct$is_higher_order <- TRUE
+      normalized_construct$higher_order_type <- higher_order_type
+      normalized_construct$dimensions <- as.list(dimensions)
+    }
+
+    normalized[[idx]] <- normalized_construct
   }
 
   normalized
+}
+
+validate_higher_order_dimensions <- function(constructs) {
+  construct_names <- vapply(constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
+  hoc_names <- vapply(constructs, function(con) if (isTRUE(con$is_higher_order)) con$name else "", character(1), USE.NAMES = FALSE)
+  hoc_names <- hoc_names[nzchar(hoc_names)]
+
+  for (idx in seq_along(constructs)) {
+    construct <- constructs[[idx]]
+    if (!isTRUE(construct$is_higher_order)) next
+
+    dimensions <- unlist(construct$dimensions %||% list(), use.names = FALSE)
+    for (dimension in dimensions) {
+      if (!(dimension %in% construct_names)) {
+        stop(sprintf("constructs[%s].dimensions references unknown construct '%s'.", idx, dimension))
+      }
+      if (identical(dimension, construct$name)) {
+        stop(sprintf("constructs[%s].dimensions cannot include the HOC itself.", idx))
+      }
+      if (dimension %in% hoc_names) {
+        stop(sprintf("constructs[%s].dimensions cannot reference another higher-order construct.", idx))
+      }
+    }
+  }
+
+  constructs
 }
 
 validate_paths_payload <- function(paths_payload, construct_names) {
@@ -549,7 +601,7 @@ validate_payload_object <- function(payload) {
   }
 
   dataset_path <- require_scalar_string(payload$datasetPath, "datasetPath", max_chars = 1000)
-  constructs <- validate_constructs_payload(payload$constructs)
+  constructs <- validate_higher_order_dimensions(validate_constructs_payload(payload$constructs))
   construct_names <- vapply(constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
   paths <- validate_paths_payload(payload$paths, construct_names)
   interactions <- validate_interactions_payload(payload$interactions %||% list(), construct_names)
@@ -1150,21 +1202,40 @@ build_measurement <- function(constructs_payload, algorithm = "standard", intera
 
   defs <- lapply(constructs_payload, function(con) {
     con_name <- as.character(con$name)
-    con_type <- tolower(as.character(con$type))
-    items <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
-    items <- items[!is.na(items) & nzchar(items)]
+    is_hoc <- isTRUE(con$is_higher_order)
 
-    if (!length(items)) {
-      stop(sprintf("Construct '%s' has no indicators.", con_name))
-    }
+    if (is_hoc) {
+      dimensions <- unlist(con$dimensions)
+      dimensions <- dimensions[!is.na(dimensions) & nzchar(dimensions)]
+      if (!length(dimensions)) {
+        stop(sprintf("Higher-order construct '%s' has no lower-order dimensions.", con_name))
+      }
+      hoc_type <- tolower(as.character(con$higher_order_type %||% "reflective"))
+      hoc_weights <- if (hoc_type == "formative") seminr::mode_B else seminr::mode_A
 
-    if (con_type == "formative") {
-      seminr::composite(con_name, items)
+      seminr::higher_composite(
+        con_name,
+        dimensions = dimensions,
+        method = seminr::two_stage,
+        weights = hoc_weights
+      )
     } else {
-      if (algorithm == "consistent") {
-        seminr::reflective(con_name, items)
+      con_type <- tolower(as.character(con$type))
+      items <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
+      items <- items[!is.na(items) & nzchar(items)]
+
+      if (!length(items)) {
+        stop(sprintf("Construct '%s' has no indicators.", con_name))
+      }
+
+      if (con_type == "formative") {
+        seminr::composite(con_name, items)
       } else {
-        seminr::composite(con_name, items, weights = seminr::mode_A)
+        if (algorithm == "consistent") {
+          seminr::reflective(con_name, items)
+        } else {
+          seminr::composite(con_name, items, weights = seminr::mode_A)
+        }
       }
     }
   })
@@ -2155,6 +2226,70 @@ extract_quality_criteria <- function(payload, data, core) {
   )
 }
 
+extract_hoc_results <- function(payload, model, summary_obj) {
+  constructs <- payload$constructs %||% list()
+  hoc_constructs <- Filter(function(con) isTRUE(con$is_higher_order), constructs)
+  if (length(hoc_constructs) == 0) return(list())
+
+  ol <- model$outer_loadings
+  ow <- model$outer_weights
+  vif_items <- summary_obj$validity$vif_items %||%
+               summary_obj$validity$VIF_items %||%
+               summary_obj$validity$vifItems %||%
+               summary_obj$validity$VIFItems
+
+  hoc_rows <- list()
+
+  for (con in hoc_constructs) {
+    hoc_name <- as.character(con$name)
+    hoc_type <- tolower(as.character(con$higher_order_type %||% "reflective"))
+    dimensions <- unlist(con$dimensions)
+
+    for (dim_name in dimensions) {
+      loading_val <- NA_real_
+      weight_val <- NA_real_
+      vif_val <- NA_real_
+
+      if (!is.null(ol) && dim_name %in% rownames(ol) && hoc_name %in% colnames(ol)) {
+        loading_val <- safe_num(ol[dim_name, hoc_name])
+      }
+
+      if (!is.null(ow) && dim_name %in% rownames(ow) && hoc_name %in% colnames(ow)) {
+        weight_val <- safe_num(ow[dim_name, hoc_name])
+      }
+
+      if (!is.null(vif_items)) {
+        if (is.list(vif_items) && !is.null(vif_items[[hoc_name]]) && dim_name %in% names(vif_items[[hoc_name]])) {
+          vif_val <- safe_num(vif_items[[hoc_name]][[dim_name]])
+        } else if (is.matrix(vif_items) || is.data.frame(vif_items)) {
+          if (dim_name %in% rownames(vif_items) && hoc_name %in% colnames(vif_items)) {
+            vif_val <- safe_num(vif_items[dim_name, hoc_name])
+          } else if (dim_name %in% names(vif_items)) {
+            vif_val <- safe_num(vif_items[[dim_name]])
+          }
+        } else if (dim_name %in% names(vif_items)) {
+          vif_val <- safe_num(vif_items[[dim_name]])
+        }
+      }
+
+      loc_con <- Filter(function(c) as.character(c$name) == dim_name, constructs)
+      loc_type <- if (length(loc_con) > 0) tolower(as.character(loc_con[[1]]$type %||% "reflective")) else "reflective"
+
+      hoc_rows[[length(hoc_rows) + 1]] <- list(
+        hoc_construct = hoc_name,
+        loc_construct = dim_name,
+        hoc_type = hoc_type,
+        loc_type = loc_type,
+        loading = loading_val,
+        weight = weight_val,
+        vif = vif_val
+      )
+    }
+  }
+
+  hoc_rows
+}
+
 extract_pls_sections <- function(payload, data, core) {
   summary_obj <- core$summary
   model <- core$model
@@ -2172,7 +2307,8 @@ extract_pls_sections <- function(payload, data, core) {
       outer_loadings = as_rows(summary_obj$loadings),
       outer_weights = as_rows(summary_obj$weights),
       latent_variables = extract_latent_variables(summary_obj),
-      residuals = extract_construct_residuals(summary_obj, model)
+      residuals = extract_construct_residuals(summary_obj, model),
+      hoc_results = extract_hoc_results(payload, model, summary_obj)
     ),
     quality_criteria = quality_criteria,
     algorithm = list(

@@ -6,6 +6,9 @@ export interface RunPlsConstruct {
   name: string
   type: MeasurementType
   indicators: string[]
+  is_higher_order?: boolean
+  higher_order_type?: 'reflective' | 'formative'
+  dimensions?: string[]
 }
 
 export interface RunPlsPath {

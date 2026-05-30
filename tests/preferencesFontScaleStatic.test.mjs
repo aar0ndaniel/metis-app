@@ -22,8 +22,14 @@ assert.match(
 
 assert.match(
   appSource,
-  /document\.documentElement\.setAttribute\('data-font-scale', readStartupFontScale\(\)\)/,
-  'App should apply font scale only from startup state.',
+  /function applySavedVisualPreferences\(\)[\s\S]*root\.setAttribute\('data-font-scale', readStartupFontScale\(\)\)/,
+  'App should apply font scale through the shared visual-preferences path.',
+)
+
+assert.match(
+  appSource,
+  /window\.addEventListener\('pls:preferences-updated', applyCurrentPreferences\)/,
+  'App should reapply font scale when preferences are saved.',
 )
 
 assert.match(
@@ -40,26 +46,20 @@ assert.match(
 
 assert.match(
   prefsSource,
-  /Restart metis to apply font size changes\./,
-  'Preferences should tell users font-size changes require restart.',
+  /Applied to the workspace after preferences save\./,
+  'Preferences should tell users font-size changes apply after saving preferences.',
 )
 
 assert.match(
   prefsSource,
-  /direction\?: 'up' \| 'down'/,
-  'Preferences SelectBox should support upward-opening menus.',
+  /const \[openPreferenceSelect, setOpenPreferenceSelect\]/,
+  'Preferences should use the custom styled select state instead of native browser dropdowns.',
 )
 
 assert.match(
   prefsSource,
-  /\.\.\.\(opensUpward \? \{ bottom: '100%', marginBottom: 4 \} : \{ top: '100%', marginTop: 4 \}\)/,
-  'Upward SelectBox menus should render above the trigger.',
-)
-
-assert.match(
-  prefsSource,
-  /<SelectBox value=\{fontScale\}[\s\S]*direction="up"/,
-  'The app font-size menu should open upward so its options remain visible.',
+  /'default-seed', 'up'/,
+  'The default random seed menu should open upward so its options remain visible.',
 )
 
 assert.match(
@@ -77,7 +77,7 @@ assert.match(
 assert.match(
   cssSource,
   /\.metis-app-shell[\s\S]*zoom:\s*var\(--app-font-scale\)/,
-  'The app shell should scale so inline pixel font sizes visibly change after restart.',
+  'The app shell should scale so inline pixel font sizes visibly change after preferences are saved.',
 )
 
 assert.match(

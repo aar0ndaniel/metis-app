@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   MathOperations,
   Cursor,
-  PlusCircle,
   ArrowRight,
   Trash,
   Shuffle,
@@ -29,6 +28,7 @@ import {
   X,
   CaretDown,
   WarningCircle,
+  Check,
   Copy,
   Scissors,
   Clipboard, // New import for the context menu paste icon
@@ -38,7 +38,8 @@ import {
   ArrowsVertical,
   CornersOut,
   BezierCurve,
-  ArrowElbowRight
+  ArrowElbowRight,
+  TreeStructure
 } from '@phosphor-icons/react'
 import BootstrapModal from '../components/BootstrapModal'
 import DraftNumberInput from '../components/DraftNumberInput'
@@ -64,6 +65,7 @@ import {
   readPlsPredictSettingsFromState,
   type PlsPredictSettings,
 } from '../utils/plsPredictSettings'
+import { buildPlsModelPayloadParts, type HocPathRole } from '../utils/plsModelPayload'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,11 +85,12 @@ interface Indicator {
 }
 
 type ConstructShape = 'circle' | 'oval' | 'square'
+type MeasurementType = 'Reflective' | 'Formative'
 
 interface Construct {
   id: string
   name: string
-  type: 'Reflective' | 'Formative'
+  type: MeasurementType
   color: string
   x: number
   y: number
@@ -107,6 +110,7 @@ interface Construct {
   sortOrder?: string
   margin?: number
   folded?: boolean
+  isHigherOrder?: boolean
 }
 
 interface Path {
@@ -115,9 +119,28 @@ interface Path {
   to: string
   kind?: 'direct' | 'moderation'
   targetPathId?: string
+  hocRole?: HocPathRole
   style?: 'straight' | 'curved' | 'rightangle'
   curvature?: number
   joints?: { x: number; y: number }[]
+}
+
+interface HocPathConflict {
+  id: string
+  from: string
+  to: string
+  hocId: string
+  locId: string
+  currentType: MeasurementType
+  suggestedType: MeasurementType
+}
+
+interface HocPathRoleChoice {
+  id: string
+  from: string
+  to: string
+  hocId: string
+  locId: string
 }
 
 interface Snapshot {
@@ -241,6 +264,7 @@ function clearAutosaveDraft(modelId?: string | null) {
 // ─── Static data ──────────────────────────────────────────────────────────────
 
 const SWATCH_COLORS = ['#87976B', '#A78BFA', '#60A5FA', '#F97316']
+const HOC_SWATCH_COLORS = ['#D94141', '#BE185D', '#0E7490', '#52525B']
 const DEFAULT_CONSTRUCT_RADIUS = 42
 const OVAL_RX_SCALE = 1.35
 const OVAL_RY_SCALE = 0.82
@@ -904,7 +928,7 @@ export default function ModelCanvas({
   const [activeTool, setActiveTool] = useState<'select' | 'construct' | 'connect' | 'delete'>('select')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [isModalShaking, setIsModalShaking] = useState(false)
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true)
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false)
   const [propertiesIndicatorsExpanded, setPropertiesIndicatorsExpanded] = useState(false)
   const [showLeftSidebar, setShowLeftSidebar] = useState(true)
@@ -921,6 +945,8 @@ export default function ModelCanvas({
   const [isSpaceDown, setIsSpaceDown] = useState(false)
 
   const [selected, setSelected]     = useState<string[]>([])
+  const [highlightedConstructId, setHighlightedConstructId] = useState<string | null>(null)
+  const highlightedConstructTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [canvasBg, setCanvasBg]     = useState(C.page)
   const [showGrid, setShowGrid]     = useState(false)
   const [snapEnabled, setSnapEnabled] = useState(true)
@@ -966,6 +992,8 @@ export default function ModelCanvas({
     title: '',
     message: '',
   })
+  const [hocPathConflict, setHocPathConflict] = useState<HocPathConflict | null>(null)
+  const [hocPathRoleChoice, setHocPathRoleChoice] = useState<HocPathRoleChoice | null>(null)
   const [algoTab, setAlgoTab] = useState<'PLS setup' | 'Data'>('PLS setup')
   const [weightingScheme, setWeightingScheme] = useState<'Factor' | 'Path' | 'PCA'>('Path')
   const [plsAlgorithm, setPlsAlgorithm] = useState<'standard' | 'consistent'>('standard')
@@ -1003,9 +1031,22 @@ export default function ModelCanvas({
   const [showNewConstructModal, setShowNewConstructModal] = useState(false)
   const [newConstructName, setNewConstructName] = useState('')
   const [newConstructColor, setNewConstructColor] = useState(C.secondary)
+  const [newConstructType, setNewConstructType] = useState<MeasurementType>('Reflective')
+  const [newConstructIsHigherOrder, setNewConstructIsHigherOrder] = useState(false)
   const [hoveredNewConstructColor, setHoveredNewConstructColor] = useState<string | null>(null)
   const [newConstructPos, setNewConstructPos] = useState({ x: 0, y: 0 })
   const [pendingVars, setPendingVars] = useState<string[]>([])
+  const newConstructPalette = newConstructIsHigherOrder ? HOC_SWATCH_COLORS : SWATCH_COLORS
+
+  const resetNewConstructModal = useCallback(() => {
+    setShowNewConstructModal(false)
+    setNewConstructName('')
+    setNewConstructColor(C.secondary)
+    setNewConstructType('Reflective')
+    setNewConstructIsHigherOrder(false)
+    setHoveredNewConstructColor(null)
+    setPendingVars([])
+  }, [])
   
   const [settingsModalPos, setSettingsModalPos] = useState({ x: 0, y: 0 })
   const [showSettingsModal, setShowSettingsModal] = useState(false)
@@ -1140,24 +1181,11 @@ export default function ModelCanvas({
       const datasetFilePath = resolveDatasetFilePath()
       if (!datasetFilePath) return
 
-      const payloadConstructs = constructs
-        .map(c => ({
-          name: c.name,
-          type: c.type,
-          indicators: c.indicators.map(i => i.name).filter(Boolean),
-        }))
-        .filter(c => c.indicators.length > 0)
+      const payloadParts = buildPlsModelPayloadParts(constructs, paths)
+      const payloadConstructs = payloadParts.constructs
 
       if (!payloadConstructs.length) return
-
-      const mappedPaths = paths
-        .map(p => {
-          const fromC = constructs.find(c => c.id === p.from)
-          const toC = constructs.find(c => c.id === p.to)
-          if (!fromC || !toC) return null
-          return { from: fromC.name, to: toC.name }
-        })
-        .filter((p): p is { from: string; to: string } => p !== null)
+      const mappedPaths = payloadParts.paths
 
       if (!mappedPaths.length) return
 
@@ -1365,51 +1393,6 @@ export default function ModelCanvas({
       `${stripModelDisplayName(newModel.name)} is ready in ${stripWorkspaceDisplayName(targetWorkspace?.name ?? '') || 'the selected workspace'}`
     )
   }, [constructs, currentModel, electronAPI, onOpenModel, paths, setWorkspaces, workspaces])
-
-  const buildStructuralPayload = () => {
-    const constructNameById = new Map(constructs.map((construct) => [construct.id, construct.name]))
-
-    const directPaths = paths.filter((path) => path.kind !== 'moderation')
-    const moderationPaths = paths.filter((path) => path.kind === 'moderation' && path.targetPathId)
-
-    const mappedDirectPaths = directPaths
-      .map((path) => ({
-        from: constructNameById.get(path.from) || path.from,
-        to: constructNameById.get(path.to) || path.to,
-      }))
-      .filter((path) => !!path.from && !!path.to && path.from !== path.to)
-
-    const interactionRows: Array<{ iv: string; moderator: string; outcome: string }> = []
-    const interactionStructuralPaths: Array<{ from: string; to: string }> = []
-    const seenInteractions = new Set<string>()
-
-    moderationPaths.forEach((moderationPath) => {
-      const targetPath = directPaths.find((path) => path.id === moderationPath.targetPathId)
-      if (!targetPath) return
-
-      const iv = constructNameById.get(targetPath.from) || targetPath.from
-      const moderator = constructNameById.get(moderationPath.from) || moderationPath.from
-      const outcome = constructNameById.get(targetPath.to) || targetPath.to
-      if (!iv || !moderator || !outcome) return
-      if (iv === moderator || iv === outcome || moderator === outcome) return
-
-      const key = `${iv}|${moderator}|${outcome}`
-      if (seenInteractions.has(key)) return
-      seenInteractions.add(key)
-
-      const interactionName = `${iv}*${moderator}`
-      interactionRows.push({ iv, moderator, outcome })
-      interactionStructuralPaths.push({ from: interactionName, to: outcome })
-    })
-
-    const allPaths = [...mappedDirectPaths, ...interactionStructuralPaths]
-    
-    return {
-      mappedPaths: allPaths,
-      directPathCount: mappedDirectPaths.length,
-      interactions: interactionRows
-    }
-  }
 
   const persistSnapshotForAnalysis = useCallback((analysisState?: {
     mode: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced'
@@ -1742,18 +1725,18 @@ export default function ModelCanvas({
       throw new Error('No dataset file path found. Please import dataset from file before calculation.')
     }
 
-    const constructSummaries = constructs.map((construct) => ({
-      name: construct.name,
-      type: construct.type,
-      indicators: construct.indicators.map((indicator) => indicator.name).filter(Boolean),
-    }))
-    const emptyConstructNames = constructSummaries
-      .filter((construct) => construct.indicators.length === 0)
+    const payloadParts = buildPlsModelPayloadParts(constructs, paths)
+    const mappedPaths = payloadParts.paths
+    const directPathCount = payloadParts.directPathCount
+    const interactions = payloadParts.interactions
+    const payloadConstructs = payloadParts.constructs
+
+    const emptyConstructNames = constructs
+      .filter((construct) => !construct.isHigherOrder && construct.indicators.length === 0)
       .map((construct) => construct.name)
-    const payloadConstructs = constructSummaries.filter((construct) => construct.indicators.length > 0)
 
     if (!payloadConstructs.length) {
-      recordDiagnostic('calculation', 'warn', `${getAnalysisLabel(analysisKind)} blocked: no constructs with indicators.`, {
+      recordDiagnostic('calculation', 'warn', `${getAnalysisLabel(analysisKind)} blocked: no constructs found.`, {
         analysisKind,
         constructCount: constructs.length,
       })
@@ -1768,7 +1751,7 @@ export default function ModelCanvas({
       throw new Error(`One or more constructs have no indicators: ${emptyConstructNames.join(', ')}`)
     }
 
-    const { mappedPaths, directPathCount, interactions } = buildStructuralPayload()
+
     if (!directPathCount) {
       recordDiagnostic('calculation', 'warn', `${getAnalysisLabel(analysisKind)} blocked: no structural paths.`, {
         analysisKind,
@@ -2626,6 +2609,42 @@ export default function ModelCanvas({
 
   // ── Selected construct ────────────────────────────────────────────────────────
   const selectedConstruct = selected.length === 1 ? constructs.find(c => c.id === selected[0]) ?? null : null
+  const selectedHocLowerOrderConstructs = useMemo(() => {
+    if (!selectedConstruct?.isHigherOrder) return []
+
+    const locIds: string[] = []
+    paths.forEach((path) => {
+      if (path.kind === 'moderation') return
+      if (path.hocRole === 'structural') return
+      if (path.from === selectedConstruct.id) locIds.push(path.to)
+      if (path.to === selectedConstruct.id) locIds.push(path.from)
+    })
+
+    const seen = new Set<string>()
+    return locIds
+      .map((id) => constructs.find((construct) => construct.id === id))
+      .filter((construct): construct is Construct => Boolean(construct && !construct.isHigherOrder))
+      .filter((construct) => {
+        if (seen.has(construct.id)) return false
+        seen.add(construct.id)
+        return true
+      })
+  }, [constructs, paths, selectedConstruct])
+
+  const highlightConnectedConstruct = useCallback((constructId: string) => {
+    setHighlightedConstructId(constructId)
+    if (highlightedConstructTimerRef.current) clearTimeout(highlightedConstructTimerRef.current)
+    highlightedConstructTimerRef.current = setTimeout(() => {
+      setHighlightedConstructId((current) => current === constructId ? null : current)
+      highlightedConstructTimerRef.current = null
+    }, 1400)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (highlightedConstructTimerRef.current) clearTimeout(highlightedConstructTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     setPropertiesIndicatorsExpanded(false)
@@ -2970,6 +2989,126 @@ export default function ModelCanvas({
     setShowPathSettings(false)
   }
 
+  const getHocPathConflict = useCallback((fromId: string, toId: string, pathId: string): HocPathConflict | null => {
+    const fromConstruct = constructs.find((construct) => construct.id === fromId)
+    const toConstruct = constructs.find((construct) => construct.id === toId)
+    if (!fromConstruct || !toConstruct) return null
+    if (Boolean(fromConstruct.isHigherOrder) === Boolean(toConstruct.isHigherOrder)) return null
+
+    const hoc = fromConstruct.isHigherOrder ? fromConstruct : toConstruct
+    const loc = fromConstruct.isHigherOrder ? toConstruct : fromConstruct
+    const currentType = hoc.type
+    const suggestedType = currentType === 'Reflective' ? 'Formative' : 'Reflective'
+    const expectedFrom = currentType === 'Reflective' ? hoc.id : loc.id
+    const expectedTo = currentType === 'Reflective' ? loc.id : hoc.id
+    if (fromId === expectedFrom && toId === expectedTo) return null
+
+    return {
+      id: pathId,
+      from: fromId,
+      to: toId,
+      hocId: hoc.id,
+      locId: loc.id,
+      currentType,
+      suggestedType,
+    }
+  }, [constructs])
+
+  const getHocPathRoleChoice = useCallback((fromId: string, toId: string, pathId: string): HocPathRoleChoice | null => {
+    const fromConstruct = constructs.find((construct) => construct.id === fromId)
+    const toConstruct = constructs.find((construct) => construct.id === toId)
+    if (!fromConstruct || !toConstruct) return null
+    if (Boolean(fromConstruct.isHigherOrder) === Boolean(toConstruct.isHigherOrder)) return null
+
+    const hoc = fromConstruct.isHigherOrder ? fromConstruct : toConstruct
+    const loc = fromConstruct.isHigherOrder ? toConstruct : fromConstruct
+    return {
+      id: pathId,
+      from: fromId,
+      to: toId,
+      hocId: hoc.id,
+      locId: loc.id,
+    }
+  }, [constructs])
+
+  const commitDirectPath = useCallback((
+    fromId: string,
+    toId: string,
+    pathId: string,
+    targetConstructs: Construct[] = constructs,
+    targetPaths: Path[] = paths,
+    hocRole?: HocPathRole,
+  ) => {
+    const existingPath = targetPaths.find((path) => path.kind !== 'moderation' && path.from === fromId && path.to === toId)
+    if (existingPath) {
+      const nextPaths = hocRole && existingPath.hocRole !== hocRole
+        ? targetPaths.map((path) => path.id === existingPath.id ? { ...path, hocRole } : path)
+        : targetPaths
+      setConstructs(targetConstructs)
+      setPaths(nextPaths)
+      commit(targetConstructs, nextPaths)
+      setSelectedPaths([existingPath.id])
+      setSelected([])
+      return
+    }
+
+    const newPath: Path = { id: pathId, from: fromId, to: toId, kind: 'direct', ...(hocRole ? { hocRole } : {}) }
+    const newPaths = [...targetPaths, newPath]
+    setConstructs(targetConstructs)
+    setPaths(newPaths)
+    commit(targetConstructs, newPaths)
+    setSelectedPaths([pathId])
+    setSelected([])
+  }, [constructs, paths, commit])
+
+  const createDirectPath = useCallback((fromId: string, toId: string) => {
+    if (fromId === toId) return
+    const id = `p-${Date.now()}`
+    const roleChoice = getHocPathRoleChoice(fromId, toId, id)
+    if (roleChoice) {
+      setHocPathRoleChoice(roleChoice)
+      return
+    }
+
+    commitDirectPath(fromId, toId, id)
+  }, [commitDirectPath, getHocPathRoleChoice])
+
+  const createHocMeasurementPath = useCallback(() => {
+    if (!hocPathRoleChoice) return
+    const conflict = getHocPathConflict(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id)
+    setHocPathRoleChoice(null)
+    if (conflict) {
+      setHocPathConflict(conflict)
+      return
+    }
+    commitDirectPath(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id, constructs, paths, 'measurement')
+  }, [commitDirectPath, constructs, getHocPathConflict, hocPathRoleChoice, paths])
+
+  const createHocStructuralPath = useCallback(() => {
+    if (!hocPathRoleChoice) return
+    commitDirectPath(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id, constructs, paths, 'structural')
+    setHocPathRoleChoice(null)
+  }, [commitDirectPath, constructs, hocPathRoleChoice, paths])
+
+  const keepHocMeasurementType = useCallback(() => {
+    if (!hocPathConflict) return
+    const expectedFrom = hocPathConflict.currentType === 'Reflective' ? hocPathConflict.hocId : hocPathConflict.locId
+    const expectedTo = hocPathConflict.currentType === 'Reflective' ? hocPathConflict.locId : hocPathConflict.hocId
+    commitDirectPath(expectedFrom, expectedTo, hocPathConflict.id, constructs, paths, 'measurement')
+    setHocPathConflict(null)
+  }, [commitDirectPath, constructs, hocPathConflict, paths])
+
+  const switchHocMeasurementType = useCallback(() => {
+    if (!hocPathConflict) return
+    const nextConstructs = constructs.map((construct) => (
+      construct.id === hocPathConflict.hocId
+        ? { ...construct, type: hocPathConflict.suggestedType }
+        : construct
+    ))
+    commitDirectPath(hocPathConflict.from, hocPathConflict.to, hocPathConflict.id, nextConstructs, paths, 'measurement')
+    setHocPathConflict(null)
+  }, [commitDirectPath, constructs, hocPathConflict, paths])
+
   // ── Drag ──────────────────────────────────────────────────────────────────────
   const snap = (v: number) => snapEnabled ? Math.round(v / 20) * 20 : v
 
@@ -3019,15 +3158,7 @@ export default function ModelCanvas({
 
       // Click-to-connect: if source already selected, second click on another construct creates a path.
       if (connectStart && connectStart !== id) {
-        const exists = paths.some((p) => p.kind !== 'moderation' && p.from === connectStart && p.to === id)
-        if (!exists) {
-          const newId = `p-${Date.now()}`
-          const newP = [...paths, { id: newId, from: connectStart, to: id, kind: 'direct' as const }]
-          setPaths(newP)
-          commit(constructs, newP)
-          setSelectedPaths([newId])
-          setSelected([])
-        }
+        createDirectPath(connectStart, id)
         setIsConnecting(false)
         setConnectStart(null)
         setConnectEnd(null)
@@ -3447,15 +3578,7 @@ export default function ModelCanvas({
     if (isConnecting && connectStart && connectEnd) {
       const over = constructs.find(c => isPointInConstruct(c, connectEnd.x, connectEnd.y, 10))
       if (over && over.id !== connectStart) {
-        const exists = paths.some((p) => p.kind !== 'moderation' && p.from === connectStart && p.to === over.id)
-        if (!exists) {
-          const id = `p-${Date.now()}`
-          const newP = [...paths, { id, from: connectStart, to: over.id, kind: 'direct' as const }]
-          setPaths(newP)
-          commit(constructs, newP)
-          setSelectedPaths([id])
-          setSelected([])
-        }
+        createDirectPath(connectStart, over.id)
       } else {
         const targetPath = findDirectPathAtPoint(connectEnd.x, connectEnd.y, connectStart)
         if (targetPath) {
@@ -3510,20 +3633,17 @@ export default function ModelCanvas({
     const id = `c-${Date.now()}`
     const radius = DEFAULT_CONSTRUCT_RADIUS
     const newC: Construct = {
-      id, name: newConstructName, type: 'Reflective', color: newConstructColor,
+      id, name: newConstructName, type: newConstructType, color: newConstructColor,
       x: newConstructPos.x, y: newConstructPos.y, radius, 
       indicators: pendingVars.map(v => ({ name: v, loading: null })),
       labelColor: 'var(--color-text-primary)', labelBold: true, labelItalic: false, labelSize: 13,
-      shape: 'circle'
+      shape: 'circle',
+      isHigherOrder: newConstructIsHigherOrder,
     }
     const updated = [...constructs, newC]
     setConstructs(updated)
     commit(updated, paths)
-    setShowNewConstructModal(false)
-    setNewConstructName('')
-    setNewConstructColor(C.secondary)
-    setHoveredNewConstructColor(null)
-    setPendingVars([])
+    resetNewConstructModal()
     setSelected([id])
   }
 
@@ -3563,6 +3683,9 @@ export default function ModelCanvas({
       setPendingVars(draggedVars)
       setNewConstructName(draggedVars.length === 1 ? draggedVars[0] : `VAR_${constructs.length + 1}`)
       setNewConstructColor(C.secondary)
+      setNewConstructType('Reflective')
+      setNewConstructIsHigherOrder(false)
+      setHoveredNewConstructColor(null)
       setShowNewConstructModal(true)
     }
   }
@@ -4293,6 +4416,7 @@ export default function ModelCanvas({
               const constructLabelColor = !c.labelColor || c.labelColor === '#FFFFFF'
                 ? 'var(--color-text-primary)'
                 : c.labelColor
+              const showConnectedConstructHighlight = highlightedConstructId === c.id
 
               return (
                 <g key={c.id}>
@@ -4368,6 +4492,26 @@ export default function ModelCanvas({
                     onContextMenu={e => handleConstructContextMenu(e, c.id)}
                     style={{ cursor: hasUnifiedSelectionBounds && selected.includes(c.id) ? 'default' : 'grab' }}
                   >
+                    {showConnectedConstructHighlight && (isOval ? (
+                      <ellipse
+                        rx={constructRadii.rx + 9}
+                        ry={constructRadii.ry + 9}
+                        fill="rgb(var(--color-accent-rgb) / 0.18)"
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="7 4"
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    ) : (
+                      <circle
+                        r={constructRadii.rx + 9}
+                        fill="rgb(var(--color-accent-rgb) / 0.18)"
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="7 4"
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    ))}
                     {/* Shape */}
                     {isOval ? (
                       <ellipse rx={constructRadii.rx} ry={constructRadii.ry} fill={c.color} stroke="none" />
@@ -4712,13 +4856,32 @@ export default function ModelCanvas({
               {/* Construct Name */}
               <div style={{ padding: '14px 14px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>Construct Name</span>
-                <div style={{ backgroundColor: C.elevated, borderRadius: 6, height: 32, padding: '0 10px', border: `1px solid ${C.successBorderSoft}`, display: 'flex', alignItems: 'center' }}>
+                <div style={{ backgroundColor: C.elevated, borderRadius: 6, height: 32, padding: '0 8px 0 10px', border: `1px solid ${C.successBorderSoft}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={selectedConstruct?.name ?? ''}
                     onChange={e => updateSelected({ name: e.target.value })}
                     placeholder="Select a construct"
-                    style={{ background: 'none', border: 'none', outline: 'none', color: C.text, fontSize: 13, fontWeight: 600, fontFamily: 'DM Sans, sans-serif', width: '100%' }}
+                    style={{ background: 'none', border: 'none', outline: 'none', color: C.text, fontSize: 13, fontWeight: 600, fontFamily: 'DM Sans, sans-serif', flex: 1, minWidth: 0 }}
                   />
+                  {selectedConstruct?.isHigherOrder && (
+                    <span
+                      style={{
+                        height: 18,
+                        padding: '0 7px',
+                        borderRadius: 999,
+                        backgroundColor: 'rgb(var(--color-accent-rgb) / 0.18)',
+                        border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                        color: 'var(--color-accent)',
+                        fontFamily: 'DM Sans, sans-serif',
+                        fontSize: 9,
+                        fontWeight: 800,
+                        letterSpacing: 0.2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        flexShrink: 0,
+                      }}
+                    >HOC</span>
+                  )}
                 </div>
               </div>
 
@@ -4943,14 +5106,61 @@ export default function ModelCanvas({
                         cursor: 'pointer',
                       }}
                     >
-                      <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>Indicators ({selectedConstruct.indicators.length})</span>
+                      <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>
+                        {selectedConstruct.isHigherOrder
+                          ? `Lower-order constructs (${selectedHocLowerOrderConstructs.length})`
+                          : `Indicators (${selectedConstruct.indicators.length})`}
+                      </span>
                       <CaretDown
                         size={12}
                         color={C.textMuted}
                         style={{ transform: propertiesIndicatorsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.16s ease' }}
                       />
                     </button>
-                    {propertiesIndicatorsExpanded && selectedConstruct.indicators.length === 0 ? (
+                    {propertiesIndicatorsExpanded && selectedConstruct.isHigherOrder && selectedHocLowerOrderConstructs.length === 0 ? (
+                      <span style={{ fontSize: 11, color: C.textDim, fontFamily: 'DM Sans, sans-serif' }}>No lower-order constructs connected</span>
+                    ) : propertiesIndicatorsExpanded && selectedConstruct.isHigherOrder ? (
+                      selectedHocLowerOrderConstructs.map((construct) => (
+                        <button
+                          key={construct.id}
+                          type="button"
+                          onClick={() => highlightConnectedConstruct(construct.id)}
+                          style={{
+                            minHeight: 32,
+                            border: 'none',
+                            backgroundColor: C.elevated,
+                            borderRadius: 6,
+                            padding: '0 8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            fontFamily: 'DM Sans, sans-serif',
+                          }}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: construct.color, flexShrink: 0 }} />
+                          <span
+                            title={construct.name}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              color: C.textSec,
+                              fontSize: 11,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {construct.name}
+                          </span>
+                          <span style={{ color: C.textDim, fontSize: 9, fontWeight: 700 }}>
+                            LOC
+                          </span>
+                        </button>
+                      ))
+                    ) : propertiesIndicatorsExpanded && selectedConstruct.indicators.length === 0 ? (
                       <span style={{ fontSize: 11, color: C.textDim, fontFamily: 'DM Sans, sans-serif' }}>No indicators assigned</span>
                     ) : propertiesIndicatorsExpanded && selectedConstruct.indicators.map((ind, i) => (
                       <div key={`${ind.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 30, backgroundColor: C.elevated, borderRadius: 6, padding: '0 6px' }}>
@@ -5528,9 +5738,13 @@ export default function ModelCanvas({
       {showPathSettings && editingPathId && (() => {
         const p = paths.find(x => x.id === editingPathId)
         if (!p) return null
+        const fromConstruct = constructs.find((construct) => construct.id === p.from)
+        const toConstruct = constructs.find((construct) => construct.id === p.to)
+        const showHocRole = Boolean(fromConstruct && toConstruct && Boolean(fromConstruct.isHigherOrder) !== Boolean(toConstruct.isHigherOrder))
         return (
           <PathSettingsModal 
             path={p} 
+            showHocRole={showHocRole}
             position={pathSettingsPos} 
             onClose={() => setShowPathSettings(false)} 
             onSave={handleSavePathSettings} 
@@ -5546,106 +5760,373 @@ export default function ModelCanvas({
           onClick={() => triggerModalAlert()}
         >
           <div
-            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(e) => e.stopPropagation()}
-            style={{ 
-              backgroundColor: 'var(--color-elevated)',
-              borderRadius: 12,
-              border: '1px solid var(--color-border)',
+            style={{
+              width: 356,
+              backgroundColor: '#242424',
+              borderRadius: 14,
               boxShadow: 'var(--shadow-modal)',
             }}
           >
-            <div style={{ padding: '24px 24px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
-                <div style={{ 
-                  width: 42, height: 42, flexShrink: 0, borderRadius: '50%', aspectRatio: '1/1',
-                  backgroundColor: `${newConstructColor}26`, display: 'flex', alignItems: 'center', justifyContent: 'center' 
-                }}>
-                  <PlusCircle size={22} color={newConstructColor} weight="fill" />
+            <div style={{ height: 188, padding: '22px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16, backgroundColor: '#242424' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
+                <div
+                  style={{
+                    width: 34,
+                    height: 34,
+                    flexShrink: 0,
+                    borderRadius: 999,
+                    backgroundColor: `${newConstructColor}26`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <span style={{ color: newConstructColor, fontFamily: 'DM Sans, sans-serif', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>+</span>
                 </div>
-                <div>
-                  <h2 style={{ color: 'var(--color-text-primary)', fontSize: 18, fontWeight: 600, marginBottom: 4, fontFamily: 'DM Sans, sans-serif' }}>New Construct</h2>
-                  <p style={{ color: 'var(--color-text-muted)', fontSize: 13, lineHeight: 1.5, fontFamily: 'DM Sans, sans-serif' }}>
-                    Enter a name and choose a color for the new latent variable.
+                <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <h2 style={{ color: '#F5F1E7', fontSize: 16, fontWeight: 500, margin: 0, fontFamily: 'DM Sans, sans-serif', lineHeight: 1.2 }}>New Construct</h2>
+                  <p style={{ color: '#A8A8A8', fontSize: 10, margin: 0, lineHeight: 1.35, fontFamily: 'DM Sans, sans-serif' }}>
+                    Enter construct name and choose a color
                   </p>
                 </div>
               </div>
 
-              <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0, backgroundColor: C.input, borderRadius: 8, padding: '4px 12px', border: `1px solid ${C.border}` }}>
+              <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0, borderRadius: 5, padding: '9px 8px', border: '1px solid #3a3a3a', display: 'flex', alignItems: 'center' }}>
                   <input 
                     autoFocus
                     value={newConstructName}
                     onChange={e => setNewConstructName(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') handleCreateConstruct()
-                      if (e.key === 'Escape') {
-                        setShowNewConstructModal(false)
-                        setNewConstructColor(C.secondary)
-                        setHoveredNewConstructColor(null)
-                      }
+                      if (e.key === 'Escape') resetNewConstructModal()
                     }}
                     placeholder="Construct Name"
                     style={{
-                      width: '100%', height: 40, background: 'none', border: 'none', outline: 'none',
-                      color: C.text, fontSize: 14, fontFamily: 'DM Sans, sans-serif'
+                      width: '100%',
+                      background: 'none',
+                      border: 'none',
+                      outline: 'none',
+                      color: '#F5F1E7',
+                      fontSize: 12,
+                      fontFamily: 'DM Sans, sans-serif',
+                      lineHeight: 1.2,
+                      padding: 0,
                     }}
                   />
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  {SWATCH_COLORS.map((sw) => {
-                    const emphasized = newConstructColor === sw || hoveredNewConstructColor === sw
+                <div style={{ width: 108, display: 'flex', justifyContent: 'end', alignItems: 'center' }}>
+                  <div style={{ width: 94, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ height: 22, display: 'flex', alignItems: 'center', gap: 7 }}>
+                      {newConstructPalette.map((sw) => {
+                        const selectedSwatch = newConstructColor === sw
+                        const hoveredSwatch = hoveredNewConstructColor === sw
+                        return (
+                          <button
+                            key={sw}
+                            type="button"
+                            aria-label={`Select construct color ${sw}`}
+                            onClick={() => setNewConstructColor(sw)}
+                            onMouseEnter={() => setHoveredNewConstructColor(sw)}
+                            onMouseLeave={() => setHoveredNewConstructColor((current) => current === sw ? null : current)}
+                            style={{
+                              width: 16,
+                              height: 16,
+                              borderRadius: 999,
+                              backgroundColor: sw,
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transform: hoveredSwatch ? 'scale(1.08)' : 'scale(1)',
+                              transition: 'transform 0.16s ease',
+                            }}
+                          >
+                            {selectedSwatch && <Check size={9} color="#FBF9F2" weight="bold" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'end', gap: 10, padding: '7px 0' }}>
+                <div
+                  role="group"
+                  aria-label="Measurement model"
+                  style={{
+                    width: 158,
+                    height: 32,
+                    borderRadius: 999,
+                    backgroundColor: '#191919',
+                    padding: 2,
+                    display: 'flex',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.34)',
+                  }}
+                >
+                  {(['Reflective', 'Formative'] as const).map((type) => {
+                    const active = newConstructType === type
                     return (
                       <button
-                        key={sw}
-                        onClick={() => setNewConstructColor(sw)}
-                        onMouseEnter={() => setHoveredNewConstructColor(sw)}
-                        onMouseLeave={() => setHoveredNewConstructColor((current) => current === sw ? null : current)}
+                        key={type}
+                        type="button"
+                        onClick={() => setNewConstructType(type)}
                         style={{
-                          width: 18,
-                          height: 18,
-                          borderRadius: '50%',
-                          backgroundColor: sw,
-                          border: emphasized ? '2px solid rgba(255,255,255,0.9)' : '2px solid rgba(255,255,255,0.08)',
-                          boxShadow: emphasized ? `0 10px 18px ${sw}35` : '0 4px 8px rgba(0,0,0,0.18)',
-                          transform: emphasized ? 'translateY(-2px) scale(1.22)' : 'scale(1)',
-                          transition: 'transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease',
+                          flex: 1,
+                          border: 'none',
+                          borderRadius: 999,
+                          backgroundColor: active ? '#373737' : '#191919',
+                          color: active ? '#d3d3d3' : '#8F8F8F',
+                          fontSize: 10,
+                          fontWeight: 400,
+                          fontFamily: 'DM Sans, sans-serif',
                           cursor: 'pointer',
+                          boxShadow: active ? '0 2px 6px rgba(0,0,0,0.27)' : 'none',
                         }}
-                      />
+                      >
+                        {type}
+                      </button>
                     )
                   })}
                 </div>
+
+                <button
+                  type="button"
+                  aria-pressed={newConstructIsHigherOrder}
+                  onClick={() => {
+                    const nextIsHigherOrder = !newConstructIsHigherOrder
+                    const nextPalette = nextIsHigherOrder ? HOC_SWATCH_COLORS : SWATCH_COLORS
+                    setNewConstructIsHigherOrder(nextIsHigherOrder)
+                    setNewConstructColor((current) => nextPalette.includes(current) ? current : nextPalette[0])
+                    setHoveredNewConstructColor(null)
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    height: 28,
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'end',
+                    gap: 6,
+                    padding: 0,
+                    cursor: 'pointer',
+                    fontFamily: 'DM Sans, sans-serif',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 999,
+                      border: '1px solid rgb(var(--color-accent-rgb) / 0.62)',
+                      backgroundColor: newConstructIsHigherOrder ? 'var(--color-accent)' : '#191919',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {newConstructIsHigherOrder && <Check size={8} color="var(--color-on-accent)" weight="bold" />}
+                  </span>
+                  <span style={{ color: '#D7CDBC', fontSize: 10, fontWeight: 400, whiteSpace: 'nowrap' }}>Higher-order construct</span>
+                </button>
               </div>
             </div>
 
-            <div style={{ padding: '8px 24px 24px', backgroundColor: 'transparent', display: 'flex', justifyContent: 'end', gap: 12 }}>
+            <div style={{ height: 64, padding: '0 24px', backgroundColor: '#202020', display: 'flex', justifyContent: 'end', alignItems: 'center', gap: 12 }}>
               <button
-                onClick={() => {
-                  setShowNewConstructModal(false)
-                  setNewConstructColor(C.secondary)
-                  setHoveredNewConstructColor(null)
-                }}
+                onClick={resetNewConstructModal}
                 style={{
-                  padding: '10px 20px', borderRadius: 10, border: 'none', backgroundColor: 'rgba(255,255,255,0.04)',
-                  color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s',
-                  fontFamily: 'DM Sans, sans-serif'
+                  width: 92,
+                  height: 34,
+                  borderRadius: 6,
+                  border: 'none',
+                  backgroundColor: '#2B2B2B',
+                  color: '#8F8F8F',
+                  fontSize: 11,
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
                 }}
-                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'}
-                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'}
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateConstruct}
                 style={{
-                  padding: '10px 24px', borderRadius: 10, border: '1px solid rgb(var(--color-accent-rgb) / 0.42)', backgroundColor: 'var(--color-accent)',
-                  color: 'var(--color-on-accent)', fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s',
-                  fontFamily: 'DM Sans, sans-serif', boxShadow: '0 8px 18px rgb(var(--color-accent-rgb) / 0.18)'
+                  width: 108,
+                  height: 34,
+                  borderRadius: 6,
+                  border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'var(--color-on-accent)',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  boxShadow: '0 8px 18px rgb(var(--color-accent-rgb) / 0.16)',
                 }}
               >
                 Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hocPathRoleChoice && (
+        <div
+          className="fixed inset-0 z-[2100] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--color-overlay)', backdropFilter: 'blur(3px)' }}
+          onClick={triggerModalAlert}
+        >
+          <div
+            className={`overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 313,
+              backgroundColor: '#242424',
+              borderRadius: 14,
+              boxShadow: 'var(--shadow-modal)',
+            }}
+          >
+            <div style={{ padding: '18px 20px 10px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: '#242424' }}>
+              <h2 style={{ color: '#F5F1E7', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}>
+                HOC path type
+              </h2>
+              <p style={{ color: '#D7CDBC', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
+                Connect {constructs.find((construct) => construct.id === hocPathRoleChoice.locId)?.name ?? 'this construct'} as a lower-order construct, or keep this as a structural path.
+              </p>
+            </div>
+            <div style={{ padding: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: '#242424' }}>
+              <button
+                type="button"
+                onClick={createHocMeasurementPath}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'var(--color-on-accent)',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
+              >
+                Use as lower-order construct
+              </button>
+              <button
+                type="button"
+                onClick={createHocStructuralPath}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: 'none',
+                  backgroundColor: '#2B2B2B',
+                  color: '#D7CDBC',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                }}
+              >
+                Keep structural path
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hocPathConflict && (
+        <div
+          className="fixed inset-0 z-[2100] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--color-overlay)', backdropFilter: 'blur(3px)' }}
+          onClick={triggerModalAlert}
+        >
+          <div
+            className={`overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 313,
+              backgroundColor: '#242424',
+              borderRadius: 14,
+              boxShadow: 'var(--shadow-modal)',
+            }}
+          >
+            <div style={{ minHeight: 99, padding: '18px 20px 8px', display: 'flex', flexDirection: 'column', gap: 12, backgroundColor: '#242424' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 999,
+                    border: '1px solid var(--color-warning)',
+                    backgroundColor: 'rgb(var(--color-warning-rgb) / 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span style={{ color: 'var(--color-warning)', fontFamily: 'DM Sans, sans-serif', fontSize: 15, fontWeight: 800 }}>!</span>
+                </div>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <h2 style={{ color: '#F5F1E7', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}>
+                    Path direction conflict
+                  </h2>
+                  <p style={{ color: '#ffffff80', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.35 }}>
+                    Resolve the path direction before continuing.
+                  </p>
+                </div>
+              </div>
+              <p style={{ color: '#D7CDBC', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
+                {constructs.find((construct) => construct.id === hocPathConflict.hocId)?.name ?? 'This construct'} is {hocPathConflict.currentType}, but this path suggests {hocPathConflict.suggestedType}.
+              </p>
+            </div>
+            <div style={{ padding: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: '#242424' }}>
+              <button
+                type="button"
+                onClick={keepHocMeasurementType}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: 'none',
+                  backgroundColor: '#2B2B2B',
+                  color: '#D7CDBC',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                }}
+              >
+                Keep {hocPathConflict.currentType}
+              </button>
+              <button
+                type="button"
+                onClick={switchHocMeasurementType}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: 'none',
+                  backgroundColor: 'var(--color-warning)',
+                  color: '#FFFFFF',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                }}
+              >
+                Switch to {hocPathConflict.suggestedType}
               </button>
             </div>
           </div>
@@ -6017,11 +6498,24 @@ function LatentVariableSettingsModal({
   )
 }
 
-function PathSettingsModal({ path, position, onClose, onSave }: { path: Path; position: { x: number; y: number }; onClose: () => void; onSave: (p: Path) => void }) {
-  const modalWidth = 180
+function PathSettingsModal({
+  path,
+  showHocRole = false,
+  position,
+  onClose,
+  onSave,
+}: {
+  path: Path
+  showHocRole?: boolean
+  position: { x: number; y: number }
+  onClose: () => void
+  onSave: (p: Path) => void
+}) {
+  const activeHocRole = path.hocRole ?? 'measurement'
+  const modalWidth = showHocRole ? 220 : 180
   const isBottomHalf = position.y > window.innerHeight / 2
   const adjustedX = Math.min(position.x, window.innerWidth - modalWidth - 20)
-  const adjustedY = isBottomHalf ? position.y - 140 : position.y + 10
+  const adjustedY = isBottomHalf ? position.y - (showHocRole ? 230 : 140) : position.y + 10
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000 }} onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }}>
@@ -6034,6 +6528,40 @@ function PathSettingsModal({ path, position, onClose, onSave }: { path: Path; po
         }} 
         onClick={e => e.stopPropagation()}
       >
+        {showHocRole && (
+          <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 8, padding: '0 4px', textTransform: 'uppercase', fontFamily: 'DM Sans, sans-serif' }}>HOC Relationship</div>
+            {(['measurement', 'structural'] as HocPathRole[]).map((role) => {
+              const isActive = activeHocRole === role
+              return (
+                <button
+                  key={role}
+                  onClick={() => {
+                    onSave({ ...path, hocRole: role })
+                    onClose()
+                  }}
+                  style={{
+                    width: '100%', padding: '8px', borderRadius: 6, border: 'none',
+                    backgroundColor: isActive ? 'rgb(var(--color-accent-rgb) / 0.15)' : 'transparent',
+                    color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                    textAlign: 'left', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'DM Sans, sans-serif'
+                  }}
+                >
+                  <div style={{
+                    width: 24, height: 24, borderRadius: 4,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: isActive ? 'rgb(var(--color-accent-rgb) / 0.1)' : C.floatingIconBg,
+                    color: isActive ? 'var(--color-accent)' : 'var(--color-text-muted)'
+                  }}>
+                    {role === 'measurement' ? <TreeStructure size={14} weight={isActive ? 'bold' : 'regular'} /> : <ArrowRight size={14} weight={isActive ? 'bold' : 'regular'} />}
+                  </div>
+                  {role === 'measurement' ? 'Lower-order construct' : 'Structural path'}
+                </button>
+              )
+            })}
+            <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: '8px 4px 10px' }} />
+          </>
+        )}
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 8, padding: '0 4px', textTransform: 'uppercase', fontFamily: 'DM Sans, sans-serif' }}>Connector Style</div>
         {(['straight', 'curved', 'rightangle'] as const).map(s => {
           const Icon = s === 'straight' ? ArrowRight : s === 'curved' ? BezierCurve : ArrowElbowRight

@@ -11,13 +11,13 @@ const css = await fs.readFile(path.join(workspaceRoot, 'src/index.css'), 'utf8')
 
 assert.match(
   css,
-  /--color-warning-rgb:\s*183 146 63;/,
+  /--color-warning-rgb:\s*220 105 115;/,
   'Dark theme should expose warning RGB values for transparent warning UI.'
 )
 
 assert.match(
   css,
-  /\[data-theme='light'\][\s\S]*--color-warning-rgb:\s*155 122 46;/,
+  /\[data-theme='light'\][\s\S]*--color-warning-rgb:\s*220 105 115;/,
   'Light theme should expose warning RGB values for transparent warning UI.'
 )
 

@@ -9,6 +9,7 @@ import {
   NotePencil,
   CaretRight,
   Check,
+  CopySimple,
 } from '@phosphor-icons/react'
 import AppLogo from './AppLogo'
 import { APP_BRAND_NAME } from '../config/appBranding'
@@ -383,10 +384,10 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
 
   return (
     <div
-      className="flex items-center shrink-0 select-none drag-region"
+      className="flex items-center shrink-0 select-none drag-region relative z-50"
       style={{
         height: 36,
-        padding: '0 16px',
+        padding: '0 0 0 16px',
         gap: 24,
         borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
         ...(theme === 'Light'
@@ -518,10 +519,8 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
 
       {/* Window controls */}
       <div
-        className="flex items-center no-drag"
+        className="flex h-full items-center no-drag"
         style={{
-          gap: 2,
-          marginRight: 2,
           ...({ WebkitAppRegion: 'no-drag' } as any),
         }}
       >
@@ -529,79 +528,44 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
           onClick={() => window.electronAPI?.minimize()}
           title="Minimize"
           aria-label="Minimize window"
-          className="group flex h-[20px] w-[20px] items-center justify-center rounded-full transition-all duration-200 ease-out focus-visible:outline-none"
+          className={`flex h-9 w-[46px] items-center justify-center rounded-none bg-transparent transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.86)] hover:text-[var(--color-text-primary)] focus-visible:bg-[rgb(var(--color-hover-rgb)/0.95)] focus-visible:text-[var(--color-text-primary)] focus-visible:outline-none ${theme === 'Light' ? 'text-[#202124]' : 'text-[#F4F4F5]'}`}
           style={{
             margin: 0,
             padding: 0,
             border: 'none',
-            background: 'transparent',
           }}
         >
-          <span
-            className="flex h-[14px] w-[14px] items-center justify-center rounded-full transition-all duration-200 ease-out group-hover:scale-[1.04] group-hover:brightness-105 group-focus-visible:scale-[1.04]"
-            style={{
-              border: '1px solid #67676B',
-              background: 'linear-gradient(180deg, #808085 0%, #626267 100%)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
-              color: '#E2E2E5',
-            }}
-          >
-            <Minus size={8} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-          </span>
+          <Minus size={15} weight="bold" color="currentColor" />
         </button>
         <button
           onClick={() => window.electronAPI?.maximize()}
           title={isMaximized ? 'Restore' : 'Maximize'}
           aria-label={isMaximized ? 'Restore window' : 'Maximize window'}
-          className="group flex h-[20px] w-[20px] items-center justify-center rounded-full transition-all duration-200 ease-out focus-visible:outline-none"
+          className={`flex h-9 w-[46px] items-center justify-center rounded-none bg-transparent transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.86)] hover:text-[var(--color-text-primary)] focus-visible:bg-[rgb(var(--color-hover-rgb)/0.95)] focus-visible:text-[var(--color-text-primary)] focus-visible:outline-none ${theme === 'Light' ? 'text-[#202124]' : 'text-[#F4F4F5]'}`}
           style={{
-            marginRight: 0,
+            margin: 0,
             padding: 0,
             border: 'none',
-            background: 'transparent',
           }}
         >
-          <span
-            className="flex h-[14px] w-[14px] items-center justify-center rounded-full transition-all duration-200 ease-out group-hover:scale-[1.04] group-hover:brightness-105 group-focus-visible:scale-[1.04]"
-            style={{
-              border: '1px solid #B99B78',
-              background: isMaximized
-                ? 'linear-gradient(180deg, #DABFA1 0%, #BB9369 100%)'
-                : 'linear-gradient(180deg, #DABFA1 0%, #BB9369 100%)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
-              color: '#473120',
-            }}
-          >
-            {isMaximized ? (
-              <CornersIn size={8} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-            ) : (
-              <Square size={7} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-            )}
-          </span>
+          {isMaximized ? (
+            <CopySimple size={15} weight="bold" color="currentColor" />
+          ) : (
+            <Square size={14} weight="bold" color="currentColor" />
+          )}
         </button>
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'quit-app' } }))}
           title="Close"
           aria-label="Close window"
-          className="group flex h-[20px] w-[20px] items-center justify-center rounded-full transition-all duration-200 ease-out focus-visible:outline-none"
+          className={`flex h-9 w-[46px] items-center justify-center rounded-none bg-transparent transition-colors hover:bg-[var(--color-warning)] hover:text-white focus-visible:bg-[var(--color-warning)] focus-visible:text-white focus-visible:outline-none ${theme === 'Light' ? 'text-[#202124]' : 'text-[#F4F4F5]'}`}
           style={{
-            marginRight: 0,
+            margin: 0,
             padding: 0,
             border: 'none',
-            background: 'transparent',
           }}
         >
-          <span
-            className="flex h-[14px] w-[14px] items-center justify-center rounded-full transition-all duration-200 ease-out group-hover:scale-[1.04] group-hover:brightness-105 group-focus-visible:scale-[1.04]"
-            style={{
-              border: '1px solid #92516E',
-              background: 'linear-gradient(180deg, #B17391 0%, #7B3554 100%)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
-              color: '#F3D7E2',
-            }}
-          >
-            <X size={8} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-          </span>
+          <X size={15} weight="bold" color="currentColor" />
         </button>
       </div>
     </div>
