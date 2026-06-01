@@ -108,8 +108,8 @@ assert.match(
 
 assert.match(
   plumberSource,
-  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*9L\s*\)\s*2L\s*else\s*1L[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
-  'R backend should reserve two cores above 9 detected cores and one core at 9 or fewer detected cores.'
+  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s*if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
+  'R backend should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.'
 )
 
 console.log('PASS launch dataset flow static guards')

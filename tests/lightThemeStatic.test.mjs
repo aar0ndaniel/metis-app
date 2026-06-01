@@ -18,7 +18,7 @@ const electronMain = await readSource('electron/main.ts')
 assert.match(
   indexCss,
   /\[data-theme='light'\][\s\S]*--color-accent:\s*#87976B;/,
-  'Light theme should use the secondary green as the accent token.'
+  'Light theme Default accent should use olive green.'
 )
 
 assert.match(

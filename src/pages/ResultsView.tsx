@@ -1605,18 +1605,29 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
-const EXPORT_CONSTRUCT_COLOR = '#87976B'
-const EXPORT_CONSTRUCT_STROKE_COLOR = '#65744F'
-const EXPORT_INDICATOR_COLOR = '#C6A24B'
-const EXPORT_INDICATOR_STROKE_COLOR = '#9B7A2E'
 const EXPORT_DIAGRAM_TEXT_COLOR = '#1A1F2B'
 const EXPORT_DIAGRAM_MUTED_COLOR = '#5F6978'
 const EXPORT_DIAGRAM_BORDER_COLOR = '#D7DDE6'
 const EXPORT_DIAGRAM_SURFACE_COLOR = '#FFFFFF'
 
+interface ExportAccent {
+  color: string
+  rgb: string
+  onAccent: string
+}
+
+function getCurrentExportAccent(): ExportAccent {
+  const styles = typeof window !== 'undefined' ? window.getComputedStyle(document.documentElement) : null
+  const color = styles?.getPropertyValue('--color-accent').trim() || '#2F8FB3'
+  const rgb = styles?.getPropertyValue('--color-accent-rgb').trim() || '47 143 179'
+  const onAccent = styles?.getPropertyValue('--color-on-accent').trim() || '#FFFFFF'
+  return { color, rgb, onAccent }
+}
+
 function buildPathDiagramSvg(
   model: { constructs: CanvasConstruct[]; paths: CanvasPath[] } | null,
   diagramResults: import('../components/PathDiagram').DiagramResults,
+  exportAccent: ExportAccent,
 ): string {
   if (!model?.constructs?.length) {
     return `<div style="padding:24px;color:${EXPORT_DIAGRAM_MUTED_COLOR}">No saved path diagram available.</div>`
@@ -1629,17 +1640,20 @@ function buildPathDiagramSvg(
   const indicatorEntries: Array<{
     constructId: string
     constructName: string
+    constructColor: string
     name: string
     ix: number
     iy: number
     labelW: number
+    labelH: number
+    labelT?: number
   }> = []
 
   constructs.forEach((c) => {
     if (c.folded) return
     c.indicators.forEach((ind, i) => {
-      const { ix, iy, labelW } = getResultsIndicatorLayout(c, ind, i)
-      indicatorEntries.push({ constructId: c.id, constructName: c.name, name: ind.name, ix, iy, labelW })
+      const { ix, iy, labelW, labelH } = getResultsIndicatorLayout(c, ind, i)
+      indicatorEntries.push({ constructId: c.id, constructName: c.name, constructColor: c.color, name: ind.name, ix, iy, labelW, labelH, labelT: ind.labelT })
     })
   })
 
@@ -1651,8 +1665,8 @@ function buildPathDiagramSvg(
   const allY = [
     ...constructs.map(c => c.y - c.radius - 5),
     ...constructs.map(c => c.y + c.radius + 5),
-    ...indicatorEntries.map(i => i.iy - RESULTS_INDICATOR_LABEL_H / 2),
-    ...indicatorEntries.map(i => i.iy + RESULTS_INDICATOR_LABEL_H / 2),
+    ...indicatorEntries.map(i => i.iy - i.labelH / 2),
+    ...indicatorEntries.map(i => i.iy + i.labelH / 2),
   ]
   const PAD = 80
   const vbMinX = Math.min(...allX) - PAD
@@ -1663,16 +1677,16 @@ function buildPathDiagramSvg(
   const markerDefs = `
     <defs>
       <marker id="exp-arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-        <polygon points="0 0,8 3,0 6" fill="${EXPORT_CONSTRUCT_COLOR}"></polygon>
+        <polygon points="0 0,8 3,0 6" fill="${exportAccent.color}"></polygon>
       </marker>
       <marker id="exp-arr-measure" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-        <polygon points="0 0,8 3,0 6" fill="${EXPORT_INDICATOR_COLOR}"></polygon>
+        <polygon points="0 0,8 3,0 6" fill="context-stroke"></polygon>
       </marker>
     </defs>
   `
 
   // Draws a split arrow with a gap for the label
-  const arrowPathSplit = (from: CanvasConstruct, to: CanvasConstruct, gap = 32): [string, string, {x: number, y: number}] => {
+  const arrowPathSplit = (from: CanvasConstruct, to: CanvasConstruct, gap = 32, labelT = 0.5): [string, string, {x: number, y: number}] => {
     const dx = to.x - from.x
     const dy = to.y - from.y
     const dist = Math.sqrt(dx * dx + dy * dy)
@@ -1683,8 +1697,9 @@ function buildPathDiagramSvg(
     const startY = from.y + uy * from.radius
     const endX = to.x - ux * to.radius
     const endY = to.y - uy * to.radius
-    const midX = (startX + endX) / 2
-    const midY = (startY + endY) / 2
+    const t = clampResultsLabelT(labelT)
+    const midX = startX + (endX - startX) * t
+    const midY = startY + (endY - startY) * t
     // Move gap/2 away from midpoint in both directions
     const gapUx = ux * (gap / 2)
     const gapUy = uy * (gap / 2)
@@ -1752,13 +1767,14 @@ function buildPathDiagramSvg(
     const startX = c.x + (ux / dist) * r
     const startY = c.y + (uy / dist) * r
     let ix = ind.ix, iy = ind.iy
-    if      (dir === 'top')    iy += RESULTS_INDICATOR_LABEL_H / 2
-    else if (dir === 'bottom') iy -= RESULTS_INDICATOR_LABEL_H / 2
+    if      (dir === 'top')    iy += ind.labelH / 2
+    else if (dir === 'bottom') iy -= ind.labelH / 2
     else if (dir === 'left')   ix += ind.labelW / 2
     else if (dir === 'right')  ix -= ind.labelW / 2
     // Split at midpoint for label
-    const midX = (startX + ix) / 2
-    const midY = (startY + iy) / 2
+    const labelT = clampResultsLabelT(ind.labelT)
+    const midX = startX + (ix - startX) * labelT
+    const midY = startY + (iy - startY) * labelT
     const gap = 24
     const gapUx = (ix - startX) / dist * (gap / 2)
     const gapUy = (iy - startY) / dist * (gap / 2)
@@ -1769,18 +1785,18 @@ function buildPathDiagramSvg(
     const path1 = `M${startX},${startY} L${seg1X},${seg1Y}`
     const path2 = `M${seg2X},${seg2Y} L${ix},${iy}`
     const val = measurementMap[`${c.name}::${ind.name}`]?.loading
-    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="9" fill="${EXPORT_INDICATOR_STROKE_COLOR}">${(val as number).toFixed(getDecimals())}</text>` : ''
-    return `<g><path d="${path1}" stroke="${EXPORT_INDICATOR_COLOR}" stroke-width="1.2" fill="none"></path><path d="${path2}" stroke="${EXPORT_INDICATOR_COLOR}" stroke-width="1.2" fill="none" marker-end="url(#exp-arr-measure)"></path>${txt}</g>`
+    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="9" fill="${exportAccent.color}">${(val as number).toFixed(getDecimals())}</text>` : ''
+    return `<g><path d="${path1}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none"></path><path d="${path2}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none" marker-end="url(#exp-arr-measure)"></path>${txt}</g>`
   }).join('')
 
   const pathSvg = paths.map((p) => {
     const from = byId[p.from]
     const to = byId[p.to]
     if (!from || !to) return ''
-    const [path1, path2, mid] = arrowPathSplit(from, to, 40)
+    const [path1, path2, mid] = arrowPathSplit(from, to, 40, p.labelT)
     const pathVal = diagramResults.pathResults?.[`${from.name}-${to.name}`]?.coef
-    const txt = Number.isFinite(pathVal as number) ? `<text x="${mid.x}" y="${mid.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${EXPORT_CONSTRUCT_STROKE_COLOR}">${(pathVal as number).toFixed(getDecimals())}</text>` : ''
-    return `<g><path d="${path1}" stroke="${EXPORT_CONSTRUCT_COLOR}" stroke-width="1.8" fill="none"></path><path d="${path2}" stroke="${EXPORT_CONSTRUCT_COLOR}" stroke-width="1.8" fill="none" marker-end="url(#exp-arr)"></path>${txt}</g>`
+    const txt = Number.isFinite(pathVal as number) ? `<text x="${mid.x}" y="${mid.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${exportAccent.color}">${(pathVal as number).toFixed(getDecimals())}</text>` : ''
+    return `<g><path d="${path1}" stroke="${exportAccent.color}" stroke-width="1.8" fill="none"></path><path d="${path2}" stroke="${exportAccent.color}" stroke-width="1.8" fill="none" marker-end="url(#exp-arr)"></path>${txt}</g>`
   }).join('')
 
   const constructSvg = constructs.map((c) => {
@@ -1791,7 +1807,7 @@ function buildPathDiagramSvg(
       : ''
     return `
       <g>
-        <circle cx="${c.x}" cy="${c.y}" r="${c.radius}" fill="${EXPORT_CONSTRUCT_COLOR}" stroke="${EXPORT_CONSTRUCT_STROKE_COLOR}" stroke-width="2"></circle>
+        <circle cx="${c.x}" cy="${c.y}" r="${c.radius}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></circle>
         ${r2Text}
         <text x="${c.x}" y="${c.y + c.radius + 18}" text-anchor="middle" font-size="12" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(c.name)}</text>
       </g>
@@ -1800,8 +1816,8 @@ function buildPathDiagramSvg(
 
   const indicatorBoxes = indicatorEntries.map((ind) => `
     <g>
-      <rect x="${ind.ix - ind.labelW / 2}" y="${ind.iy - RESULTS_INDICATOR_LABEL_H / 2}" width="${ind.labelW}" height="${RESULTS_INDICATOR_LABEL_H}" rx="4" fill="${EXPORT_INDICATOR_COLOR}" stroke="${EXPORT_INDICATOR_STROKE_COLOR}" stroke-width="1"></rect>
-      <text x="${ind.ix}" y="${ind.iy + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(ind.name)}</text>
+      <rect x="${ind.ix - ind.labelW / 2}" y="${ind.iy - ind.labelH / 2}" width="${ind.labelW}" height="${ind.labelH}" rx="4" fill="${ind.constructColor}24" stroke="${ind.constructColor}" stroke-width="1"></rect>
+      <text x="${ind.ix}" y="${ind.iy + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}" textLength="${Math.max(8, ind.labelW - 10)}" lengthAdjust="spacingAndGlyphs">${escapeHtml(ind.name)}</text>
     </g>
   `).join('')
 
@@ -1936,13 +1952,13 @@ function SidebarSectionComponent({
 interface CanvasConstruct {
   id: string; name: string; type: 'Reflective' | 'Formative'
   color: string; x: number; y: number; radius: number
-  indicators: { name: string; loading: number; ox?: number; oy?: number }[]
+  indicators: { name: string; loading: number; ox?: number; oy?: number; labelT?: number }[]
   indicatorDirection?: 'top' | 'right' | 'bottom' | 'left'
   indicatorAlignment?: 'top' | 'right' | 'bottom' | 'left'
   folded?: boolean
   isHigherOrder?: boolean
 }
-interface CanvasPath { id: string; from: string; to: string; kind?: 'direct' | 'moderation'; targetPathId?: string; hocRole?: HocPathRole }
+interface CanvasPath { id: string; from: string; to: string; kind?: 'direct' | 'moderation'; targetPathId?: string; hocRole?: HocPathRole; labelT?: number }
 
 const METIS_STORAGE_PREFIX = 'metis:'
 const LEGACY_STORAGE_PREFIX = 'pls:'
@@ -1950,6 +1966,8 @@ const RESULTS_INDICATOR_STEP = 60
 const RESULTS_INDICATOR_EDGE_GAP = 60
 const RESULTS_INDICATOR_LABEL_H = 22
 const RESULTS_MIN_INDICATOR_LABEL_W = 44
+const RESULTS_MIN_LABEL_T = 0.12
+const RESULTS_MAX_LABEL_T = 0.88
 
 function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
@@ -1984,11 +2002,23 @@ function resetResultsIndicatorLayout(construct: CanvasConstruct, nextAlignment: 
   }
 }
 
+function clampResultsLabelT(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0.5
+  return Math.max(RESULTS_MIN_LABEL_T, Math.min(RESULTS_MAX_LABEL_T, value as number))
+}
+
+function getResultsIndicatorDimensions(indicator: { name: string }): { labelW: number; labelH: number } {
+  return {
+    labelW: Math.max(RESULTS_MIN_INDICATOR_LABEL_W, indicator.name.length * 7 + 16),
+    labelH: RESULTS_INDICATOR_LABEL_H,
+  }
+}
+
 function getResultsIndicatorLayout(construct: CanvasConstruct, indicator: { name: string; ox?: number; oy?: number }, index: number, includeOffsets = true) {
   const dir = construct.indicatorAlignment || construct.indicatorDirection || 'bottom'
-  const labelW = Math.max(RESULTS_MIN_INDICATOR_LABEL_W, indicator.name.length * 7 + 16)
+  const { labelW, labelH } = getResultsIndicatorDimensions(indicator)
   const offset = (index - (construct.indicators.length - 1) / 2) * RESULTS_INDICATOR_STEP
-  const centerGap = construct.radius + RESULTS_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : RESULTS_INDICATOR_LABEL_H / 2)
+  const centerGap = construct.radius + RESULTS_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
 
   let ix = construct.x
   let iy = construct.y
@@ -2011,7 +2041,7 @@ function getResultsIndicatorLayout(construct: CanvasConstruct, indicator: { name
     iy += indicator.oy || 0
   }
 
-  return { ix, iy, labelW, labelH: RESULTS_INDICATOR_LABEL_H, dir }
+  return { ix, iy, labelW, labelH, dir }
 }
 
 function readModelSnapshotFromWorkspaceCache(modelId?: string): { constructs: CanvasConstruct[]; paths: CanvasPath[] } | null {
@@ -2122,6 +2152,8 @@ function DiagramCanvas({
   type DiagramInteraction =
     | { type: 'drag'; startX: number; startY: number; items: DiagramDragItem[] }
     | { type: 'resize'; id: string; centerX: number; centerY: number }
+    | { type: 'pathLabel'; pathId: string }
+    | { type: 'indicatorLabel'; constructId: string; indicatorName: string }
 
   const interactionRef = useRef<DiagramInteraction | null>(null)
   const isPanning  = useRef(false)
@@ -2271,10 +2303,14 @@ function DiagramCanvas({
     }))
   }, [])
 
-  const commitModelChange = useCallback((updater: (constructs: CanvasConstruct[]) => CanvasConstruct[]) => {
+  const commitModelChange = useCallback((
+    updater: (constructs: CanvasConstruct[]) => CanvasConstruct[],
+    pathUpdater?: (paths: CanvasPath[]) => CanvasPath[],
+  ) => {
     if (!onModelChange) return
     const nextConstructs = updater(cloneConstructs(canvasConstructs))
-    const nextPaths = (canvasPaths ?? []).map((path) => ({ ...path }))
+    const clonedPaths = (canvasPaths ?? []).map((path) => ({ ...path }))
+    const nextPaths = pathUpdater ? pathUpdater(clonedPaths) : clonedPaths
     onModelChange({ constructs: nextConstructs, paths: nextPaths })
   }, [canvasConstructs, canvasPaths, cloneConstructs, onModelChange])
 
@@ -2475,6 +2511,22 @@ function DiagramCanvas({
     document.body.style.cursor = 'nwse-resize'
   }, [canvasConstructs])
 
+  const handlePathLabelMouseDown = useCallback((pathId: string, e: React.MouseEvent<SVGGElement>) => {
+    if (e.button === 2) return
+    e.preventDefault()
+    e.stopPropagation()
+    interactionRef.current = { type: 'pathLabel', pathId }
+    document.body.style.cursor = 'grabbing'
+  }, [])
+
+  const handleIndicatorLabelMouseDown = useCallback((constructId: string, indicatorName: string, e: React.MouseEvent<SVGGElement>) => {
+    if (e.button === 2) return
+    e.preventDefault()
+    e.stopPropagation()
+    interactionRef.current = { type: 'indicatorLabel', constructId, indicatorName }
+    document.body.style.cursor = 'grabbing'
+  }, [])
+
   useEffect(() => {
     const handleMove = (e: MouseEvent) => {
       const interaction = interactionRef.current
@@ -2519,6 +2571,50 @@ function DiagramCanvas({
           return
         }
 
+        if (interaction.type === 'pathLabel') {
+          const path = (canvasPaths ?? []).find((item) => item.id === interaction.pathId)
+          const from = (canvasConstructs ?? []).find((item) => item.id === path?.from)
+          const to = (canvasConstructs ?? []).find((item) => item.id === path?.to)
+          if (!path || !from || !to) return
+          const dx = to.x - from.x
+          const dy = to.y - from.y
+          const lengthSq = dx * dx + dy * dy
+          const nextT = lengthSq > 0
+            ? clampResultsLabelT(((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSq)
+            : 0.5
+          commitModelChange(
+            (constructs) => constructs,
+            (paths) => paths.map((item) => item.id === interaction.pathId ? { ...item, labelT: nextT } : item),
+          )
+          return
+        }
+
+        if (interaction.type === 'indicatorLabel') {
+          const construct = (canvasConstructs ?? []).find((item) => item.id === interaction.constructId)
+          const indicatorIndex = construct?.indicators.findIndex((item) => item.name === interaction.indicatorName) ?? -1
+          const indicator = construct && indicatorIndex >= 0 ? construct.indicators[indicatorIndex] : null
+          if (!construct || !indicator) return
+          const layout = getResultsIndicatorLayout(construct, indicator, indicatorIndex)
+          const dx = layout.ix - construct.x
+          const dy = layout.iy - construct.y
+          const lengthSq = dx * dx + dy * dy
+          const nextT = lengthSq > 0
+            ? clampResultsLabelT(((point.x - construct.x) * dx + (point.y - construct.y) * dy) / lengthSq)
+            : 0.5
+          commitModelChange((constructs) => constructs.map((item) => (
+            item.id === interaction.constructId
+              ? {
+                  ...item,
+                  indicators: item.indicators.map((candidate) => (
+                    candidate.name === interaction.indicatorName ? { ...candidate, labelT: nextT } : candidate
+                  )),
+                }
+              : item
+          )))
+          return
+        }
+
+        if (interaction.type !== 'resize') return
         const nextRadius = Math.max(26, Math.min(140, Math.hypot(point.x - interaction.centerX, point.y - interaction.centerY)))
         commitModelChange((constructs) => constructs.map((construct) => (
           construct.id === interaction.id
@@ -2547,7 +2643,7 @@ function DiagramCanvas({
       document.removeEventListener('mousemove', handleMove)
       document.removeEventListener('mouseup', handleUp)
     }
-  }, [commitModelChange, getSvgPoint, onPanChange])
+  }, [canvasConstructs, canvasPaths, commitModelChange, getSvgPoint, onPanChange])
 
   // Wheel: Ctrl/pinch = zoom, plain = pan
   useEffect(() => {
@@ -2602,6 +2698,8 @@ function DiagramCanvas({
           hoveredConstructId={hoveredConstructId}
           onConstructMouseDown={handleConstructMouseDown}
           onIndicatorMouseDown={handleIndicatorMouseDown}
+          onPathLabelMouseDown={handlePathLabelMouseDown}
+          onIndicatorLabelMouseDown={handleIndicatorLabelMouseDown}
           onResizeMouseDown={handleResizeMouseDown}
           onConstructContextMenu={handleConstructContextMenu}
           onConstructHover={setHoveredConstructId}
@@ -4858,7 +4956,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
   const handleExportHtml = useCallback(async () => {
     try {
       const electronAPI = (window as any).electronAPI
-      if (!electronAPI?.writeFile || !electronAPI?.getDataPath || !electronAPI?.openPath) {
+      if (!electronAPI?.writeFile || !electronAPI?.getStoragePaths || !electronAPI?.openPath) {
         dispatchToast('error', 'Export HTML is available in the Electron desktop app only.')
         return
       }
@@ -4884,7 +4982,8 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
       ]
 
       const diagramResults = buildDiagramResults(analysisResults, savedModel?.constructs, savedModel?.paths)
-      const pathDiagramHtml = buildPathDiagramSvg(savedModel, diagramResults)
+      const exportAccent = getCurrentExportAccent()
+      const pathDiagramHtml = buildPathDiagramSvg(savedModel, diagramResults, exportAccent)
 
       const navHtml = tabSections.map((section) => {
         const heading = section.title ? `<div class="group-title">${escapeHtml(section.title)}</div>` : ''
@@ -5013,7 +5112,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>metis Results - ${escapeHtml(modelName)}</title>
   <style>
-    :root { --bg:#F4F6F8; --card:#FFFFFF; --line:#D7DDE6; --text:#1A1F2B; --muted:#5F6978; --brand:#87976B; --indicator:#C6A24B; --color-page:#F4F6F8; --color-page-rgb:244 246 248; --color-surface:#FFFFFF; --color-surface-rgb:255 255 255; --color-elevated:#FFFFFF; --color-elevated-rgb:255 255 255; --color-border:#D7DDE6; --color-border-rgb:215 221 230; --color-text-primary:#1A1F2B; --color-text-primary-rgb:26 31 43; --color-text-secondary:#5F6978; --color-text-secondary-rgb:95 105 120; --color-text-muted:#8A94A5; --color-text-muted-rgb:138 148 165; --color-on-accent:#181818; --color-accent:#87976B; --color-accent-rgb:135 151 107; --color-success:#87976B; --color-warning:#9B7A2E; --color-danger:#C65D44; }
+    :root { --bg:#F4F6F8; --card:#FFFFFF; --line:#D7DDE6; --text:#1A1F2B; --muted:#5F6978; --brand:${exportAccent.color}; --indicator:${exportAccent.color}; --color-page:#F4F6F8; --color-page-rgb:244 246 248; --color-surface:#FFFFFF; --color-surface-rgb:255 255 255; --color-elevated:#FFFFFF; --color-elevated-rgb:255 255 255; --color-border:#D7DDE6; --color-border-rgb:215 221 230; --color-text-primary:#1A1F2B; --color-text-primary-rgb:26 31 43; --color-text-secondary:#5F6978; --color-text-secondary-rgb:95 105 120; --color-text-muted:#8A94A5; --color-text-muted-rgb:138 148 165; --color-on-accent:${exportAccent.onAccent}; --color-accent:${exportAccent.color}; --color-accent-rgb:${exportAccent.rgb}; --color-success:${exportAccent.color}; --color-warning:#C65D44; --color-danger:#C65D44; }
     * { box-sizing: border-box; }
     body { margin:0; font-family: Inter, Segoe UI, Arial, sans-serif; background: var(--bg); color: var(--text); }
     .app { display:flex; height:100vh; overflow:hidden; }
@@ -5025,7 +5124,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     .model-name { color:var(--muted); font-size:12px; margin:4px 0 16px 38px; word-break:break-word; }
     .group-title { margin:14px 8px 6px; color:var(--muted); font-size:11px; text-transform:uppercase; font-weight:700; letter-spacing:.5px; }
     .nav-item { display:block; width:100%; text-align:left; border:0; background:transparent; color:var(--color-on-accent); border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; margin:2px 0; text-decoration:none; }
-    .nav-item:hover { background:rgba(135,151,107,0.08); }
+    .nav-item:hover { background:rgb(var(--color-accent-rgb) / 0.08); }
     .nav-item.active { background:rgb(var(--color-accent-rgb) / 0.16); color:var(--color-on-accent); font-weight:700; }
     .content { flex:1; padding:18px; overflow:auto; height:100vh; }
     .result-section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; scroll-margin-top:10px; }
@@ -5033,8 +5132,8 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     h2 { margin:0; font-size:18px; flex:1; }
     .copy-table-button { width:30px; height:30px; display:grid; place-items:center; border:1px solid var(--line); border-radius:8px; background:#FFFFFF; color:var(--muted); cursor:pointer; transition:background .15s ease,color .15s ease,border-color .15s ease; }
     .copy-table-button svg { width:15px; height:15px; display:block; }
-    .copy-table-button:hover { color:var(--text); background:rgba(135,151,107,0.08); border-color:rgba(135,151,107,0.35); }
-    .copy-table-button.copied { color:var(--brand); border-color:rgba(135,151,107,0.55); background:rgba(135,151,107,0.12); }
+    .copy-table-button:hover { color:var(--text); background:rgb(var(--color-accent-rgb) / 0.08); border-color:rgb(var(--color-accent-rgb) / 0.35); }
+    .copy-table-button.copied { color:var(--brand); border-color:rgb(var(--color-accent-rgb) / 0.55); background:rgb(var(--color-accent-rgb) / 0.12); }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:10px; }
     table { border-collapse: collapse; width:100%; font-size:12px; }
     th, td { border-bottom:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
@@ -5043,8 +5142,8 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     .empty { color:var(--muted); font-size:13px; padding:12px; border:1px dashed var(--line); border-radius:10px; background:#FFFFFF; }
     .exec-log { margin:0; background:#F8FAFC; border:1px solid var(--line); border-radius:10px; padding:12px; font-size:12px; white-space:pre-wrap; }
     .badge { display:inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-    .badge.reflective { background: rgba(135,151,107,0.15); color: var(--brand); border: 1px solid rgba(135,151,107,0.3); }
-    .badge.formative { background: rgba(198,162,75,0.15); color: var(--indicator); border: 1px solid rgba(198,162,75,0.3); }
+    .badge.reflective { background: rgb(var(--color-accent-rgb) / 0.15); color: var(--brand); border: 1px solid rgb(var(--color-accent-rgb) / 0.3); }
+    .badge.formative { background: rgb(var(--color-accent-rgb) / 0.15); color: var(--indicator); border: 1px solid rgb(var(--color-accent-rgb) / 0.3); }
   </style>
 </head>
 <body>
@@ -5279,12 +5378,13 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
 </body>
 </html>`
 
-      const dataPathResult = await electronAPI.getDataPath()
-      const dataPath = dataPathResult?.path || dataPathResult?.dataPath
-      if (!dataPath) throw new Error('Could not resolve app data path for export')
+      const storagePathsResult = await electronAPI.getStoragePaths()
+      const exportPath = storagePathsResult?.exportPath || storagePathsResult?.dataPath
+      if (!exportPath) throw new Error('Could not resolve app export path')
 
       const safeModel = String(modelName).replace(/[^a-zA-Z0-9-_]+/g, '_').slice(0, 40) || 'model'
-      const filePath = `${String(dataPath).replace(/\\/g, '/')}/exports/metis-${safeModel}-${Date.now()}.html`
+      const exportRoot = String(exportPath).replace(/\\/g, '/').replace(/\/+$/, '')
+      const filePath = `${exportRoot}/metis-${safeModel}-${Date.now()}.html`
 
       const writeRes = await electronAPI.writeFile({
         filePath,

@@ -380,14 +380,14 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
   ]
 
   const logoVariant = theme === 'Light' ? 'black' : 'white'
-  const showTitleBarDivider = currentScreen === 'canvas'
+  const showTitleBarDivider = false
 
   return (
     <div
       className="flex items-center shrink-0 select-none drag-region relative z-50"
       style={{
         height: 36,
-        padding: '0 0 0 16px',
+        padding: '0 16px',
         gap: 24,
         borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
         ...(theme === 'Light'
@@ -467,9 +467,9 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
                     left: '50%',
                     width: 12,
                     height: 12,
-                    backgroundColor: 'rgba(135,151,107,0.95)',
-                    borderLeft: '1px solid rgba(173,192,141,0.4)',
-                    borderTop: '1px solid rgba(173,192,141,0.4)',
+                    backgroundColor: 'rgb(var(--color-accent-rgb) / 0.95)',
+                    borderLeft: '1px solid rgb(var(--color-accent-rgb) / 0.4)',
+                    borderTop: '1px solid rgb(var(--color-accent-rgb) / 0.4)',
                     transform: 'translateX(-50%) rotate(45deg)',
                     borderTopLeftRadius: 2,
                   }}
@@ -478,13 +478,13 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
                   className="flex items-center gap-2 rounded-[10px] px-3 py-2"
                   style={{
                     minWidth: 244,
-                    background: 'rgba(135,151,107,0.95)',
-                    border: '1px solid rgba(173,192,141,0.38)',
-                    color: '#10150B',
+                    background: 'rgb(var(--color-accent-rgb) / 0.95)',
+                    border: '1px solid rgb(var(--color-accent-rgb) / 0.38)',
+                    color: 'var(--color-on-accent)',
                     boxShadow: '0 12px 28px rgba(0,0,0,0.28)',
                   }}
                 >
-                  <HandPointing size={14} weight="fill" color="#10150B" />
+                  <HandPointing size={14} weight="fill" color="var(--color-on-accent)" />
                   <span
                     style={{
                       fontFamily: 'Inter, DM Sans, sans-serif',

@@ -13,7 +13,7 @@ interface AppLogoProps {
 
 const AppLogo: React.FC<AppLogoProps> = ({ 
   size = 24, 
-  color = '#87976B',
+  color = 'var(--color-accent)',
   variant,
   className, 
   style 

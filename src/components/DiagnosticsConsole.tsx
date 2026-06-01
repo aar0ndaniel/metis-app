@@ -74,7 +74,7 @@ function levelColor(level: DiagnosticEntry['level']): string {
 }
 
 function categoryTint(category: DiagnosticEntry['category']): string {
-  if (category === 'calculation') return 'rgba(135,151,107,0.18)'
+  if (category === 'calculation') return 'rgb(var(--color-accent-rgb) / 0.18)'
   if (category === 'dataset') return 'rgba(104,122,162,0.18)'
   if (category === 'workspace') return 'rgb(var(--color-accent-rgb) / 0.18)'
   return 'rgba(255,255,255,0.08)'

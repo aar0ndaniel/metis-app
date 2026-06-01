@@ -87,7 +87,7 @@ assert.match(mainSource, /quit-cancelled/, 'Electron main should accept the quit
 assert.doesNotMatch(mainSource, /runBootstrapChunk|finalizeBootstrap|run-bootstrap-chunk|finalize-bootstrap/, 'Electron main should not register chunked bootstrap IPC routes.')
 
 assert.match(plumberSource, /analysis_core_plan <- function\(\)[\s\S]*max\(1L, min\(as\.integer\(requested\), as\.integer\(detected\)\)\)[\s\S]*analysis_cores <- function\(\)/, 'R API should keep bounded analysis core planning and compatibility selection.')
-assert.match(plumberSource, /reserve <- if \(detected > 9L\) 2L else 1L[\s\S]*requested <- detected - reserve/, 'R API should reserve two cores above 9 detected cores and one core at 9 or fewer detected cores.')
+assert.match(plumberSource, /reserve <- if \(detected > 16L\) \{\s*4L\s*\} else if \(detected > 10L\) \{\s*2L\s*\} else \{\s*1L\s*\}[\s\S]*requested <- detected - reserve/, 'R API should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.')
 assert.doesNotMatch(plumberSource, /coerce_boot_array|run-bootstrap-chunk|finalize-bootstrap|chunk_n|accumulated|Chunked bootstrap|chunked bootstrap/, 'R API should not expose chunked bootstrap routes or helpers.')
 assert.match(plumberSource, /assemble_bootstrap_response <- function/, 'R API should share bootstrap response assembly for the single bootstrap route.')
 assert.match(plumberSource, /"\/run-bootstrap"/, 'R API should expose the single /run-bootstrap route.')

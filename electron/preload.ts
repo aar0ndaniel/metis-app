@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveDatasetToWorkspace: (data: { workspacePath: string; datasetId: string; fileName: string; base64Data: string }) =>
     ipcRenderer.invoke('dataset:saveToWorkspace', data),
   getDataPath:   () => ipcRenderer.invoke('app:dataPath'),
+  getStoragePaths: () => ipcRenderer.invoke('app:getStoragePaths'),
+  setStoragePaths: (data: { workspacePath: string; exportPath: string }) => ipcRenderer.invoke('app:setStoragePaths', data),
   getWelcomeContext: () => ipcRenderer.invoke('app:welcomeContext'),
   setThemePreference: (theme: 'dark' | 'light') => ipcRenderer.invoke('app:setThemePreference', theme),
   useSampleDataset: (data: { workspacePath: string; datasetId?: string }) => ipcRenderer.invoke('dataset:useSample', data),

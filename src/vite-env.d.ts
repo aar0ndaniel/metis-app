@@ -21,6 +21,8 @@ interface Window {
     copyToWorkspace: (data: { originalFilePath: string, workspacePath: string, datasetId: string }) => Promise<any>
     saveDatasetToWorkspace: (data: { workspacePath: string; datasetId: string; fileName: string; base64Data: string }) => Promise<any>
     getDataPath: () => Promise<any>
+    getStoragePaths: () => Promise<any>
+    setStoragePaths: (data: { workspacePath: string; exportPath: string }) => Promise<any>
     getWelcomeContext: () => Promise<any>
     setThemePreference: (theme: 'dark' | 'light') => Promise<any>
     useSampleDataset: (data: { workspacePath: string; datasetId?: string }) => Promise<any>

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { FolderPlus, X } from '@phosphor-icons/react'
+import {
+  WORKSPACE_ACCENT_FALLBACK_COLORS,
+  getActiveAccentColor,
+  getWorkspaceAccentPalette,
+} from '../utils/themeAccent'
 
-const COLORS = [
-  '#87976B', '#A78BFA', '#FFB547', '#32D583',
-  '#6366F1', '#60A5FA', '#F97316', '#E879F9',
-]
+const COLORS = WORKSPACE_ACCENT_FALLBACK_COLORS
 
 interface Props {
   onClose: () => void
@@ -14,7 +16,7 @@ interface Props {
 export default function NewWorkspaceDialog({ onClose, onCreate }: Props) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [color, setColor] = useState('#87976B')
+  const [color, setColor] = useState(() => getActiveAccentColor())
 
   const handleCreate = () => {
     if (!name.trim()) return
@@ -43,7 +45,7 @@ export default function NewWorkspaceDialog({ onClose, onCreate }: Props) {
           style={{ height: 56, padding: '0 20px', borderBottom: '1px solid var(--color-elevated)' }}
         >
           <div className="flex items-center" style={{ gap: 10 }}>
-            <FolderPlus size={18} color="#87976B" weight="fill" />
+            <FolderPlus size={18} color="var(--color-accent)" weight="fill" />
             <span style={{ color: 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 16, fontWeight: 600 }}>
               New Workspace
             </span>
@@ -110,7 +112,7 @@ export default function NewWorkspaceDialog({ onClose, onCreate }: Props) {
               Workspace Colour
             </span>
             <div className="flex items-center" style={{ gap: 8 }}>
-              {COLORS.map((c) => (
+              {getWorkspaceAccentPalette(COLORS).map((c) => (
                 <button
                   key={c}
                   onClick={() => setColor(c)}
@@ -149,7 +151,7 @@ export default function NewWorkspaceDialog({ onClose, onCreate }: Props) {
             className="flex items-center justify-center transition-opacity"
             style={{
               height: 36, padding: '0 18px', borderRadius: 8,
-              backgroundColor: color,
+              backgroundColor: 'var(--color-accent)',
               opacity: name.trim() ? 1 : 0.5,
             }}
           >

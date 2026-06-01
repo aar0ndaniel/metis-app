@@ -160,12 +160,12 @@ analysis_core_plan <- function() {
   requested <- max_analysis_cores
   policy <- "env-fixed"
   if (is.na(requested) || requested == 0L) {
-    reserve <- if (detected <= 4L) {
-      1L
-    } else if (detected <= 16L) {
+    reserve <- if (detected > 16L) {
+      4L
+    } else if (detected > 10L) {
       2L
     } else {
-      4L
+      1L
     }
     requested <- detected - reserve
     policy <- "dynamic-reserve"
@@ -288,6 +288,12 @@ format_analysis_error_message <- function(err, analysis_label, timeout_seconds) 
   if (grepl("cannot allocate vector|memory exhausted|cannot allocate memory", message, ignore.case = TRUE)) {
     return(sprintf(
       "%s ran out of memory. Try fewer bootstrap subsamples, close other heavy apps, or run the analysis on a machine with more RAM.",
+      analysis_label
+    ))
+  }
+  if (grepl("dgesv|exactly singular|singular matrix|computationally singular", message, ignore.case = TRUE)) {
+    return(sprintf(
+      "%s could not be estimated because the data or predictors are perfectly duplicated or collinear. Check duplicate indicators, constant columns, identical dataset columns, or predictors that move exactly together.",
       analysis_label
     ))
   }

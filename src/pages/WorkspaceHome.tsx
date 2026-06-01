@@ -23,13 +23,18 @@ import {
   PushPin,
 } from '@phosphor-icons/react'
 import { stripModelDisplayName, stripWorkspaceDisplayName } from '../utils/displayNames'
+import {
+  WORKSPACE_ACCENT_FALLBACK_COLORS,
+  getWorkspaceAccentPalette,
+  normalizeWorkspaceAccentColor,
+} from '../utils/themeAccent'
 import DatasetManagerModal from '../components/DatasetManagerModal'
 import { getWorkspaceDatasets, migrateWorkspace } from '../utils/datasetWorkspace'
 import AppLogo from '../components/AppLogo'
 import type { Workspace, WorkspaceChild } from '../types/workspace'
 
 // ─── Workspace color swatches ─────────────────────────────────────────────────
-const WS_COLORS = ['#87976B','#A78BFA','#FFB547','#32D583','#6366F1','#60A5FA','#F97316','#E879F9']
+const WS_COLORS = WORKSPACE_ACCENT_FALLBACK_COLORS
 type WorkspacePanelKind = 'datasets' | 'results'
 type ConstructShape = 'circle' | 'oval' | 'square'
 const OVAL_RX_SCALE = 1.35
@@ -149,7 +154,7 @@ function SidebarContextMenu({
 
       {showColors && (
         <div className="flex flex-wrap px-3 pb-2 pt-1" style={{ gap: 6, maxWidth: 164 }}>
-          {WS_COLORS.map((c) => (
+          {getWorkspaceAccentPalette(WS_COLORS).map((c) => (
             <button
               key={c}
               onClick={() => { onChangeColor?.(menu.id, c); onClose() }}
@@ -262,7 +267,7 @@ function Badge({ status, verbose = false }: { status: 'Calculated' | 'Draft'; ve
         borderRadius: 999,
         background: isCalc
           ? 'linear-gradient(180deg, rgba(80,214,155,0.18) 0%, rgba(27,69,52,0.28) 100%)'
-          : 'linear-gradient(180deg, rgb(var(--color-accent-rgb) / 0.16) 0%, rgba(69,48,23,0.28) 100%)',
+          : 'linear-gradient(180deg, rgb(var(--color-accent-rgb) / 0.16) 0%, rgb(var(--color-accent-rgb) / 0.08) 100%)',
         border: `1px solid ${isCalc ? 'rgba(80,214,155,0.28)' : 'rgb(var(--color-accent-rgb) / 0.22)'}`,
         whiteSpace: 'nowrap' as const,
       }}
@@ -1076,9 +1081,16 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
             title="New Workspace"
             onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'new-workspace' } }))}
             className="flex items-center justify-center transition-colors rounded"
-            style={{ width: 24, height: 24, backgroundColor: 'transparent', borderRadius: 6 }}
+            style={{
+              width: 24,
+              height: 24,
+              backgroundColor: 'transparent',
+              border: '1px solid transparent',
+              borderRadius: 6,
+              boxShadow: 'none',
+            }}
           >
-            <PlusCircle size={15} color="var(--color-text-muted)" />
+            <PlusCircle size={15} color="var(--color-accent)" weight="bold" />
           </button>
         </div>
 
@@ -1121,6 +1133,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
             const resultSummary = getSidebarResultSummary(sidebarResults)
             const datasetSummaryId = datasetSummary ? `sidebar-${ws.id}-datasets` : ''
             const resultSummaryId = resultSummary ? `sidebar-${ws.id}-results` : ''
+            const workspaceColor = normalizeWorkspaceAccentColor(ws.color)
 
             return (
               <div
@@ -1138,9 +1151,9 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                   <div
                     style={{
                       background: isActive
-                        ? workspaceActiveBackground(ws.color)
+                        ? workspaceActiveBackground(workspaceColor)
                         : 'var(--color-workspace-expanded)',
-                      border: isActive ? workspaceActiveBorder(ws.color) : '1px solid var(--color-border)',
+                      border: isActive ? workspaceActiveBorder(workspaceColor) : '1px solid var(--color-border)',
                       boxShadow: isActive
                         ? 'inset 0 1px 0 rgba(255,255,255,0.05)'
                         : 'inset 0 1px 0 rgba(255,255,255,0.03)',
@@ -1160,7 +1173,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                         margin: '0 8px',
                         boxSizing: 'border-box',
                         borderRadius: 9,
-                        background: isActive ? workspaceActiveHeaderBackground(ws.color) : 'transparent',
+                        background: isActive ? workspaceActiveHeaderBackground(workspaceColor) : 'transparent',
                       }}
                       onContextMenu={(e) => openCtxMenu(e, ws.id, 'workspace')}
                     >
@@ -1180,7 +1193,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                         style={{ gap: 5 }}
                       >
                         {ws.pinned && <PushPin size={11} color="var(--color-accent)" weight="fill" style={{ flexShrink: 0 }} />}
-                        <WorkspaceFolderIcon color={ws.color} expanded />
+                        <WorkspaceFolderIcon color={workspaceColor} expanded />
                         {renamingId === ws.id ? (
                           <input
                             ref={renameInputRef}
@@ -1195,8 +1208,8 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                             className="outline-none flex-1 min-w-0"
                             style={{
                               backgroundColor: 'transparent',
-                              borderBottom: `1px solid ${ws.color}`,
-                              color: ws.color,
+                              borderBottom: `1px solid ${workspaceColor}`,
+                              color: workspaceColor,
                               fontFamily: 'DM Sans, sans-serif',
                               fontSize: 12,
                               fontWeight: 600,
@@ -1241,14 +1254,14 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                             paddingLeft: 27,
                             paddingRight: 10,
                             background: activeId === child.id
-                              ? `linear-gradient(180deg, ${hexToRgba(ws.color, 0.11)} 0%, rgba(255,255,255,0.018) 100%)`
+                              ? `linear-gradient(180deg, ${hexToRgba(workspaceColor, 0.11)} 0%, rgba(255,255,255,0.018) 100%)`
                               : hoveredId === child.id
-                                ? hexToRgba(ws.color, 0.12)
+                                ? hexToRgba(workspaceColor, 0.12)
                                 : 'transparent',
                             border: activeId === child.id
-                              ? `1px solid ${hexToRgba(ws.color, 0.14)}`
+                              ? `1px solid ${hexToRgba(workspaceColor, 0.14)}`
                               : hoveredId === child.id
-                                ? `1px solid ${hexToRgba(ws.color, 0.22)}`
+                                ? `1px solid ${hexToRgba(workspaceColor, 0.22)}`
                                 : '1px solid transparent',
                             boxShadow: activeId === child.id
                               ? 'inset 0 1px 0 rgba(255,255,255,0.045)'
@@ -1314,14 +1327,14 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                             paddingLeft: 27,
                             paddingRight: 10,
                             background: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'results'
-                              ? `linear-gradient(180deg, ${hexToRgba(ws.color, 0.13)} 0%, rgba(255,255,255,0.02) 100%)`
+                              ? `linear-gradient(180deg, ${hexToRgba(workspaceColor, 0.13)} 0%, rgba(255,255,255,0.02) 100%)`
                               : hoveredId === resultSummaryId
-                                ? hexToRgba(ws.color, 0.12)
+                                ? hexToRgba(workspaceColor, 0.12)
                                 : 'transparent',
                             border: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'results'
-                              ? `1px solid ${hexToRgba(ws.color, 0.2)}`
+                              ? `1px solid ${hexToRgba(workspaceColor, 0.2)}`
                               : hoveredId === resultSummaryId
-                                ? `1px solid ${hexToRgba(ws.color, 0.22)}`
+                                ? `1px solid ${hexToRgba(workspaceColor, 0.22)}`
                                 : '1px solid transparent',
                             boxShadow: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'results'
                               ? 'inset 0 1px 0 rgba(255,255,255,0.045)'
@@ -1363,14 +1376,14 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                             paddingLeft: 27,
                             paddingRight: 10,
                             background: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'datasets'
-                              ? `linear-gradient(180deg, ${hexToRgba(ws.color, 0.13)} 0%, rgba(255,255,255,0.02) 100%)`
+                              ? `linear-gradient(180deg, ${hexToRgba(workspaceColor, 0.13)} 0%, rgba(255,255,255,0.02) 100%)`
                               : hoveredId === datasetSummaryId
-                                ? hexToRgba(ws.color, 0.12)
+                                ? hexToRgba(workspaceColor, 0.12)
                                 : 'transparent',
                             border: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'datasets'
-                              ? `1px solid ${hexToRgba(ws.color, 0.2)}`
+                              ? `1px solid ${hexToRgba(workspaceColor, 0.2)}`
                               : hoveredId === datasetSummaryId
-                                ? `1px solid ${hexToRgba(ws.color, 0.22)}`
+                                ? `1px solid ${hexToRgba(workspaceColor, 0.22)}`
                                 : '1px solid transparent',
                             boxShadow: highlightedPanel?.workspaceId === ws.id && highlightedPanel.panel === 'datasets'
                               ? 'inset 0 1px 0 rgba(255,255,255,0.045)'
@@ -1412,14 +1425,14 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                       padding: '0 10px',
                       height: 32,
                       background: isActive
-                        ? workspaceActiveBackground(ws.color)
+                        ? workspaceActiveBackground(workspaceColor)
                         : hoveredId === ws.id
-                          ? hexToRgba(ws.color, 0.12)
+                          ? hexToRgba(workspaceColor, 0.12)
                           : 'transparent',
                       border: isActive
-                        ? workspaceActiveBorder(ws.color)
+                        ? workspaceActiveBorder(workspaceColor)
                         : hoveredId === ws.id
-                          ? `1px solid ${hexToRgba(ws.color, 0.22)}`
+                          ? `1px solid ${hexToRgba(workspaceColor, 0.22)}`
                           : '1px solid transparent',
                       boxShadow: isActive
                         ? 'inset 0 1px 0 rgba(255,255,255,0.05)'
@@ -1443,7 +1456,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                       style={{ gap: 5 }}
                     >
                       {ws.pinned && <PushPin size={11} color="var(--color-accent)" weight="fill" style={{ flexShrink: 0 }} />}
-                      <WorkspaceFolderIcon color={ws.color} expanded={false} />
+                      <WorkspaceFolderIcon color={workspaceColor} expanded={false} />
                       {renamingId === ws.id ? (
                         <input
                           ref={renameInputRef}
@@ -1458,8 +1471,8 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                           className="outline-none flex-1 min-w-0"
                           style={{
                             backgroundColor: 'transparent',
-                            borderBottom: `1px solid ${ws.color}`,
-                            color: ws.color,
+                            borderBottom: `1px solid ${workspaceColor}`,
+                            color: workspaceColor,
                             fontFamily: 'DM Sans, sans-serif',
                             fontSize: 12,
                             fontWeight: 500,
@@ -1608,7 +1621,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                         transform: hoveredId === model.id ? 'translateY(-1px)' : 'none',
                       }}
                     >
-                      <ModelDiagramPreview model={model} accentColor={activeWorkspace?.color ?? 'var(--color-accent)'} />
+                      <ModelDiagramPreview model={model} accentColor={normalizeWorkspaceAccentColor(activeWorkspace?.color)} />
                     </button>
 
                     <div className="flex items-start justify-between w-full" style={{ gap: 10, padding: '0 2px' }}>

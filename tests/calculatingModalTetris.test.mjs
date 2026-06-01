@@ -54,7 +54,7 @@ assert.match(appSource, /<CalculatingChip \/>/, 'App should mount exactly one gl
 assert.match(contextSource, /'pls' \| 'bootstrap' \| 'plspredict' \| 'advanced'/, 'Calculation context should include PLSpredict as a modal-backed calculation type.')
 assert.match(contextSource, /'real' \| 'phase' \| 'indeterminate'/, 'Calculation context should support indeterminate progress for blocking backend analyses.')
 assert.match(cssSource, /--color-calculation-accent:\s*var\(--color-accent\)/, 'Dark theme calculation accent should use the primary accent.')
-assert.match(cssSource, /\[data-theme='light'\][\s\S]*--color-calculation-accent:\s*var\(--color-success\)/, 'Light theme calculation accent should use the secondary success color.')
+assert.match(cssSource, /\[data-theme='light'\][\s\S]*--color-calculation-accent:\s*var\(--color-accent\)/, 'Light theme calculation accent should use the selected app accent.')
 assert.match(cssSource, /@keyframes calculation-progress-sweep/, 'Progress bar should include a moving animation keyframe.')
 assert.match(cssSource, /calculation-progress-indeterminate/, 'Progress bar should include an indeterminate loading state for blocking analyses.')
 

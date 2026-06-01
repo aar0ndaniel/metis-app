@@ -93,7 +93,7 @@ export function useToast(): { toasts: ToastItem[]; toast: ToastActions } {
 const KIND_CONFIG: Record<ToastKind, { icon: typeof CheckCircle; accent: string; bg: string }> = {
   success: { icon: CheckCircle, accent: 'var(--color-accent)', bg: 'rgb(var(--color-accent-rgb) / 0.14)' },
   error:   { icon: XCircle,     accent: 'var(--color-danger)', bg: '#2A100F' },
-  warning: { icon: WarningCircle, accent: '#87976B', bg: '#1A201A' },
+  warning: { icon: WarningCircle, accent: 'var(--color-accent)', bg: 'rgb(var(--color-accent-rgb) / 0.14)' },
   info:    { icon: Info,          accent: '#60A5FA', bg: '#0A1827' },
 }
 

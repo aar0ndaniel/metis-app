@@ -32,6 +32,13 @@ import {
   type DatasetViewCacheEntry,
 } from './utils/datasetViewCache'
 import { readWorkspaceClientCache, writeWorkspaceClientCache } from './utils/workspaceClientCache'
+import {
+  DEFAULT_ACCENT_CHOICE,
+  LEGACY_PREF_ACCENT_COLOR_KEY,
+  METIS_PREF_ACCENT_COLOR_KEY,
+  getAccentOption,
+  normalizeAccentChoice,
+} from './utils/themeAccent'
 import type {
   Workspace,
   WorkspaceChild,
@@ -63,8 +70,6 @@ const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
 const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
-const METIS_PREF_ACCENT_COLOR_KEY = 'metis:prefs:accentColor'
-const LEGACY_PREF_ACCENT_COLOR_KEY = 'pls:prefs:accentColour'
 const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
 const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
 const METIS_TOUR_COMPLETED_KEY = 'metis:tour-completed'
@@ -73,12 +78,6 @@ const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
 const METIS_FEEDBACK_URL = 'https://metis.emend.it.com/submit-feedback.html'
 const METIS_BUG_REPORT_URL = 'https://github.com/aar0ndaniel/metis-app/issues/new?labels=bug'
 const METIS_CITATION_URL = 'https://metis.emend.it.com/how-to-cite.html'
-
-const APP_ACCENT_OPTIONS: Record<string, { color: string; rgb: string; onAccent: string }> = {
-  '#C6A24B': { color: '#C6A24B', rgb: '198 162 75', onAccent: '#181818' },
-  '#87976B': { color: '#87976B', rgb: '135 151 107', onAccent: '#10150B' },
-  '#2F8FB3': { color: '#2F8FB3', rgb: '47 143 179', onAccent: '#FFFFFF' },
-}
 
 function normalizeThemePreference(raw: string | null): ThemePreference {
   if (raw === 'Auto' || raw === 'auto') return 'Auto'
@@ -119,8 +118,7 @@ function readStartupFontScale(): string {
 
 function readSavedAccentColor(): string {
   const raw = localStorage.getItem(METIS_PREF_ACCENT_COLOR_KEY) ?? localStorage.getItem(LEGACY_PREF_ACCENT_COLOR_KEY)
-  const normalized = raw?.toUpperCase()
-  return normalized && APP_ACCENT_OPTIONS[normalized] ? normalized : '#C6A24B'
+  return normalizeAccentChoice(raw)
 }
 
 function readSavedInterfaceContrast(): number {
@@ -132,14 +130,27 @@ function readSavedInterfaceContrast(): number {
 function applySavedVisualPreferences() {
   const root = document.documentElement
   root.setAttribute('data-font-scale', readStartupFontScale())
+  const savedAccentColor = readSavedAccentColor()
+  const accentTargets = [
+    root,
+    document.body,
+    ...Array.from(document.querySelectorAll<HTMLElement>('.metis-app-shell')),
+  ]
 
-  const accent = APP_ACCENT_OPTIONS[readSavedAccentColor()] ?? APP_ACCENT_OPTIONS['#C6A24B']
-  root.style.setProperty('--color-accent', accent.color)
-  root.style.setProperty('--color-accent-rgb', accent.rgb)
-  root.style.setProperty('--color-on-accent', accent.onAccent)
-  document.body.style.setProperty('--color-accent', accent.color)
-  document.body.style.setProperty('--color-accent-rgb', accent.rgb)
-  document.body.style.setProperty('--color-on-accent', accent.onAccent)
+  if (savedAccentColor === DEFAULT_ACCENT_CHOICE) {
+    accentTargets.forEach((target) => {
+      target.style.removeProperty('--color-accent')
+      target.style.removeProperty('--color-accent-rgb')
+      target.style.removeProperty('--color-on-accent')
+    })
+  } else {
+    const accent = getAccentOption(savedAccentColor)
+    accentTargets.forEach((target) => {
+      target.style.setProperty('--color-accent', accent.color)
+      target.style.setProperty('--color-accent-rgb', accent.rgb)
+      target.style.setProperty('--color-on-accent', accent.onAccent)
+    })
+  }
 
   const contrast = readSavedInterfaceContrast()
   const contrastPercent = Math.max(0, Math.min(160, 100 + (contrast - 68)))
@@ -260,6 +271,7 @@ function AppShell() {
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false)
   const [welcomeContext, setWelcomeContext] = useState<WelcomeContext | null>(null)
   const { toasts, toast: _toast } = useToast()  // global toast listener
+  const [, setVisualPreferenceRevision] = useState(0)
 
   // ── Workspace state — starts empty, loaded from disk on mount ───────────────
   const [workspaces,       setWorkspaces]       = useState<Workspace[]>([])
@@ -296,7 +308,18 @@ function AppShell() {
       console.log('[App] electronAPI found. Environment is Electron.')
     }
 
-    async function loadWorkspaces() {
+    const clearWorkspaceState = (details?: unknown) => {
+      setWorkspaces([])
+      setActiveWorkspaceId('')
+      addDiagnostic({
+        category: 'workspace',
+        level: 'warn',
+        message: 'No workspaces were available in the selected workspace folder.',
+        details,
+      })
+    }
+
+    async function loadWorkspaces(options: { allowCacheFallback: boolean }) {
       try {
         const result = await (window as any).electronAPI?.listWorkspaces?.()
         if (result?.success && Array.isArray(result.workspaces) && result.workspaces.length > 0) {
@@ -312,29 +335,29 @@ function AppShell() {
             },
           })
         } else {
-          const backup = readWorkspaceClientCache()
-          const parsed = backup ? JSON.parse(backup) : []
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
-            setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
-            setActiveWorkspaceId(migrated[0].id)
-            addDiagnostic({
-              category: 'workspace',
-              level: 'warn',
-              message: 'Workspace load fell back to client cache.',
-              details: {
-                count: migrated.length,
-                workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
-              },
-            })
+          if (options.allowCacheFallback) {
+            const backup = readWorkspaceClientCache()
+            const parsed = backup ? JSON.parse(backup) : []
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
+              setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
+              setActiveWorkspaceId(migrated[0].id)
+              addDiagnostic({
+                category: 'workspace',
+                level: 'warn',
+                message: 'Workspace load fell back to client cache.',
+                details: {
+                  count: migrated.length,
+                  workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
+                },
+              })
+            } else {
+              console.log('[App] No workspaces found or list failed:', result)
+              clearWorkspaceState(result)
+            }
           } else {
             console.log('[App] No workspaces found or list failed:', result)
-            addDiagnostic({
-              category: 'workspace',
-              level: 'warn',
-              message: 'No workspaces were available during startup.',
-              details: result,
-            })
+            clearWorkspaceState(result)
           }
         }
       } catch (err) {
@@ -345,28 +368,43 @@ function AppShell() {
           message: 'Workspace loading failed.',
           details: err,
         })
-        const backup = readWorkspaceClientCache()
-        const parsed = backup ? JSON.parse(backup) : []
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
-          setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
-          setActiveWorkspaceId(migrated[0].id)
-          addDiagnostic({
-            category: 'workspace',
-            level: 'warn',
-            message: 'Recovered workspaces from local cache after load failure.',
-            details: {
-              count: migrated.length,
-              workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
-            },
-          })
+        if (options.allowCacheFallback) {
+          const backup = readWorkspaceClientCache()
+          const parsed = backup ? JSON.parse(backup) : []
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
+            setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
+            setActiveWorkspaceId(migrated[0].id)
+            addDiagnostic({
+              category: 'workspace',
+              level: 'warn',
+              message: 'Recovered workspaces from local cache after load failure.',
+              details: {
+                count: migrated.length,
+                workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
+              },
+            })
+          } else {
+            clearWorkspaceState(err)
+          }
+        } else {
+          clearWorkspaceState(err)
         }
       } finally {
         setWorkspaceLoadAttempted(true)
       }
     }
-    loadWorkspaces()
-  }, [isInstallerPreview])
+
+    const handleStorageLocationsUpdated = () => {
+      setWorkspaceLoadAttempted(false)
+      navigate('/')
+      void loadWorkspaces({ allowCacheFallback: false })
+    }
+
+    window.addEventListener('pls:storage-locations-updated', handleStorageLocationsUpdated)
+    void loadWorkspaces({ allowCacheFallback: true })
+    return () => window.removeEventListener('pls:storage-locations-updated', handleStorageLocationsUpdated)
+  }, [isInstallerPreview, navigate])
 
   useEffect(() => {
     applySavedVisualPreferences()
@@ -454,6 +492,7 @@ function AppShell() {
     const readCurrentThemePreference = () => isInstallerPreview ? getInstallerPreviewTheme() : getSavedThemePreference()
     const applyCurrentPreferences = () => {
       applySavedVisualPreferences()
+      setVisualPreferenceRevision((revision) => revision + 1)
       const nextPreference = readCurrentThemePreference()
       setThemePreference(nextPreference)
       setTheme(resolveThemePreference(nextPreference))

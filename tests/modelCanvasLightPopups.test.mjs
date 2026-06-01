@@ -38,6 +38,36 @@ assert.match(
   /boxShadow:\s*C\.floatingMenuShadow/,
   'Construct right-click settings menu should use the active theme menu shadow.'
 )
+assert.match(
+  constructSettingsMenu,
+  /const modalWidth = 260[\s\S]*const modalHeight = 310/,
+  'Construct right-click settings menu should keep its existing width and height contract.'
+)
+assert.match(
+  constructSettingsMenu,
+  /height:\s*modalHeight/,
+  'Construct right-click settings menu should preserve its fixed height after the redesign.'
+)
+assert.match(
+  constructSettingsMenu,
+  /isHigherOrder:\s*construct\.isHigherOrder \|\| false/,
+  'Construct right-click settings menu should edit the higher-order construct flag.'
+)
+assert.match(
+  constructSettingsMenu,
+  /Higher-order construct/,
+  'Construct right-click settings menu should expose an HOC toggle like the create construct modal.'
+)
+assert.match(
+  constructSettingsMenu,
+  /isHigherOrder:\s*formData\.isHigherOrder/,
+  'Applying right-click construct settings should persist the HOC toggle.'
+)
+assert.match(
+  constructSettingsMenu,
+  /background:\s*`linear-gradient\(180deg, \$\{C\.panelControl\} 0%, \$\{C\.panelPop\} 100%\)`/,
+  'Construct right-click settings menu should use a token-driven shell suitable for light and dark theme.'
+)
 assert.doesNotMatch(
   constructSettingsMenu,
   /backgroundColor:\s*'#18181A'|rgba\(0,0,0,0\.6\)/,

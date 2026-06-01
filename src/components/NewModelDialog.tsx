@@ -1,5 +1,10 @@
 import { useState } from 'react'
 import { NotePencil, X, CaretDown } from '@phosphor-icons/react'
+import {
+  WORKSPACE_ACCENT_FALLBACK_COLORS,
+  getActiveAccentColor,
+  getWorkspaceAccentPalette,
+} from '../utils/themeAccent'
 
 interface Workspace { id: string; name: string; color: string }
 
@@ -33,7 +38,7 @@ export default function NewModelDialog({
   // New workspace fields
   const [newWsName, setNewWsName] = useState('')
   const [newWsDesc, setNewWsDesc] = useState('')
-  const [newWsColor, setNewWsColor] = useState('#87976B')
+  const [newWsColor, setNewWsColor] = useState(() => getActiveAccentColor())
 
   const selectedWs = workspaces.find((w) => w.id === wsId)
   const isCreatingNewWs = wsId === 'new'
@@ -49,7 +54,7 @@ export default function NewModelDialog({
     )
   }
 
-  const COLORS = ['#87976B', '#A78BFA', '#FFB547', '#32D583', '#6366F1', '#60A5FA', '#F97316', '#E879F9']
+  const COLORS = WORKSPACE_ACCENT_FALLBACK_COLORS
 
   return (
     <div
@@ -220,7 +225,7 @@ export default function NewModelDialog({
                   Workspace Colour
                 </span>
                 <div className="flex items-center" style={{ gap: 8 }}>
-                  {COLORS.map((c) => (
+                  {getWorkspaceAccentPalette(COLORS).map((c) => (
                     <button
                       key={c}
                       onClick={() => setNewWsColor(c)}

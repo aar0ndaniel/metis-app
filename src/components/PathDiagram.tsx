@@ -32,6 +32,7 @@ interface CanvasIndicator {
   loading: number | null
   ox?: number
   oy?: number
+  labelT?: number
 }
 
 type CanvasConstructShape = 'circle' | 'oval' | 'square'
@@ -60,6 +61,7 @@ export interface CanvasPath {
   style?: 'straight' | 'curved' | 'rightangle'
   curvature?: number
   joints?: { x: number; y: number }[]
+  labelT?: number
 }
 
 // ─── Result Overlay Types ────────────────────────────────────────────────────
@@ -105,6 +107,8 @@ interface PathDiagramProps {
   hoveredConstructId?: string | null
   onConstructMouseDown?: (constructId: string, event: ReactMouseEvent<SVGGElement>) => void
   onIndicatorMouseDown?: (constructId: string, indicatorName: string, event: ReactMouseEvent<SVGGElement>) => void
+  onPathLabelMouseDown?: (pathId: string, event: ReactMouseEvent<SVGGElement>) => void
+  onIndicatorLabelMouseDown?: (constructId: string, indicatorName: string, event: ReactMouseEvent<SVGGElement>) => void
   onResizeMouseDown?: (constructId: string, event: ReactMouseEvent<SVGGElement>) => void
   onConstructContextMenu?: (constructId: string, event: ReactMouseEvent<SVGGElement>) => void
   onConstructHover?: (constructId: string | null) => void
@@ -115,8 +119,11 @@ const STEP = 60
 const EDGE_GAP = 60
 const LABEL_H = 22
 const MIN_LABEL_W = 44
+const MIN_LABEL_T = 0.12
+const MAX_LABEL_T = 0.88
 const OVAL_RX_SCALE = 1.35
 const OVAL_RY_SCALE = 0.82
+const STRUCTURAL_PATH_NEUTRAL = 'rgb(var(--color-text-secondary-rgb) / 0.74)'
 
 function normalizeConstructShape(shape?: CanvasConstructShape): 'circle' | 'oval' {
   return shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
@@ -154,14 +161,54 @@ function getCanvasConstructEdgePoint(construct: CanvasConstruct, ux: number, uy:
   }
 }
 
+function getIndicatorDimensions(indicator: CanvasIndicator): { labelW: number; labelH: number } {
+  return {
+    labelW: Math.max(MIN_LABEL_W, indicator.name.length * 7 + 16),
+    labelH: LABEL_H,
+  }
+}
+
+function clampLabelT(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0.5
+  return Math.max(MIN_LABEL_T, Math.min(MAX_LABEL_T, value as number))
+}
+
+function indicatorFill(color: string): string {
+  return /^#[0-9a-f]{6}$/i.test(color) ? `${color}24` : 'rgb(var(--color-accent-rgb) / 0.14)'
+}
+
+function splitLineAtT(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  t: number,
+  gap = 24,
+): { path1: string; path2: string; x: number; y: number } {
+  const dx = endX - startX
+  const dy = endY - startY
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1
+  const x = startX + dx * t
+  const y = startY + dy * t
+  const gapUx = (dx / dist) * (gap / 2)
+  const gapUy = (dy / dist) * (gap / 2)
+  return {
+    path1: `M${startX},${startY} L${x - gapUx},${y - gapUy}`,
+    path2: `M${x + gapUx},${y + gapUy} L${endX},${endY}`,
+    x,
+    y,
+  }
+}
+
 // ─── Arrow & Path Helpers (identical to ModelCanvas) ─────────────────────────
 
 /** Split edge-to-edge path between two construct shapes, leaving a gap for the label. */
-function arrowPathSplit(from: CanvasConstruct, to: CanvasConstruct, p: CanvasPath, gap = 40): [string, string, { mx: number; my: number }] {
+function arrowPathSplit(from: CanvasConstruct, to: CanvasConstruct, p: CanvasPath, gap = 40, labelT = 0.5): [string, string, { mx: number; my: number }] {
   const dx = to.x - from.x, dy = to.y - from.y
   const dist = Math.sqrt(dx * dx + dy * dy)
   if (dist < 1) return ['', '', { mx: 0, my: 0 }]
   const ux = dx / dist, uy = dy / dist
+  const t = clampLabelT(labelT)
   const start = getCanvasConstructEdgePoint(from, ux, uy)
   const end = getCanvasConstructEdgePoint(to, -ux, -uy)
   const startX = start.x
@@ -173,32 +220,44 @@ function arrowPathSplit(from: CanvasConstruct, to: CanvasConstruct, p: CanvasPat
     const curvature = p.curvature || 40
     const cx = (startX + endX) / 2 - uy * curvature
     const cy = (startY + endY) / 2 + ux * curvature
-    const m1x = (startX + cx) / 2, m1y = (startY + cy) / 2
-    const m2x = (cx + endX) / 2, m2y = (cy + endY) / 2
-    const midX = (m1x + m2x) / 2, midY = (m1y + m2y) / 2
+    const q0x = startX + (cx - startX) * t
+    const q0y = startY + (cy - startY) * t
+    const q1x = cx + (endX - cx) * t
+    const q1y = cy + (endY - cy) * t
+    const midX = q0x + (q1x - q0x) * t
+    const midY = q0y + (q1y - q0y) * t
 
     return [
-      `M${startX},${startY} Q${m1x},${m1y} ${midX},${midY}`,
-      `M${midX},${midY} Q${m2x},${m2y} ${endX},${endY}`,
+      `M${startX},${startY} Q${q0x},${q0y} ${midX},${midY}`,
+      `M${midX},${midY} Q${q1x},${q1y} ${endX},${endY}`,
       { mx: midX, my: midY }
     ]
   }
 
   if (p.style === 'rightangle' && p.joints && p.joints.length >= 2) {
-    const j1 = p.joints[0]
-    const j2 = p.joints[p.joints.length - 1]
-    const midX = (j1.x + j2.x) / 2
-    const midY = (j1.y + j2.y) / 2
-
-    let p1 = `M${startX},${startY} `
-    for (let i = 0; i < p.joints.length - 1; i++) p1 += `L${p.joints[i].x},${p.joints[i].y} `
-    const lastJoint = p.joints[p.joints.length - 1]
-    const p2 = `M${lastJoint.x},${lastJoint.y} L${endX},${endY}`
+    const points = [{ x: startX, y: startY }, ...p.joints, { x: endX, y: endY }]
+    const lengths = points.slice(1).map((point, index) => Math.hypot(point.x - points[index].x, point.y - points[index].y))
+    const total = lengths.reduce((sum, length) => sum + length, 0) || 1
+    let target = total * t
+    let segmentIndex = 0
+    while (segmentIndex < lengths.length - 1 && target > lengths[segmentIndex]) {
+      target -= lengths[segmentIndex]
+      segmentIndex += 1
+    }
+    const a = points[segmentIndex]
+    const b = points[segmentIndex + 1]
+    const segmentT = lengths[segmentIndex] ? target / lengths[segmentIndex] : 0
+    const midX = a.x + (b.x - a.x) * segmentT
+    const midY = a.y + (b.y - a.y) * segmentT
+    const before = points.slice(0, segmentIndex + 1).map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x},${point.y}`).join(' ')
+    const afterPoints = points.slice(segmentIndex + 1)
+    const p1 = `${before} L${midX},${midY}`
+    const p2 = `M${midX},${midY} ${afterPoints.map((point) => `L${point.x},${point.y}`).join(' ')}`
     return [p1, p2, { mx: midX, my: midY }]
   }
 
-  const midX = (startX + endX) / 2
-  const midY = (startY + endY) / 2
+  const midX = startX + (endX - startX) * t
+  const midY = startY + (endY - startY) * t
   const gapUx = ux * (gap / 2)
   const gapUy = uy * (gap / 2)
   const seg1X = midX - gapUx
@@ -358,7 +417,7 @@ function shouldUseOuterLoadingTone(
 }
 
 function pValueColor(pValue?: number): string {
-  return getPValueColor(pValue)
+  return getPValueColor(pValue, STRUCTURAL_PATH_NEUTRAL)
 }
 
 function pValueMarkerId(pValue?: number): string {
@@ -384,6 +443,8 @@ export default function PathDiagram({
   hoveredConstructId = null,
   onConstructMouseDown,
   onIndicatorMouseDown,
+  onPathLabelMouseDown,
+  onIndicatorLabelMouseDown,
   onResizeMouseDown,
   onConstructContextMenu,
   onConstructHover,
@@ -426,6 +487,8 @@ export default function PathDiagram({
     ix:     number
     iy:     number
     labelW: number
+    labelH: number
+    labelT?: number
   }
 
   const allIndicators: IndicatorEntry[] = []
@@ -433,8 +496,8 @@ export default function PathDiagram({
   cs.forEach(c => {
     if (c.folded) return
     c.indicators.forEach((ind, i) => {
-      const { ix, iy, labelW } = getIndicatorLayout(c, ind, i)
-      allIndicators.push({ constructId: c.id, name: ind.name, loading: ind.loading, ix, iy, labelW })
+      const { ix, iy, labelW, labelH } = getIndicatorLayout(c, ind, i)
+      allIndicators.push({ constructId: c.id, name: ind.name, loading: ind.loading, ix, iy, labelW, labelH, labelT: ind.labelT })
     })
   })
 
@@ -486,8 +549,8 @@ export default function PathDiagram({
   const allY: number[] = [
     ...cs.map(c => c.y - getCanvasConstructRadii(c).ry - 5),
     ...cs.map(c => c.y + getCanvasConstructRadii(c).ry + 5),
-    ...allIndicators.map(i => i.iy - LABEL_H / 2),
-    ...allIndicators.map(i => i.iy + LABEL_H / 2),
+    ...allIndicators.map(i => i.iy - i.labelH / 2),
+    ...allIndicators.map(i => i.iy + i.labelH / 2),
   ]
   const vbMinX = Math.min(...allX) - PAD
   const vbMinY = Math.min(...allY) - PAD
@@ -506,11 +569,11 @@ export default function PathDiagram({
       <defs>
         {/* Arrow for measurement paths (same as ModelCanvas #arr) */}
         <marker id="pd-arr" markerWidth="7" markerHeight="5" refX="6.3" refY="2.5" orient="auto">
-          <polygon points="0 0,7 2.5,0 5" fill="var(--color-border)" />
+          <polygon points="0 0,7 2.5,0 5" fill="context-stroke" />
         </marker>
         {/* Structural arrows — coloured by significance */}
         <marker id="pd-arr-dim"   markerWidth="7" markerHeight="5" refX="6.3" refY="2.5" orient="auto">
-          <polygon points="0 0,7 2.5,0 5" fill="var(--color-border)" />
+          <polygon points="0 0,7 2.5,0 5" fill={STRUCTURAL_PATH_NEUTRAL} />
         </marker>
         <marker id="pd-arr-green" markerWidth="7" markerHeight="5" refX="6.3" refY="2.5" orient="auto">
           <polygon points="0 0,7 2.5,0 5" fill={ANALYSIS_TONE_HEX.pass} />
@@ -537,22 +600,11 @@ export default function PathDiagram({
         const startX = start.x
         const startY = start.y
         let ix = ind.ix, iy = ind.iy
-        if      (dir === 'top')    iy += LABEL_H / 2
-        else if (dir === 'bottom') iy -= LABEL_H / 2
+        if      (dir === 'top')    iy += ind.labelH / 2
+        else if (dir === 'bottom') iy -= ind.labelH / 2
         else if (dir === 'left')   ix += ind.labelW / 2
         else if (dir === 'right')  ix -= ind.labelW / 2
-        // Split at midpoint for label
-        const midX = (startX + ix) / 2
-        const midY = (startY + iy) / 2
-        const gap = 24
-        const gapUx = (ix - startX) / dist * (gap / 2)
-        const gapUy = (iy - startY) / dist * (gap / 2)
-        const seg1X = midX - gapUx
-        const seg1Y = midY - gapUy
-        const seg2X = midX + gapUx
-        const seg2Y = midY + gapUy
-        const path1 = `M${startX},${startY} L${seg1X},${seg1Y}`
-        const path2 = `M${seg2X},${seg2Y} L${ix},${iy}`
+        const labelSplit = splitLineAtT(startX, startY, ix, iy, clampLabelT(ind.labelT), 24)
         const measurementEntry = lookupMeasurement(ind.constructId, ind.name)
         const val = showMeasure ? getMeasurementValueFromResults(measurementEntry, ind.loading, measurementMode, c.type) : undefined
         const measurementTextColor = shouldUseOuterLoadingTone(measurementMode, c.type)
@@ -561,8 +613,8 @@ export default function PathDiagram({
         // When blank (no value label), render a single unbroken measurement arrow
         if (val === undefined) {
           let iEndX = ind.ix, iEndY = ind.iy
-          if      (dir === 'top')    iEndY += LABEL_H / 2
-          else if (dir === 'bottom') iEndY -= LABEL_H / 2
+          if      (dir === 'top')    iEndY += ind.labelH / 2
+          else if (dir === 'bottom') iEndY -= ind.labelH / 2
           else if (dir === 'left')   iEndX += ind.labelW / 2
           else if (dir === 'right')  iEndX -= ind.labelW / 2
           const cDist = Math.sqrt((ind.ix - c.x) ** 2 + (ind.iy - c.y) ** 2)
@@ -585,14 +637,14 @@ export default function PathDiagram({
         return (
           <g key={`mp-${ind.constructId}-${ind.name}`}>
             <path
-              d={path1}
+              d={labelSplit.path1}
               fill="none"
               stroke={c.color}
               strokeWidth={1.2}
               opacity={0.5}
             />
             <path
-              d={path2}
+              d={labelSplit.path2}
               fill="none"
               stroke={c.color}
               strokeWidth={1.2}
@@ -600,15 +652,21 @@ export default function PathDiagram({
               opacity={0.5}
             />
             {val !== undefined && (
-              <text
-                x={midX} y={midY}
-                fill={measurementTextColor}
-                fontSize={8} fontWeight="700"
-                fontFamily="Inter, system-ui, sans-serif"
-                textAnchor="middle" dominantBaseline="middle"
+              <g
+                onMouseDown={interactive && onIndicatorLabelMouseDown ? (event) => onIndicatorLabelMouseDown(ind.constructId, ind.name, event) : undefined}
+                style={{ cursor: interactive ? 'grab' : 'default' }}
               >
-                {val.toFixed(getDecimals())}
-              </text>
+                <text
+                  x={labelSplit.x} y={labelSplit.y}
+                  fill={measurementTextColor}
+                  fontSize={8} fontWeight="700"
+                  fontFamily="Inter, system-ui, sans-serif"
+                  textAnchor="middle" dominantBaseline="middle"
+                  style={{ userSelect: 'none' }}
+                >
+                  {val.toFixed(getDecimals())}
+                </text>
+              </g>
             )}
           </g>
         )
@@ -620,11 +678,11 @@ export default function PathDiagram({
         const to   = byId[p.to]
         if (!from || !to) return null
 
-        const [path1, path2, mid] = arrowPathSplit(from, to, p, 40)
+        const [path1, path2, mid] = arrowPathSplit(from, to, p, 40, p.labelT)
         const pResult  = lookupPathResult(p.from, p.to)
         const pathVal  = showStruct ? (pResult ? getPathValue(pResult, structuralMode) : undefined) : undefined
         const useColor = structuralMode === 'Path coefficients'
-        const lineColor = useColor ? pValueColor(pResult?.pValue) : 'var(--color-border)'
+        const lineColor = useColor ? pValueColor(pResult?.pValue) : STRUCTURAL_PATH_NEUTRAL
         const markerId  = useColor ? pValueMarkerId(pResult?.pValue) : 'pd-arr-dim'
 
         // When blank (no value label), render a single unbroken arrow
@@ -660,15 +718,21 @@ export default function PathDiagram({
               markerEnd={`url(#${markerId})`}
             />
             {pathVal !== undefined && (
-              <text
-                x={mid.mx} y={mid.my}
-                fill={useColor ? lineColor : 'var(--color-text-secondary)'}
-                fontSize={9} fontWeight="700"
-                fontFamily="Inter, system-ui, sans-serif"
-                textAnchor="middle" dominantBaseline="middle"
+              <g
+                onMouseDown={interactive && onPathLabelMouseDown ? (event) => onPathLabelMouseDown(p.id, event) : undefined}
+                style={{ cursor: interactive ? 'grab' : 'default' }}
               >
-                {pathVal.toFixed(getDecimals())}
-              </text>
+                <text
+                  x={mid.mx} y={mid.my}
+                  fill={useColor ? lineColor : 'var(--color-text-secondary)'}
+                  fontSize={9} fontWeight="700"
+                  fontFamily="Inter, system-ui, sans-serif"
+                  textAnchor="middle" dominantBaseline="middle"
+                  style={{ userSelect: 'none' }}
+                >
+                  {pathVal.toFixed(getDecimals())}
+                </text>
+              </g>
             )}
           </g>
         )
@@ -700,17 +764,19 @@ export default function PathDiagram({
           style={{ cursor: interactive ? 'grab' : 'default' }}
         >
           <rect
-            x={ind.ix - ind.labelW / 2} y={ind.iy - LABEL_H / 2}
-            width={ind.labelW} height={LABEL_H}
+            x={ind.ix - ind.labelW / 2} y={ind.iy - ind.labelH / 2}
+            width={ind.labelW} height={ind.labelH}
             rx={4}
-            fill="var(--color-elevated)"
-            stroke={isSelected ? 'var(--color-accent)' : 'var(--color-border)'}
+            fill={indicatorFill(byId[ind.constructId]?.color ?? '')}
+            stroke={isSelected ? 'var(--color-accent)' : (byId[ind.constructId]?.color ?? 'var(--color-border)')}
             strokeWidth={isSelected ? 1.5 : 1}
           />
           <text
             x={ind.ix} y={ind.iy}
             dy="0.35em"
             textAnchor="middle"
+            textLength={Math.max(8, ind.labelW - 10)}
+            lengthAdjust="spacingAndGlyphs"
             style={{
               fontSize: 11,
               fill: 'var(--color-text-secondary)',
@@ -881,7 +947,7 @@ export default function PathDiagram({
 
 function getSelectedBounds(
   constructs: CanvasConstruct[],
-  indicators: Array<{ constructId: string; name: string; ix: number; iy: number; labelW: number }>,
+  indicators: Array<{ constructId: string; name: string; ix: number; iy: number; labelW: number; labelH: number }>,
   selectedConstructIds: string[],
   selectedIndicatorKeys: string[],
 ): { minX: number; minY: number; width: number; height: number } | null {
@@ -906,8 +972,8 @@ function getSelectedBounds(
     boxes.push({
       left: indicator.ix - indicator.labelW / 2 - 8,
       right: indicator.ix + indicator.labelW / 2 + 8,
-      top: indicator.iy - LABEL_H / 2 - 8,
-      bottom: indicator.iy + LABEL_H / 2 + 8,
+      top: indicator.iy - indicator.labelH / 2 - 8,
+      bottom: indicator.iy + indicator.labelH / 2 + 8,
     })
   })
 
@@ -930,9 +996,9 @@ function getIndicatorLayout(c: CanvasConstruct, ind: CanvasIndicator, index: num
   const dir = c.indicatorAlignment || c.indicatorDirection || 'bottom'
   const { rx, ry } = getCanvasConstructRadii(c)
   const edgeRadius = dir === 'left' || dir === 'right' ? rx : ry
-  const labelW = Math.max(MIN_LABEL_W, ind.name.length * 7 + 16)
+  const { labelW, labelH } = getIndicatorDimensions(ind)
   const offset = (index - (c.indicators.length - 1) / 2) * STEP
-  const centerGap = edgeRadius + EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : LABEL_H / 2)
+  const centerGap = edgeRadius + EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
 
   let ix = c.x
   let iy = c.y
@@ -954,6 +1020,7 @@ function getIndicatorLayout(c: CanvasConstruct, ind: CanvasIndicator, index: num
     ix: ix + (ind.ox || 0),
     iy: iy + (ind.oy || 0),
     labelW,
+    labelH,
     dir,
   }
 }

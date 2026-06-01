@@ -844,8 +844,8 @@ export default function DataView({ workspaces }: DataViewProps) {
               width: 36,
               height: 36,
               borderRadius: 10,
-              border: '1px solid rgba(135,151,107,0.34)',
-              background: hasChanges ? '#87976B' : 'var(--color-elevated)',
+              border: '1px solid rgb(var(--color-accent-rgb) / 0.34)',
+              background: hasChanges ? 'var(--color-accent)' : 'var(--color-elevated)',
               opacity: saving ? 0.6 : hasChanges ? 1 : 0.45,
             }}
           >
@@ -875,7 +875,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                   width: 10,
                   height: 10,
                   borderRadius: 999,
-                  background: hasChanges ? '#87976B' : 'var(--color-border)',
+                  background: hasChanges ? 'var(--color-accent)' : 'var(--color-border)',
                 }}
               >
                 <Plus size={8} color={hasChanges ? 'var(--color-on-accent)' : 'var(--color-text-muted)'} weight="bold" />

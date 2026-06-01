@@ -213,6 +213,7 @@ interface PersistCanvasSnapshotOptions {
 
 const METIS_STORAGE_PREFIX = 'metis:'
 const LEGACY_STORAGE_PREFIX = 'pls:'
+const HOC_PATH_PROMPT_PREF_SUFFIX = 'prefs:showHocPathPrompt'
 function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
 }
@@ -225,6 +226,15 @@ function readSharedStorageValue(suffix: string): string | null {
 function writeSharedStorageValue(suffix: string, value: string) {
   localStorage.setItem(buildStorageKey(METIS_STORAGE_PREFIX, suffix), value)
   localStorage.setItem(buildStorageKey(LEGACY_STORAGE_PREFIX, suffix), value)
+}
+
+function readShowHocPathPromptPreference(): boolean {
+  const saved = readSharedStorageValue(HOC_PATH_PROMPT_PREF_SUFFIX)
+  return saved === null ? true : saved === 'true'
+}
+
+function writeShowHocPathPromptPreference(value: boolean) {
+  writeSharedStorageValue(HOC_PATH_PROMPT_PREF_SUFFIX, String(value))
 }
 
 function readAutosaveDraft(modelId?: string | null): ModelDraftState | null {
@@ -586,6 +596,9 @@ function toLaymanErrorMessage(rawError: string): string {
   }
   if (/r runtime|rscript|plumber/.test(msg)) {
     return 'The R analysis engine is missing or failed to start. Please restart the app and try again.'
+  }
+  if (/dgesv|exactly singular|singular matrix|computationally singular/.test(msg)) {
+    return 'The model could not be estimated because the data or predictors are perfectly duplicated or collinear. Check duplicate indicators, constant columns, identical dataset columns, or predictors that move exactly together.'
   }
 
   if (cleanedRaw && !/^unknown error$/i.test(cleanedRaw)) {
@@ -1003,6 +1016,8 @@ export default function ModelCanvas({
   const [showDatasetManager, setShowDatasetManager] = useState(false)
   const [isCalculating, setIsCalculating] = useState(false)
   const [calculatingType, setCalculatingType] = useState<'bootstrap' | 'plspredict' | 'advanced' | 'pls' | null>(null)
+  const [showHocPathPrompt, setShowHocPathPrompt] = useState(() => readShowHocPathPromptPreference())
+  const [doNotShowHocPathPrompt, setDoNotShowHocPathPrompt] = useState(false)
   const calculationState = useCalculation()
   const calcDispatch = useCalculationDispatch()
   const isContextCalculating = useIsCalculating()
@@ -1167,6 +1182,15 @@ export default function ModelCanvas({
     }
     window.addEventListener('pls:preferences-updated', handler)
     return () => window.removeEventListener('pls:preferences-updated', handler)
+  }, [])
+
+  useEffect(() => {
+    const handleHocPathPromptPreferenceUpdated = () => {
+      setShowHocPathPrompt(readShowHocPathPromptPreference())
+      setDoNotShowHocPathPrompt(false)
+    }
+    window.addEventListener('pls:preferences-updated', handleHocPathPromptPreferenceUpdated)
+    return () => window.removeEventListener('pls:preferences-updated', handleHocPathPromptPreferenceUpdated)
   }, [])
 
   useEffect(() => {
@@ -3061,34 +3085,61 @@ export default function ModelCanvas({
     setSelected([])
   }, [constructs, paths, commit])
 
-  const createDirectPath = useCallback((fromId: string, toId: string) => {
+  const createDirectPath = useCallback((fromId: string, toId: string, requestedHocRole?: HocPathRole) => {
     if (fromId === toId) return
     const id = `p-${Date.now()}`
+    if (requestedHocRole === 'measurement') {
+      commitDirectPath(fromId, toId, id, constructs, paths, 'measurement')
+      return
+    }
+    if (requestedHocRole === 'structural') {
+      commitDirectPath(fromId, toId, id, constructs, paths, 'structural')
+      return
+    }
+
     const roleChoice = getHocPathRoleChoice(fromId, toId, id)
     if (roleChoice) {
+      if (!showHocPathPrompt) {
+        commitDirectPath(fromId, toId, id, constructs, paths, 'structural')
+        return
+      }
       setHocPathRoleChoice(roleChoice)
       return
     }
 
     commitDirectPath(fromId, toId, id)
-  }, [commitDirectPath, getHocPathRoleChoice])
+  }, [commitDirectPath, constructs, getHocPathRoleChoice, paths, showHocPathPrompt])
+
+  const rememberHocPathPromptChoice = useCallback(() => {
+    if (!doNotShowHocPathPrompt) return
+    writeShowHocPathPromptPreference(false)
+    setShowHocPathPrompt(false)
+    setDoNotShowHocPathPrompt(false)
+  }, [doNotShowHocPathPrompt])
 
   const createHocMeasurementPath = useCallback(() => {
     if (!hocPathRoleChoice) return
     const conflict = getHocPathConflict(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id)
+    rememberHocPathPromptChoice()
     setHocPathRoleChoice(null)
     if (conflict) {
       setHocPathConflict(conflict)
       return
     }
     commitDirectPath(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id, constructs, paths, 'measurement')
-  }, [commitDirectPath, constructs, getHocPathConflict, hocPathRoleChoice, paths])
+  }, [commitDirectPath, constructs, getHocPathConflict, hocPathRoleChoice, paths, rememberHocPathPromptChoice])
 
   const createHocStructuralPath = useCallback(() => {
     if (!hocPathRoleChoice) return
+    rememberHocPathPromptChoice()
     commitDirectPath(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id, constructs, paths, 'structural')
     setHocPathRoleChoice(null)
-  }, [commitDirectPath, constructs, hocPathRoleChoice, paths])
+  }, [commitDirectPath, constructs, hocPathRoleChoice, paths, rememberHocPathPromptChoice])
+
+  const cancelHocPathRoleChoice = useCallback(() => {
+    setHocPathRoleChoice(null)
+    setDoNotShowHocPathPrompt(false)
+  }, [])
 
   const keepHocMeasurementType = useCallback(() => {
     if (!hocPathConflict) return
@@ -3158,7 +3209,7 @@ export default function ModelCanvas({
 
       // Click-to-connect: if source already selected, second click on another construct creates a path.
       if (connectStart && connectStart !== id) {
-        createDirectPath(connectStart, id)
+        createDirectPath(connectStart, id, e.shiftKey ? 'measurement' : undefined)
         setIsConnecting(false)
         setConnectStart(null)
         setConnectEnd(null)
@@ -3526,7 +3577,7 @@ export default function ModelCanvas({
     }
   }
 
-  const onSvgMouseUp = () => {
+  const onSvgMouseUp = (e: React.MouseEvent<SVGSVGElement>) => {
     setDragGuideLines([])
     if (isPanning) {
       setIsPanning(false)
@@ -3578,7 +3629,7 @@ export default function ModelCanvas({
     if (isConnecting && connectStart && connectEnd) {
       const over = constructs.find(c => isPointInConstruct(c, connectEnd.x, connectEnd.y, 10))
       if (over && over.id !== connectStart) {
-        createDirectPath(connectStart, over.id)
+        createDirectPath(connectStart, over.id, e.shiftKey ? 'measurement' : undefined)
       } else {
         const targetPath = findDirectPathAtPoint(connectEnd.x, connectEnd.y, connectStart)
         if (targetPath) {
@@ -5411,7 +5462,7 @@ export default function ModelCanvas({
           <Trash size={18} color={(activeTool === 'delete' || selected.length > 0 || selectedPaths.length > 0) ? C.danger : C.textMuted} weight={activeTool === 'delete' ? 'fill' : 'regular'} />
         </TBtn>
         <div style={{ width: 1, height: 28, backgroundColor: C.floatingBorderSoft, margin: '0 3px' }} />
-        <TBtn id="tour-calculate" onClick={() => setShowAlgorithmDialog(true)} disabled={!canCalculate || isAnyCalculationRunning} active={canCalculate && !isAnyCalculationRunning} activeTone={canCalculate && !isAnyCalculationRunning ? 'green' : undefined} title={isAnyCalculationRunning ? 'Calculation in progress - finish or stop current' : 'Calculate (Ctrl+Enter)'}>
+        <TBtn id="tour-calculate" onClick={() => setShowAlgorithmDialog(true)} disabled={!canCalculate || isAnyCalculationRunning} active={canCalculate && !isAnyCalculationRunning} activeTone={canCalculate && !isAnyCalculationRunning ? 'green' : undefined} activeLabel="Calculate" title={isAnyCalculationRunning ? 'Calculation in progress - finish or stop current' : 'Calculate (Ctrl+Enter)'}>
           <MathOperations size={18} color={canCalculate && !isAnyCalculationRunning ? C.textOnSuccess : C.textMuted} weight="bold" />
         </TBtn>
       </div>
@@ -5992,21 +6043,74 @@ export default function ModelCanvas({
             className={`overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(event) => event.stopPropagation()}
             style={{
-              width: 313,
-              backgroundColor: '#242424',
+              width: 468,
+              backgroundColor: C.panelPop,
               borderRadius: 14,
+              border: `1px solid ${C.floatingBorderSoft}`,
               boxShadow: 'var(--shadow-modal)',
             }}
           >
-            <div style={{ padding: '18px 20px 10px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: '#242424' }}>
-              <h2 style={{ color: '#F5F1E7', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}>
-                HOC path type
-              </h2>
-              <p style={{ color: '#D7CDBC', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
-                Connect {constructs.find((construct) => construct.id === hocPathRoleChoice.locId)?.name ?? 'this construct'} as a lower-order construct, or keep this as a structural path.
+            <div style={{ padding: '16px 18px 10px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: C.panelPop }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <h2 style={{ color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>
+                    HOC path type
+                  </h2>
+                  <p style={{ color: 'var(--color-text-secondary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
+                    Connect {constructs.find((construct) => construct.id === hocPathRoleChoice.locId)?.name ?? 'this construct'} as a lower-order construct, or keep this as a structural path.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Discard HOC path"
+                  onClick={cancelHocPathRoleChoice}
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 6,
+                    border: `1px solid ${C.floatingBorderSoft}`,
+                    backgroundColor: C.floatingIconBg,
+                    color: 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <p style={{ color: 'var(--color-text-muted)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.5, display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 4, rowGap: 2 }}>
+                Hold
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    color: 'var(--color-accent)',
+                    fontWeight: 800,
+                    lineHeight: 1,
+                  }}
+                >
+                  <ArrowUp size={12} color="var(--color-accent)" weight="bold" />
+                  <span style={{ color: 'var(--color-accent)', fontWeight: 800 }}>Shift</span>
+                </span>
+                to connect a lower-order construct. Draw normally for a structural path.
               </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={doNotShowHocPathPrompt}
+                  onChange={(event) => setDoNotShowHocPathPrompt(event.target.checked)}
+                  style={{ width: 13, height: 13, accentColor: 'var(--color-accent)', cursor: 'pointer' }}
+                />
+                <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 10 }}>
+                  Do not show this again
+                </span>
+              </label>
             </div>
-            <div style={{ padding: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: '#242424' }}>
+            <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, backgroundColor: C.panelPop }}>
               <button
                 type="button"
                 onClick={createHocMeasurementPath}
@@ -6020,7 +6124,7 @@ export default function ModelCanvas({
                   cursor: 'pointer',
                   fontFamily: 'DM Sans, sans-serif',
                   fontSize: 10,
-                  fontWeight: 600,
+                  fontWeight: 700,
                 }}
               >
                 Use as lower-order construct
@@ -6032,9 +6136,9 @@ export default function ModelCanvas({
                   width: '100%',
                   height: 32,
                   borderRadius: 6,
-                  border: 'none',
-                  backgroundColor: '#2B2B2B',
-                  color: '#D7CDBC',
+                  border: `1px solid ${C.floatingBorderSoft}`,
+                  backgroundColor: C.floatingIconBg,
+                  color: 'var(--color-text-secondary)',
                   cursor: 'pointer',
                   fontFamily: 'DM Sans, sans-serif',
                   fontSize: 10,
@@ -6310,59 +6414,64 @@ export default function ModelCanvas({
 
 // ─── Latent Variable Settings Modal ──────────────────────────────────────────
 
-const ModalInput = ({ label, value, onChange, type = "text" }: any) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 }}>
-    <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
-    <input 
-      type={type}
-      value={value} 
-      onChange={(e) => onChange(e.target.value)}
-      style={{ backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '5px 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }}
-    />
-  </div>
-)
-
-const ModalSelect = ({ label, id, value, options, activeSelect, setActiveSelect, onChange }: any) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8, position: 'relative' }}>
-    <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
-    <div 
-      onClick={(e) => { e.stopPropagation(); setActiveSelect(activeSelect === id ? null : id) }}
-      style={{ 
-        backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '5px 8px', 
-        color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-      }}
-    >
-      <span>{value}</span>
-      <CaretDown size={10} color="var(--color-text-muted)" weight="bold" />
+const ModalInput = ({ label, value, onChange, type = "text" }: any) => {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 6 }}>
+      <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ height: 26, boxSizing: 'border-box', backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '0 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }}
+      />
     </div>
-    
-    {activeSelect === id && (
-      <div style={{ 
-        position: 'absolute', top: '100%', left: 0, right: 0, 
-        backgroundColor: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 6,
-        marginTop: 2, padding: 4, overflow: 'hidden', boxShadow: 'var(--shadow-modal-popover)',
-        zIndex: 4100
-      }}>
-        {options.map((o: string) => (
-          <div 
-            key={o}
-            onClick={() => { onChange(o); setActiveSelect(null) }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-border)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-            style={{ 
-              padding: '6px 8px', borderRadius: 4, fontSize: 11, color: o === value ? 'var(--color-accent)' : 'var(--color-text-secondary)', 
-              cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', backgroundColor: o === value ? 'rgb(var(--color-accent-rgb) / 0.08)' : 'transparent',
-              transition: 'background-color 0.1s'
-            }}
-          >
-            {o}
-          </div>
-        ))}
+  )
+}
+
+const ModalSelect = ({ label, id, value, options, activeSelect, setActiveSelect, onChange }: any) => {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 6, position: 'relative' }}>
+      <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
+      <div
+        onClick={(e) => { e.stopPropagation(); setActiveSelect(activeSelect === id ? null : id) }}
+        style={{
+          height: 26, boxSizing: 'border-box',
+          backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '0 8px',
+          color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+        }}
+      >
+        <span>{value}</span>
+        <CaretDown size={10} color="var(--color-text-muted)" weight="bold" />
       </div>
-    )}
-  </div>
-)
+
+      {activeSelect === id && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          backgroundColor: 'var(--color-panel-pop)', border: '1px solid var(--color-border)', borderRadius: 6,
+          marginTop: 2, padding: 4, overflow: 'hidden', boxShadow: 'var(--shadow-modal-popover)',
+          zIndex: 4100
+        }}>
+          {options.map((o: string) => (
+            <div
+              key={o}
+              onClick={() => { onChange(o); setActiveSelect(null) }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-hover)'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              style={{
+                padding: '6px 8px', borderRadius: 4, fontSize: 11, color: o === value ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', backgroundColor: o === value ? 'rgb(var(--color-accent-rgb) / 0.08)' : 'transparent',
+                transition: 'background-color 0.1s'
+              }}
+            >
+              {o}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function LatentVariableSettingsModal({
   construct,
@@ -6381,13 +6490,12 @@ function LatentVariableSettingsModal({
 }) {
   const [formData, setFormData] = useState({
     name: construct.name,
-    captionInReport: construct.captionInReport || '',
     type: construct.type,
     weightingMode: construct.weightingMode || 'Automatic',
     indicatorAlignment: construct.indicatorAlignment || construct.indicatorDirection || 'top',
-    sortOrder: construct.sortOrder || 'Alphabetical',
     margin: construct.margin || 10,
-    folded: construct.folded || false
+    folded: construct.folded || false,
+    isHigherOrder: construct.isHigherOrder || false
   })
 
   const [activeSelect, setActiveSelect] = useState<string | null>(null)
@@ -6407,91 +6515,112 @@ function LatentVariableSettingsModal({
       <div 
         style={{ 
           position: 'absolute', top: adjustedY, left: adjustedX,
-          width: modalWidth, backgroundColor: C.panelPop, borderRadius: 10, border: '1px solid var(--color-border)', 
-          padding: '12px 14px', boxShadow: C.floatingMenuShadow,
-          animation: 'fadeUp 0.1s ease-out', userSelect: 'none'
+          width: modalWidth,
+          height: modalHeight,
+          boxSizing: 'border-box',
+          backgroundColor: C.panelPop,
+          background: `linear-gradient(180deg, ${C.panelControl} 0%, ${C.panelPop} 100%)`,
+          borderRadius: 10,
+          border: `1px solid ${C.floatingBorderSoft}`,
+          boxShadow: C.floatingMenuShadow,
+          animation: 'fadeUp 0.1s ease-out',
+          userSelect: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '10px 12px',
         }} 
         onClick={e => { e.stopPropagation(); setActiveSelect(null) }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: construct.color }} />
-            <h3 style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif' }}>Settings</h3>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: construct.color }} />
+            <h3 style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif' }}>Construct settings</h3>
           </div>
-          <button onClick={onClose} style={{ backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: 2 }}><X size={14} /></button>
+          <button onClick={onClose} style={{ backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
         </div>
 
-        <ModalInput label="Name" value={formData.name} onChange={(v: string) => setFormData({ ...formData, name: v })} />
-        <ModalInput label="Caption" value={formData.captionInReport} onChange={(v: string) => setFormData({ ...formData, captionInReport: v })} />
-        
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <ModalSelect id="model" label="Model" value={formData.type} options={['Reflective', 'Formative']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, type: v })} />
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <ModalInput label="Name" value={formData.name} onChange={(v: string) => setFormData({ ...formData, name: v })} />
+
+          <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0 12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={formData.isHigherOrder}
+                onChange={(e) => setFormData({ ...formData, isHigherOrder: e.target.checked })}
+                style={{ width: 14, height: 14, cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+              />
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif' }}>Higher-order construct</span>
+            </label>
           </div>
-          <div style={{ flex: 1 }}>
-             <ModalSelect id="align" label="Align" value={formData.indicatorAlignment} options={['top', 'bottom', 'left', 'right']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, indicatorAlignment: v })} />
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <div style={{ flex: 1 }}>
+              <ModalSelect id="model" label="Model" value={formData.type} options={['Reflective', 'Formative']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, type: v })} />
+            </div>
+            <div style={{ flex: 1 }}>
+               <ModalSelect id="align" label="Align" value={formData.indicatorAlignment} options={['top', 'bottom', 'left', 'right']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, indicatorAlignment: v })} />
+            </div>
           </div>
-        </div>
-        
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
+
+          <div style={{ marginBottom: 6 }}>
             <ModalSelect id="weighting" label="Weights" value={formData.weightingMode} options={['Automatic', 'Factor', 'Correlation']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: string) => setFormData({ ...formData, weightingMode: v })} />
           </div>
-          <div style={{ flex: 1 }}>
-            <ModalSelect id="sort" label="Sort" value={formData.sortOrder} options={['Alphabetical', 'Loading', 'Original']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: string) => setFormData({ ...formData, sortOrder: v })} />
-          </div>
-        </div>
 
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 12, marginTop: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-            <div style={{ width: 72, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>Margin</label>
-              <DraftNumberInput
-                value={formData.margin}
-                min={0}
-                fallback={0}
-                onCommit={(value) => setFormData({ ...formData, margin: value })}
-                style={{ backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '5px 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }}
-              />
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+              <div style={{ width: 72, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>Margin</label>
+                <DraftNumberInput
+                  value={formData.margin}
+                  min={0}
+                  fallback={0}
+                  onCommit={(value) => setFormData({ ...formData, margin: value })}
+                  style={{ height: 26, boxSizing: 'border-box', backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '0 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif', width: '100%' }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={onCopy}
+                title="Copy"
+                style={{ width: 26, height: 26, boxSizing: 'border-box', borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Copy size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={onCut}
+                title="Cut"
+                style={{ width: 26, height: 26, boxSizing: 'border-box', borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Scissors size={14} />
+              </button>
             </div>
-            <button
-              onClick={onCopy}
-              title="Copy"
-              style={{ width: 28, height: 28, borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Copy size={14} />
-            </button>
-            <button
-              onClick={onCut}
-              title="Cut"
-              style={{ width: 28, height: 28, borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Scissors size={14} />
-            </button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>Folded</span>
-            <div 
-              onClick={() => setFormData({ ...formData, folded: !formData.folded })}
-              style={{ width: 28, height: 14, borderRadius: 7, backgroundColor: formData.folded ? 'var(--color-accent)' : 'var(--color-border)', position: 'relative', cursor: 'pointer', transition: '0.2s' }}
-            >
-              <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: '#FFFFFF', position: 'absolute', top: 2, left: formData.folded ? 16 : 2, transition: '0.2s' }} />
-            </div>
-          </div>
-        </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid var(--color-border)', paddingTop: 10 }}>
-          <button onClick={onClose} style={{ padding: '6px 12px', borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>Close</button>
-          <button 
-            onClick={() => onSave({ ...construct, ...formData, type: formData.type as 'Reflective' | 'Formative', indicatorDirection: formData.indicatorAlignment as any })} 
-            style={{ 
-              padding: '6px 16px', borderRadius: 5, border: '1px solid rgb(var(--color-accent-rgb) / 0.42)', backgroundColor: 'var(--color-accent)', 
-              color: 'var(--color-on-accent)', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
-              boxShadow: '0 8px 18px rgb(var(--color-accent-rgb) / 0.18)'
-            }}
-          >
-            Apply
-          </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 26 }}>
+              <span style={{ fontSize: 11, color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontWeight: 600 }}>Folded</span>
+              <div
+                onClick={() => setFormData({ ...formData, folded: !formData.folded })}
+                style={{ width: 28, height: 14, borderRadius: 7, backgroundColor: formData.folded ? 'var(--color-accent)' : 'var(--color-border)', position: 'relative', cursor: 'pointer', transition: '0.2s' }}
+              >
+                <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: '#FFFFFF', position: 'absolute', top: 2, left: formData.folded ? 16 : 2, transition: '0.2s' }} />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => onSave({ ...construct, ...formData, type: formData.type as 'Reflective' | 'Formative', indicatorDirection: formData.indicatorAlignment as any, isHigherOrder: formData.isHigherOrder })}
+              style={{
+                width: '100%', height: 30, borderRadius: 6, border: 'none', backgroundColor: 'var(--color-accent)',
+                color: 'var(--color-on-accent)', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
+                boxShadow: '0 4px 10px rgb(var(--color-accent-rgb) / 0.15)'
+              }}
+            >
+              Apply
+            </button>
+          </div>
         </div>
       </div>
     </div>

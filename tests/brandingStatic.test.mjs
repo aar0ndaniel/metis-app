@@ -14,7 +14,7 @@ const pkg = JSON.parse(read('package.json'))
 const OLD_BRAND_PATTERN = new RegExp([['WYT', 'HAM'].join(''), ['Wyt', 'ham'].join(''), ['wyt', 'ham'].join('')].join('|'))
 
 assert.equal(pkg.name, 'metis')
-assert.equal(pkg.version, '0.0.1')
+assert.equal(pkg.version, '0.0.2')
 assert.equal(pkg.description, 'metis')
 assert.equal(pkg.author, 'metis team')
 assert.equal(pkg.build.appId, 'com.metis.app')

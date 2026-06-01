@@ -339,7 +339,7 @@ async function notifyCrashReport(kind: string, summary: string, reportPath: stri
 
 function buildSplashHtml(): string {
   const splashTheme = readStoredThemePreference()
-  const splashVersionLabel = app.getVersion() || '0.0.1'
+  const splashVersionLabel = app.getVersion() || '0.0.2'
   const isLightSplash = splashTheme === 'light'
   const logoAssetPath = isLightSplash ? 'src/assets/logo-black.svg' : 'src/assets/logo-primary.svg'
   const splashColors = isLightSplash
@@ -1834,11 +1834,19 @@ function stopPlumberServer(options?: { preserveStartupPromise?: boolean }) {
 
 const INSTALL_CONFIG_NAME = 'install-config.json'
 
+interface InstallConfig {
+  rootPath?: string
+  workspaceDataPath?: string
+  exportPath?: string
+  liteSetupComplete?: boolean
+  rscriptPath?: string
+}
+
 function getInstallConfigPath(): string {
   return path.join(app.getPath('userData'), INSTALL_CONFIG_NAME)
 }
 
-function readInstallConfig(): { rootPath: string; liteSetupComplete?: boolean; rscriptPath?: string } | null {
+function readInstallConfig(): InstallConfig | null {
   try {
     const cfgPath = getInstallConfigPath()
     if (!fs.existsSync(cfgPath)) return null
@@ -1856,6 +1864,7 @@ function updateInstallConfig(updates: Record<string, unknown>): void {
     fs.writeFileSync(cfgPath, JSON.stringify({ ...existing, ...updates }, null, 2), 'utf-8')
   } catch (err: any) {
     console.error('[main] updateInstallConfig error:', err.message)
+    throw err
   }
 }
 
@@ -1936,6 +1945,7 @@ function isLiteBuild(): boolean {
 function getDataPath(): string {
   // 1. Check ephemeral config (installer flow / dev preview)
   const cfg = readInstallConfig()
+  if (cfg?.workspaceDataPath) return path.resolve(cfg.workspaceDataPath)
   if (cfg?.rootPath) return path.join(cfg.rootPath, 'metis')
 
   // 2. Check Windows Registry (Actual NSIS installation)
@@ -1956,6 +1966,12 @@ function getDataPath(): string {
 
   // 4. Absolute default
   return path.join(app.getPath('downloads'), 'metis')
+}
+
+function getExportPath(): string {
+  const cfg = readInstallConfig()
+  if (cfg?.exportPath) return path.resolve(cfg.exportPath)
+  return path.join(getDataPath(), 'exports')
 }
 
 function formatDisplayName(rawUsername: string): string {
@@ -2154,7 +2170,7 @@ function getTrustedDatasetRoots(): string[] {
 
 function getTrustedExportRoots(): string[] {
   return [
-    normalizeSecurityPath(path.join(getDataPath(), 'exports')),
+    normalizeSecurityPath(getExportPath()),
   ]
 }
 
@@ -2197,6 +2213,13 @@ function registerDialogOpenPaths(result: { canceled?: boolean; filePaths?: strin
     if (isWorkspaceFileLikePath(filePath)) {
       rememberApprovedWorkspacePath(filePath)
     }
+  }
+}
+
+function registerDialogDirectoryPaths(result: { canceled?: boolean; filePaths?: string[] }): void {
+  if (result?.canceled) return
+  for (const filePath of result?.filePaths ?? []) {
+    rememberApprovedPath(approvedRendererOpenPaths, filePath)
   }
 }
 
@@ -2275,7 +2298,7 @@ function isSetupNeeded(): boolean {
 
   const cfg = readInstallConfig()
   const regPath = getRegistryWorkspacePath()
-  const hasWorkspaceRoot = !!cfg?.rootPath || !!regPath
+  const hasWorkspaceRoot = !!cfg?.rootPath || !!cfg?.workspaceDataPath || !!regPath
 
   if (!hasWorkspaceRoot) return true
 
@@ -2655,11 +2678,13 @@ ipcMain.handle('window:isMaximized', () => getMainWindowState().isMaximized)
 // ─── File / Directory dialogs ─────────────────────────────────────────────────
 ipcMain.handle('dialog:openDirectory', async (_, options) => {
   if (!mainWindow) return
-  return await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(mainWindow, {
     defaultPath: getDataPath(),
     ...options,
     properties: ['openDirectory'],
   })
+  registerDialogDirectoryPaths(result)
+  return result
 })
 
 ipcMain.handle('dialog:openFile', async (_, options) => {
@@ -2676,7 +2701,7 @@ ipcMain.handle('dialog:openFile', async (_, options) => {
 ipcMain.handle('dialog:showSaveDialog', async (_, options) => {
   if (!mainWindow) return
   const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: getDataPath(),
+    defaultPath: getExportPath(),
     ...options,
   })
   registerDialogSavePath(result?.filePath, Array.isArray(options?.filters) ? options.filters : undefined)
@@ -2761,6 +2786,39 @@ ipcMain.handle('app:dataPath', async () => {
     const dataPath = getDataPath()
     ensureDataDir()
     return { success: true, dataPath }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('app:getStoragePaths', async () => {
+  try {
+    const workspacePath = getDataPath()
+    const exportPath = getExportPath()
+    return { success: true, dataPath: workspacePath, workspacePath, exportPath }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('app:setStoragePaths', async (_, data: { workspacePath?: string; exportPath?: string }) => {
+  try {
+    const workspacePath = path.resolve(String(data?.workspacePath ?? '').trim())
+    const exportPath = path.resolve(String(data?.exportPath ?? '').trim())
+    if (!String(data?.workspacePath ?? '').trim()) throw new Error('Workspace folder is required.')
+    if (!String(data?.exportPath ?? '').trim()) throw new Error('Export folder is required.')
+    const currentWorkspacePath = getDataPath()
+    const currentExportPath = getExportPath()
+    if (normalizeSecurityPath(workspacePath) !== normalizeSecurityPath(currentWorkspacePath) && !hasApprovedPath(approvedRendererOpenPaths, workspacePath)) {
+      throw new Error('Workspace folder must be selected through the folder picker.')
+    }
+    if (normalizeSecurityPath(exportPath) !== normalizeSecurityPath(currentExportPath) && !hasApprovedPath(approvedRendererOpenPaths, exportPath)) {
+      throw new Error('Export folder must be selected through the folder picker.')
+    }
+    fs.mkdirSync(workspacePath, { recursive: true })
+    fs.mkdirSync(exportPath, { recursive: true })
+    updateInstallConfig({ workspaceDataPath: workspacePath, exportPath })
+    return { success: true, dataPath: workspacePath, workspacePath, exportPath }
   } catch (err: any) {
     return { success: false, error: err.message }
   }

@@ -25,8 +25,25 @@ import {
   Plus,
   Minus,
   ArrowSquareOut,
+  FolderOpen,
 } from '@phosphor-icons/react'
 import { APP_BASE_RELEASE_LABEL, APP_BRAND_NAME, APP_EDITION } from '../config/appBranding'
+import {
+  ACCENT_OPTIONS,
+  DEFAULT_DARK_ACCENT_COLOR,
+  DEFAULT_DARK_ACCENT_RGB,
+  DEFAULT_DARK_ON_ACCENT,
+  DEFAULT_ACCENT_CHOICE,
+  DEFAULT_LIGHT_ACCENT_COLOR,
+  DEFAULT_LIGHT_ACCENT_RGB,
+  DEFAULT_LIGHT_ON_ACCENT,
+  LEGACY_PREF_ACCENT_COLOR_KEY,
+  METIS_PREF_ACCENT_COLOR_KEY,
+  normalizeAccentChoice,
+  resolveAccentColor,
+  resolveAccentOnColor,
+  resolveAccentRgb,
+} from '../utils/themeAccent'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Props {
@@ -37,8 +54,6 @@ interface Props {
 const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
-const METIS_PREF_ACCENT_COLOR_KEY = 'metis:prefs:accentColor'
-const LEGACY_PREF_ACCENT_COLOR_KEY = 'pls:prefs:accentColour'
 const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
 const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
 const METIS_UPDATES_URL = 'https://metis.emend.it.com/updates.html'
@@ -48,12 +63,6 @@ const GENERAL_PREVIEW_HEIGHT = 1026
 const FONT_SIZE_OPTIONS = ['Small', 'Default', 'Large', 'Extra Large'] as const
 type FontSizeOption = typeof FONT_SIZE_OPTIONS[number]
 type ThemePreference = 'Dark' | 'Light' | 'Auto'
-
-const ACCENT_OPTIONS = [
-  { label: 'Yellow', color: '#C6A24B', rgb: '198 162 75', onAccent: '#181818' },
-  { label: 'Olive green', color: '#87976B', rgb: '135 151 107', onAccent: '#10150B' },
-  { label: 'Sea blue', color: '#2F8FB3', rgb: '47 143 179', onAccent: '#FFFFFF' },
-] as const
 
 function getSavedSetting<T>(key: string, defaultVal: T): T {
   try {
@@ -107,11 +116,36 @@ function getSavedFontScaleSetting(): FontSizeOption {
 function getSavedAccentColourSetting(): string {
   try {
     const raw = localStorage.getItem(METIS_PREF_ACCENT_COLOR_KEY) ?? localStorage.getItem(LEGACY_PREF_ACCENT_COLOR_KEY)
-    const match = ACCENT_OPTIONS.find((option) => option.color.toLowerCase() === raw?.toLowerCase())
-    return match?.color ?? '#C6A24B'
+    return normalizeAccentChoice(raw)
   } catch {
-    return '#C6A24B'
+    return DEFAULT_ACCENT_CHOICE
   }
+}
+
+function resolveAccentColour(choice: string, theme: 'Dark' | 'Light'): string {
+  if (choice === DEFAULT_ACCENT_CHOICE) return theme === 'Light' ? DEFAULT_LIGHT_ACCENT_COLOR : DEFAULT_DARK_ACCENT_COLOR
+  return resolveAccentColor(choice)
+}
+
+function resolveAccentRgbValue(choice: string, theme: 'Dark' | 'Light'): string {
+  if (choice === DEFAULT_ACCENT_CHOICE) return theme === 'Light' ? DEFAULT_LIGHT_ACCENT_RGB : DEFAULT_DARK_ACCENT_RGB
+  return resolveAccentRgb(choice)
+}
+
+function resolveAccentOnColour(choice: string, theme: 'Dark' | 'Light'): string {
+  if (choice === DEFAULT_ACCENT_CHOICE) return theme === 'Light' ? DEFAULT_LIGHT_ON_ACCENT : DEFAULT_DARK_ON_ACCENT
+  return resolveAccentOnColor(choice)
+}
+
+function darkenHexColor(hex: string, amount = 0.24): string {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex)
+  if (!match) return hex
+  const value = match[1]
+  const next = [0, 2, 4].map((index) => {
+    const channel = Number.parseInt(value.slice(index, index + 2), 16)
+    return Math.max(0, Math.round(channel * (1 - amount)))
+  })
+  return `rgb(${next.join(' ')})`
 }
 
 function getSavedInterfaceContrastSetting(): number {
@@ -286,8 +320,8 @@ function MonitorPreview({ dark }: { dark: boolean }) {
           {/* Top bar */}
           <div style={{ height: 18, background: topBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px', flexShrink: 0 }}>
             <span style={{ color: logoC, fontFamily: 'DM Sans, sans-serif', fontSize: 6, fontWeight: 700 }}>{APP_BRAND_NAME}</span>
-            <div style={{ height: 11, padding: '0 5px', borderRadius: 3, background: dark ? 'rgb(var(--color-accent-rgb) / 0.22)' : 'rgba(135,151,107,0.20)', border: `1px solid ${dark ? 'rgb(var(--color-accent-rgb) / 0.3)' : 'rgba(135,151,107,0.32)'}`, display: 'flex', alignItems: 'center' }}>
-              <span style={{ color: dark ? '#FFFFFF' : '#10150B', fontFamily: 'DM Sans, sans-serif', fontSize: 5, fontWeight: 700 }}>Run</span>
+            <div style={{ height: 11, padding: '0 5px', borderRadius: 3, background: 'rgb(var(--color-accent-rgb) / 0.22)', border: '1px solid rgb(var(--color-accent-rgb) / 0.3)', display: 'flex', alignItems: 'center' }}>
+              <span style={{ color: 'var(--color-on-accent)', fontFamily: 'DM Sans, sans-serif', fontSize: 5, fontWeight: 700 }}>Run</span>
             </div>
           </div>
           {/* Body */}
@@ -301,8 +335,8 @@ function MonitorPreview({ dark }: { dark: boolean }) {
                 <div style={{ height: 3, width: '40%', borderRadius: 1, background: dark ? 'var(--color-border)' : '#E5E7EB' }} />
               </div>
               <div style={{ display: 'flex', gap: 3 }}>
-                <div style={{ height: 10, padding: '0 4px', borderRadius: 3, background: dark ? 'var(--color-accent)' : '#87976B', display: 'flex', alignItems: 'center' }}>
-                  <span style={{ color: '#0F0F13', fontFamily: 'DM Sans, sans-serif', fontSize: 4.5, fontWeight: 700 }}>{APP_BASE_RELEASE_LABEL}</span>
+                <div style={{ height: 10, padding: '0 4px', borderRadius: 3, background: 'var(--color-accent)', display: 'flex', alignItems: 'center' }}>
+                  <span style={{ color: 'var(--color-on-accent)', fontFamily: 'DM Sans, sans-serif', fontSize: 4.5, fontWeight: 700 }}>{APP_BASE_RELEASE_LABEL}</span>
                 </div>
                 <div style={{ height: 10, padding: '0 4px', borderRadius: 3, background: dark ? 'var(--color-border)' : '#E5E7EB', display: 'flex', alignItems: 'center' }}>
                   <span style={{ color: dark ? 'var(--color-text-secondary)' : 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 4.5 }}>Info</span>
@@ -344,6 +378,11 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const [language, setLanguage]           = useState(getSavedSetting('language', 'English'))
   const [startupAction, setStartupAction] = useState(getSavedSetting('startupAction', 'Open last workspace'))
   const [realtimeCalc, setRealtimeCalc]   = useState(getSavedSetting('realtimeCalc', true))
+  const [showHocPathPrompt, setShowHocPathPrompt] = useState(getSavedSetting('showHocPathPrompt', true))
+  const [workspaceFolder, setWorkspaceFolder] = useState('')
+  const [exportFolder, setExportFolder] = useState('')
+  const [initialStoragePaths, setInitialStoragePaths] = useState({ workspacePath: '', exportPath: '' })
+  const [storagePathError, setStoragePathError] = useState('')
 
   const [theme, setTheme] = useState<'Dark' | 'Light'>(() => getSavedThemeSetting())
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => getSavedThemePreferenceSetting())
@@ -368,10 +407,32 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const [exportFormat, setExportFormat]   = useState('HTML (.html)') // Locked
   const [decimalPlaces, setDecimalPlaces] = useState(getSavedSetting('decimalPlaces', 3))
 
+  useEffect(() => {
+    let cancelled = false
+    const loadStoragePaths = async () => {
+      try {
+        const result = await (window as any).electronAPI?.getStoragePaths?.()
+        if (cancelled || !result?.success) return
+        const workspacePath = String(result.workspacePath || result.dataPath || '')
+        const exportPath = String(result.exportPath || '')
+        setWorkspaceFolder(workspacePath)
+        setExportFolder(exportPath)
+        setInitialStoragePaths({ workspacePath, exportPath })
+      } catch (err: any) {
+        if (!cancelled) setStoragePathError(err?.message || 'Could not load storage folders.')
+      }
+    }
+    void loadStoragePaths()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   const [initialPreferences] = useState(() => ({
     language: getSavedSetting('language', 'English'),
     startupAction: getSavedSetting('startupAction', 'Open last workspace'),
     realtimeCalc: getSavedSetting('realtimeCalc', true),
+    showHocPathPrompt: getSavedSetting('showHocPathPrompt', true),
     theme: getSavedThemeSetting(),
     themePreference: getSavedThemePreferenceSetting(),
     fontScale: getSavedFontScaleSetting(),
@@ -394,6 +455,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     language,
     startupAction,
     realtimeCalc,
+    showHocPathPrompt,
     theme,
     themePreference,
     fontScale,
@@ -414,14 +476,37 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
 
   const hasPreferenceChanges = () => {
     const current = readCurrentPreferences()
-    return (Object.keys(initialPreferences) as (keyof typeof initialPreferences)[])
+    const hasLocalPreferenceChanges = (Object.keys(initialPreferences) as (keyof typeof initialPreferences)[])
       .some((key) => !Object.is(current[key], initialPreferences[key]))
+    return hasLocalPreferenceChanges || hasStoragePathChanges()
   }
 
-  const persistPreferences = () => {
+  const hasStoragePathChanges = () => (
+    workspaceFolder !== initialStoragePaths.workspacePath ||
+    exportFolder !== initialStoragePaths.exportPath
+  )
+
+  const persistStoragePaths = async () => {
+    if (!hasStoragePathChanges()) return
+    const result = await (window as any).electronAPI?.setStoragePaths?.({
+      workspacePath: workspaceFolder,
+      exportPath: exportFolder,
+    })
+    if (!result?.success) throw new Error(result?.error || 'Could not save storage folders.')
+    const nextWorkspacePath = String(result.workspacePath || workspaceFolder)
+    const nextExportPath = String(result.exportPath || exportFolder)
+    setWorkspaceFolder(nextWorkspacePath)
+    setExportFolder(nextExportPath)
+    setInitialStoragePaths({ workspacePath: nextWorkspacePath, exportPath: nextExportPath })
+    window.dispatchEvent(new Event('pls:storage-locations-updated'))
+  }
+
+  const persistPreferences = async () => {
     localStorage.setItem('pls:prefs:language', language)
     localStorage.setItem('pls:prefs:startupAction', startupAction)
     localStorage.setItem('pls:prefs:realtimeCalc', String(realtimeCalc))
+    localStorage.setItem('metis:prefs:showHocPathPrompt', String(showHocPathPrompt))
+    localStorage.setItem('pls:prefs:showHocPathPrompt', String(showHocPathPrompt))
     const resolvedTheme = resolveThemePreference(themePreference)
     localStorage.setItem('metis:prefs:theme', themePreference)
     localStorage.setItem('pls:prefs:theme', resolvedTheme)
@@ -442,18 +527,29 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     localStorage.setItem('pls:prefs:defaultSeed', defaultSeed)
     localStorage.setItem('pls:prefs:exportFormat', exportFormat)
     localStorage.setItem('pls:prefs:decimalPlaces', String(decimalPlaces))
+    await persistStoragePaths()
     
     window.dispatchEvent(new Event('pls:preferences-updated'))
   }
 
+  const saveAndClose = async () => {
+    try {
+      setStoragePathError('')
+      await persistPreferences()
+      onClose()
+    } catch (err: any) {
+      setStoragePathError(err?.message || 'Could not save preferences.')
+    }
+  }
+
   const handleSave = () => {
-    persistPreferences()
-    onClose()
+    void saveAndClose()
   }
 
   const handleBackToWorkspace = () => {
     if (hasPreferenceChanges()) {
-      persistPreferences()
+      void saveAndClose()
+      return
     }
     onClose()
   }
@@ -465,7 +561,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     setTheme('Dark')
     setThemePreference('Dark')
     setFontScale('Default')
-    setAccentColour('#C6A24B')
+    setAccentColour(DEFAULT_ACCENT_CHOICE)
     setInterfaceContrast(68)
     setAutosaveOn(true)
     setAutosaveInterval('Every 5 minutes')
@@ -478,6 +574,34 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     setDefaultSeed('Auto')
     setExportFormat('HTML (.html)')
     setDecimalPlaces(3)
+  }
+
+  const handleBrowseWorkspaceFolder = async () => {
+    try {
+      setStoragePathError('')
+      const result = await (window as any).electronAPI?.openDirectory?.({
+        title: 'Choose Metis workspace folder',
+        defaultPath: workspaceFolder || undefined,
+      })
+      const selected = result?.filePaths?.[0] || result?.filePath
+      if (!result?.canceled && selected) setWorkspaceFolder(String(selected))
+    } catch (err: any) {
+      setStoragePathError(err?.message || 'Could not open the workspace folder picker.')
+    }
+  }
+
+  const handleBrowseExportFolder = async () => {
+    try {
+      setStoragePathError('')
+      const result = await (window as any).electronAPI?.openDirectory?.({
+        title: 'Choose export folder',
+        defaultPath: exportFolder || undefined,
+      })
+      const selected = result?.filePaths?.[0] || result?.filePath
+      if (!result?.canceled && selected) setExportFolder(String(selected))
+    } catch (err: any) {
+      setStoragePathError(err?.message || 'Could not open the export folder picker.')
+    }
   }
 
   const setThemeChoice = (preference: ThemePreference) => {
@@ -528,6 +652,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   ] as const
   const [hoveredFullPreferenceNav, setHoveredFullPreferenceNav] = useState<FullPreferenceTab | null>(null)
   const [openPreferenceSelect, setOpenPreferenceSelect] = useState<string | null>(null)
+  const [hoveredFolderBrowse, setHoveredFolderBrowse] = useState<'workspace' | 'export' | null>(null)
   const isLightPreferenceTheme = theme === 'Light'
   const preferenceColors = isLightPreferenceTheme
     ? {
@@ -586,6 +711,11 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
         toggleOff: '#3A3A3A',
         topbar: '#141414',
       }
+  const activeAccentColour = resolveAccentColour(accentColour, theme)
+  const activeAccentRgb = resolveAccentRgbValue(accentColour, theme)
+  const activeAccentOnColour = resolveAccentOnColour(accentColour, theme)
+  const selectedPillBackground = isLightPreferenceTheme ? darkenHexColor(activeAccentColour) : activeAccentColour
+  const selectedPillText = isLightPreferenceTheme ? '#FFFFFF' : activeAccentOnColour
 
   const controlButtonBase: React.CSSProperties = {
     border: 'none',
@@ -627,7 +757,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
         width: 58,
         height: 32,
         borderRadius: 999,
-        background: value ? accentColour : preferenceColors.toggleOff,
+        background: value ? activeAccentColour : preferenceColors.toggleOff,
         padding: 3,
         justifyContent: value ? 'flex-end' : 'flex-start',
         flexShrink: 0,
@@ -652,6 +782,67 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       </div>
     </div>
   )
+
+  const folderLocationControl = (id: 'workspace' | 'export', value: string, onBrowse: () => void, ariaLabel: string) => {
+    const hovered = hoveredFolderBrowse === id
+    return (
+    <div className="flex items-center" style={{ width: 500, gap: 10, flexShrink: 0 }}>
+      <div
+        className="flex items-center"
+        style={{
+          flex: 1,
+          minWidth: 0,
+          height: 42,
+          borderRadius: 12,
+          background: preferenceColors.field,
+          border: `1px solid ${preferenceColors.border}`,
+          padding: '0 14px',
+        }}
+      >
+        <span
+          title={value || 'Not configured'}
+          style={{
+            color: value ? preferenceColors.text : preferenceColors.muted,
+            fontSize: 15,
+            fontWeight: 600,
+            lineHeight: '20px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {value || 'Not configured'}
+        </span>
+      </div>
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        onClick={onBrowse}
+        onMouseEnter={() => setHoveredFolderBrowse(id)}
+        onMouseLeave={() => setHoveredFolderBrowse(null)}
+        className="flex items-center justify-center"
+        style={{
+          ...controlButtonBase,
+          width: 108,
+          height: 42,
+          borderRadius: 12,
+          background: hovered ? activeAccentColour : preferenceColors.fieldAlt,
+          border: hovered ? `1px solid ${activeAccentColour}` : `1px solid ${preferenceColors.border}`,
+          color: hovered ? activeAccentOnColour : activeAccentColour,
+          flexShrink: 0,
+          gap: 7,
+          transition: 'background 160ms ease-in-out, border-color 160ms ease-in-out, color 160ms ease-in-out, transform 160ms ease-in-out',
+          transform: hovered ? 'translateY(-1px)' : 'translateY(0)',
+        }}
+      >
+        <FolderOpen size={18} color={hovered ? activeAccentOnColour : activeAccentColour} />
+        <span style={{ color: hovered ? activeAccentOnColour : activeAccentColour, fontSize: 14, fontWeight: 800, lineHeight: '18px' }}>
+          Change
+        </span>
+      </button>
+    </div>
+  )
+  }
 
   const segmentedControl = (
     options: readonly { label: string; value: string; width: number; fontWeight?: React.CSSProperties['fontWeight'] }[],
@@ -678,8 +869,8 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
               width: option.width,
               height: height - (padding * 2),
               borderRadius: 10,
-              background: selected ? preferenceColors.selectedBg : preferenceColors.segment,
-              color: selected ? preferenceColors.selectedText : preferenceColors.muted,
+              background: selected ? selectedPillBackground : preferenceColors.segment,
+              color: selected ? selectedPillText : preferenceColors.muted,
               fontSize: 16,
               fontWeight: selected ? 500 : option.fontWeight ?? 500,
               transition: 'background 180ms ease-in-out, color 180ms ease-in-out, transform 180ms ease-in-out',
@@ -828,7 +1019,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const decimalPlacesControl = (
     <div className="flex items-center" style={{ width: 286, height: 42, gap: 14 }}>
       <div style={{ position: 'relative', width: 196, height: 6, borderRadius: 999, background: preferenceColors.divider, overflow: 'hidden' }}>
-        <div style={{ width: Math.max(0, Math.min(196, (decimalPlaces / 8) * 196)), height: 6, borderRadius: 999, background: accentColour }} />
+        <div style={{ width: Math.max(0, Math.min(196, (decimalPlaces / 8) * 196)), height: 6, borderRadius: 999, background: activeAccentColour }} />
         <input
           type="range"
           min={1}
@@ -848,7 +1039,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const themePreviewCard = (label: 'Light' | 'Dark' | 'Auto', selected: boolean) => {
     const isLight = label === 'Light'
     const background = isLight ? '#D7D7D7' : label === 'Dark' ? '#1A1A1A' : '#3A3A3A'
-    const stroke = selected ? accentColour : preferenceColors.border
+    const stroke = selected ? activeAccentColour : preferenceColors.border
     const text = selected ? preferenceColors.text : preferenceColors.inactive
     const top = isLight ? '#ECECEC' : '#252525'
     const rail = isLight ? '#BFBFBF' : '#111111'
@@ -905,8 +1096,8 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
         flexShrink: 0,
       }}
     >
-      <div style={{ position: 'absolute', inset: 0, background: `${accentColour}33` }} />
-      <div style={{ position: 'absolute', left: 0, top: 0, width: contrastFillWidth, height: '100%', background: accentColour }} />
+      <div style={{ position: 'absolute', inset: 0, background: `rgb(${activeAccentRgb} / 0.2)` }} />
+      <div style={{ position: 'absolute', left: 0, top: 0, width: contrastFillWidth, height: '100%', background: activeAccentColour }} />
       <div
         className="flex items-center justify-center"
         style={{
@@ -915,11 +1106,11 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           top: 0,
           width: contrastThumbWidth,
           height: '100%',
-          background: accentColour,
+          background: activeAccentColour,
           transition: 'left 120ms ease-out, background 180ms ease-in-out',
         }}
       >
-          <span style={{ color: '#F5F1E7', fontSize: 15, fontWeight: 700, lineHeight: '20px' }}>{interfaceContrast}%</span>
+          <span style={{ color: activeAccentOnColour, fontSize: 15, fontWeight: 700, lineHeight: '20px' }}>{interfaceContrast}%</span>
       </div>
       <input
         aria-label="Interface contrast"
@@ -977,6 +1168,30 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             </>,
             82,
           )}
+          {rowDivider()}
+          {generalRow(
+            <>
+              {labelBlock('Metis workspace folder', 'Folder Metis scans for .ada workspaces.')}
+              {folderLocationControl('workspace', workspaceFolder, () => void handleBrowseWorkspaceFolder(), 'Browse for Metis workspace folder')}
+            </>,
+            82,
+          )}
+          {rowDivider()}
+          {generalRow(
+            <>
+              {labelBlock('Export folder', 'Default destination for HTML reports and saved results.')}
+              {folderLocationControl('export', exportFolder, () => void handleBrowseExportFolder(), 'Browse for export folder')}
+            </>,
+            82,
+          )}
+          {storagePathError && (
+            <div className="flex items-center" style={{ width: '100%', background: 'rgb(var(--color-danger-rgb) / 0.10)', padding: '12px 24px', gap: 10 }}>
+              <Info size={16} color="var(--color-danger)" weight="regular" />
+              <span style={{ color: 'var(--color-danger)', fontSize: 14, fontWeight: 700, lineHeight: '19px' }}>
+                {storagePathError}
+              </span>
+            </div>
+          )}
         </div>
 
         <div
@@ -989,6 +1204,15 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
               {labelBlock('Real-time calculations', 'Update model calculations automatically when inputs change.')}
               <div className="flex items-center justify-center" style={{ width: 90, gap: 10, flexShrink: 0 }}>
                 {toggleControl(realtimeCalc, setRealtimeCalc, 'Real-time calculations')}
+              </div>
+            </>,
+          )}
+          {rowDivider()}
+          {generalRow(
+            <>
+              {labelBlock('HOC path prompt', 'Ask before choosing between lower-order and structural HOC paths.')}
+              <div className="flex items-center justify-center" style={{ width: 90, gap: 10, flexShrink: 0 }}>
+                {toggleControl(showHocPathPrompt, setShowHocPathPrompt, 'HOC path prompt')}
               </div>
             </>,
           )}
@@ -1027,7 +1251,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             </>,
           )}
           <div className="flex items-center" style={{ width: '100%', background: preferenceColors.notice, padding: '16px 24px', gap: 12 }}>
-            <Info size={18} color="#D9BC67" weight="regular" />
+            <Info size={18} color={activeAccentColour} weight="regular" />
             <span style={{ color: preferenceColors.description, fontSize: 16, fontWeight: 700, lineHeight: '21px' }}>
               Autosave runs locally. Your datasets are never uploaded.
             </span>
@@ -1060,7 +1284,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
               ] as const).map((item) => {
                 const Icon = item.icon
                 const selected = themePreference === item.value
-                const color = selected ? accentColour : preferenceColors.muted
+                const color = selected ? activeAccentColour : preferenceColors.muted
                 return (
                   <button
                     key={item.value}
@@ -1073,8 +1297,8 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                     borderRadius: 20,
                       padding: '0 14px',
                       gap: 9,
-                      background: selected ? `${accentColour}4d` : '#00000000',
-                      border: selected ? `1px solid ${accentColour}` : '1px solid #00000000',
+                      background: selected ? `rgb(${activeAccentRgb} / 0.3)` : '#00000000',
+                      border: selected ? `1px solid ${activeAccentColour}` : '1px solid #00000000',
                       transition: 'background 180ms ease-in-out, border-color 180ms ease-in-out, color 180ms ease-in-out, transform 180ms ease-in-out',
                     }}
                   >
@@ -1117,12 +1341,12 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                       flex: 1,
                       height: '100%',
                       borderRadius: 10,
-                      background: selected ? preferenceColors.selectedBg : '#00000000',
+                      background: selected ? selectedPillBackground : '#00000000',
                       border: selected ? `1px solid ${preferenceColors.border}` : '1px solid #00000000',
                       transition: 'background 180ms ease-in-out, border-color 180ms ease-in-out',
                     }}
                   >
-                    <span style={{ color: selected ? preferenceColors.selectedText : preferenceColors.muted, fontSize: 16, fontWeight: selected ? 700 : 600, lineHeight: '21px' }}>{option}</span>
+                    <span style={{ color: selected ? selectedPillText : preferenceColors.muted, fontSize: 16, fontWeight: selected ? 700 : 600, lineHeight: '21px' }}>{option}</span>
                   </button>
                 )
               })}
@@ -1136,26 +1360,29 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             </div>
             <div className="flex items-center" style={{ gap: 12, flexShrink: 0 }}>
               {ACCENT_OPTIONS.map((option) => {
-                const selected = accentColour.toLowerCase() === option.color.toLowerCase()
+                const selected = accentColour.toLowerCase() === option.value.toLowerCase()
+                const swatchColor = option.value === DEFAULT_ACCENT_CHOICE ? activeAccentColour : option.color
+                const defaultAccentSwatchBackground = `linear-gradient(90deg, ${DEFAULT_DARK_ACCENT_COLOR} 0 50%, ${DEFAULT_LIGHT_ACCENT_COLOR} 50% 100%)`
+                const swatchBackground = option.value === DEFAULT_ACCENT_CHOICE ? defaultAccentSwatchBackground : swatchColor
                 return (
                   <button
-                    key={option.color}
+                    key={option.value}
                     type="button"
                     aria-label={`${option.label} accent`}
-                    onClick={() => setAccentColour(option.color)}
+                    onClick={() => setAccentColour(option.value)}
                     className="flex items-center justify-center"
                     style={{
                       ...controlButtonBase,
                       width: 30,
                       height: 30,
                       borderRadius: 999,
-                      background: selected ? preferenceColors.selectedBg : option.color,
-                      border: selected ? `2px solid ${option.color}` : '1px solid #00000044',
+                      background: selected ? preferenceColors.selectedBg : swatchBackground,
+                      border: selected ? `2px solid ${swatchColor}` : '1px solid #00000044',
                       padding: 0,
                       transition: 'background 180ms ease-in-out, border-color 180ms ease-in-out, transform 180ms ease-in-out',
                     }}
                   >
-                    <span style={{ width: 20, height: 20, borderRadius: '50%', background: option.color, display: 'block' }} />
+                    <span style={{ width: 20, height: 20, borderRadius: '50%', background: swatchBackground, display: 'block' }} />
                   </button>
                 )
               })}
@@ -1248,7 +1475,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           {rowDivider()}
           {settingRow('Decimal places', 'Number formatting used in tables, diagnostics, and generated reports.', decimalPlacesControl, 310)}
           <div className="flex items-center" style={{ width: '100%', background: preferenceColors.notice, padding: '16px 24px', gap: 12 }}>
-            <Info size={18} color="#D9BC67" weight="regular" />
+            <Info size={18} color={activeAccentColour} weight="regular" />
             <span style={{ color: preferenceColors.description, fontSize: 16, fontWeight: 400, lineHeight: '21px' }}>
               HTML reports open in your browser and keep tables ready for sharing or review.
             </span>
@@ -1259,11 +1486,11 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   )
 
   const actionButton = (label: string, icon: React.ReactNode, background: string, onClick: () => void) => {
-    const isAccent = background === accentColour
-    const btnBg = isAccent ? accentColour : (isLightPreferenceTheme ? preferenceColors.fieldAlt : '#3b3b3bff')
-    const textColor = isAccent ? '#FFFFFF' : preferenceColors.text
+    const isAccent = background === activeAccentColour
+    const btnBg = isAccent ? activeAccentColour : (isLightPreferenceTheme ? preferenceColors.fieldAlt : '#3b3b3bff')
+    const textColor = isAccent ? activeAccentOnColour : preferenceColors.text
     const clonedIcon = React.isValidElement(icon)
-      ? React.cloneElement(icon as any, { color: isAccent ? '#FFFFFF' : preferenceColors.text })
+      ? React.cloneElement(icon as any, { color: isAccent ? activeAccentOnColour : preferenceColors.text })
       : icon
     return (
       <button
@@ -1305,7 +1532,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
         <div className="flex flex-col overflow-hidden" style={{ width: 990, background: preferenceColors.card, border: `1px solid ${preferenceColors.border}`, borderRadius: 18 }}>
           {cardHeaderBlock('Updates', 'Check the public release channel and review what changed before restarting.')}
           {rowDivider()}
-          {settingRow('Check for updates', 'Look for newer Metis desktop releases.', actionButton('Check updates', <ArrowsClockwise size={18} color="#F5F1E7" />, accentColour, () => openMetisExternal(METIS_UPDATES_URL)), 210, 70)}
+          {settingRow('Check for updates', 'Look for newer Metis desktop releases.', actionButton('Check updates', <ArrowsClockwise size={18} color="#F5F1E7" />, activeAccentColour, () => openMetisExternal(METIS_UPDATES_URL)), 210, 70)}
           {rowDivider()}
           {settingRow('Release notes', 'Open the latest changelog in your browser.', actionButton('Release notes', <ArrowSquareOut size={18} color="#F5F1E7" />, '#3b3b3bff', () => openMetisExternal(METIS_UPDATES_URL)), 210, 70)}
         </div>
@@ -1416,7 +1643,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           <aside
             className="flex flex-col shrink-0"
             style={{
-              width: 450,
+              width: 340,
               height: '100%',
               background: preferenceColors.sidebar,
               padding: '24px 12px',
@@ -1429,20 +1656,20 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
               className="flex items-center"
               style={{
                 ...controlButtonBase,
-                width: 426,
+                width: 316,
                 height: 48,
                 padding: '0 14px',
                 gap: 13,
                 color: preferenceColors.muted,
               }}
             >
-              <ArrowLeft size={22} color={preferenceColors.muted} />
-              <span style={{ color: preferenceColors.muted, fontSize: 22, fontWeight: 600, lineHeight: '29px' }}>
+              <ArrowLeft size={18} color={preferenceColors.muted} />
+              <span style={{ color: preferenceColors.muted, fontSize: 16, fontWeight: 600, lineHeight: '22px' }}>
                 Back to workspace
               </span>
             </button>
 
-            <nav className="flex flex-col" style={{ width: 426, gap: 4 }}>
+            <nav className="flex flex-col" style={{ width: 316, gap: 4 }}>
               {fullPreferenceNavItems.map((item) => {
                 const Icon = item.icon
                 const active = activePreferenceTab === item.id
@@ -1458,17 +1685,17 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                     className="flex items-center"
                     style={{
                       ...controlButtonBase,
-                      width: 426,
-                      height: 54,
-                      borderRadius: 14,
-                      padding: '0 18px',
-                      gap: 14,
+                      width: 316,
+                      height: 46,
+                      borderRadius: 12,
+                      padding: '0 14px',
+                      gap: 12,
                       background: active || hoveredFullPreferenceNav === item.id ? preferenceColors.navActive : '#00000000',
                       color: itemColor,
                     }}
                   >
-                    <Icon size={22} color={itemColor} weight="regular" />
-                    <span style={{ color: itemColor, fontSize: 21, fontWeight: 400, lineHeight: '27px' }}>
+                    <Icon size={18} color={itemColor} weight="regular" />
+                    <span style={{ color: itemColor, fontSize: 16, fontWeight: 400, lineHeight: '22px' }}>
                       {item.label}
                     </span>
                   </button>
@@ -1477,7 +1704,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             </nav>
 
             <div className="flex-1" />
-            <div className="flex flex-col" style={{ width: 426, minHeight: 66, padding: 18, gap: 10 }}>
+            <div className="flex flex-col" style={{ width: 316, minHeight: 66, padding: 18, gap: 10 }}>
               <div
                 className="flex items-center"
                 style={{
