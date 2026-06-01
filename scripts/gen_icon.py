@@ -1,9 +1,5 @@
 from pathlib import Path
-
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QGuiApplication, QImage, QPainter
-from PyQt5.QtSvg import QSvgRenderer
-from PIL import Image
+import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -18,9 +14,25 @@ TEMP_DIR = REPO_ROOT / "build" / ".icon-tmp"
 OUTPUT_PNG = TEMP_DIR / "icon-render.png"
 ICON_SIZE = 512
 
+ALL_OUTPUTS = [
+    DEST_RESOURCES,
+    DEST_BUILD,
+    DEST_RESOURCES_PNG,
+    DEST_BUILD_PNG,
+    DEST_RESOURCES_ICNS,
+    DEST_BUILD_ICNS,
+]
+
+
+def all_icons_exist() -> bool:
+    """Check if all icon output files already exist."""
+    return all(p.exists() and p.stat().st_size > 0 for p in ALL_OUTPUTS)
+
 
 def render_svg_to_png(svg_path: Path, png_path: Path) -> None:
-    from PyQt5.QtGui import QColor, QPen, QBrush
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtGui import QGuiApplication, QImage, QPainter, QColor, QPen, QBrush
+    from PyQt5.QtSvg import QSvgRenderer
     from PyQt5.QtCore import QRectF
 
     app = QGuiApplication([])
@@ -38,10 +50,10 @@ def render_svg_to_png(svg_path: Path, png_path: Path) -> None:
 
     # Draw solid black background
     rect = QRectF(0, 0, ICON_SIZE, ICON_SIZE)
-    
+
     # Rounded corners for the icon background
     radius = 90
-    
+
     painter.setPen(Qt.NoPen)
     painter.setBrush(QBrush(QColor("#000000")))
     painter.drawRoundedRect(rect, radius, radius)
@@ -51,7 +63,7 @@ def render_svg_to_png(svg_path: Path, png_path: Path) -> None:
     logo_padding = 80
     logo_rect = QRectF(logo_padding, logo_padding, ICON_SIZE - 2*logo_padding, ICON_SIZE - 2*logo_padding)
     renderer.render(painter, logo_rect)
-    
+
     painter.end()
 
     png_path.parent.mkdir(parents=True, exist_ok=True)
@@ -62,6 +74,7 @@ def render_svg_to_png(svg_path: Path, png_path: Path) -> None:
 
 
 def png_to_ico(png_path: Path, ico_path: Path) -> None:
+    from PIL import Image
     image = Image.open(png_path).convert("RGBA")
     ico_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(
@@ -72,6 +85,7 @@ def png_to_ico(png_path: Path, ico_path: Path) -> None:
 
 
 def png_to_icns(png_path: Path, icns_path: Path) -> None:
+    from PIL import Image
     image = Image.open(png_path).convert("RGBA")
     icns_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(
@@ -82,7 +96,29 @@ def png_to_icns(png_path: Path, icns_path: Path) -> None:
 
 
 def main() -> int:
-    render_svg_to_png(SRC_SVG, OUTPUT_PNG)
+    # Skip regeneration if all icon files already exist
+    if all_icons_exist():
+        print("All icon files already exist, skipping generation.")
+        for p in ALL_OUTPUTS:
+            print(f"  ✓ {p}")
+        return 0
+
+    # Only import PyQt5 when we actually need to regenerate
+    try:
+        render_svg_to_png(SRC_SVG, OUTPUT_PNG)
+    except ImportError as e:
+        print(f"Warning: Cannot regenerate icons ({e}).")
+        print("Install PyQt5 to regenerate icons from SVG, or commit pre-built icon files.")
+        # Check if at least some outputs exist to allow a partial pass
+        missing = [p for p in ALL_OUTPUTS if not p.exists()]
+        if missing:
+            print("Missing icon files:")
+            for p in missing:
+                print(f"  ✗ {p}")
+            return 1
+        print("All icon files exist despite import error, continuing.")
+        return 0
+
     DEST_RESOURCES_PNG.write_bytes(OUTPUT_PNG.read_bytes())
     DEST_BUILD_PNG.write_bytes(OUTPUT_PNG.read_bytes())
     png_to_ico(OUTPUT_PNG, DEST_RESOURCES)
