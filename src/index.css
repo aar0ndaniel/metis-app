@@ -169,9 +169,9 @@
   --color-success: #87976B;
   --color-success-rgb: 135 151 107;
   --color-success-border: rgba(135, 151, 107, 0.38);
-  --color-calculation-accent: var(--color-success);
-  --color-calculation-accent-rgb: var(--color-success-rgb);
-  --color-on-calculation-accent: var(--color-on-success);
+  --color-calculation-accent: var(--color-accent);
+  --color-calculation-accent-rgb: var(--color-accent-rgb);
+  --color-on-calculation-accent: var(--color-on-accent);
   --color-warning: #DC6973;
   --color-warning-rgb: 220 105 115;
   --color-danger: #C65D44;

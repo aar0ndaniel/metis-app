@@ -16,25 +16,25 @@ assert.match(
 
 assert.match(
   source,
-  /workspaceActiveBackground\(ws\.color\)[\s\S]*:\s*'var\(--color-workspace-expanded\)'/,
+  /workspaceActiveBackground\(workspaceColor\)[\s\S]*:\s*'var\(--color-workspace-expanded\)'/,
   'Expanded active folders should use folder color while non-active expanded folders stay on neutral workspace token.'
 )
 
 assert.match(
   source,
-  /background:\s*isActive\s*\?\s*workspaceActiveHeaderBackground\(ws\.color\)\s*:\s*'transparent'/,
+  /background:\s*isActive\s*\?\s*workspaceActiveHeaderBackground\(workspaceColor\)\s*:\s*'transparent'/,
   'Expanded active folder headers should get a subtle folder-color header tint.'
 )
 
 assert.match(
   source,
-  /border:\s*isActive\s*\?\s*workspaceActiveBorder\(ws\.color\)\s*:\s*'1px solid var\(--color-border\)'/,
+  /border:\s*isActive\s*\?\s*workspaceActiveBorder\(workspaceColor\)\s*:\s*'1px solid var\(--color-border\)'/,
   'Expanded active folders should get a subtle folder-color border.'
 )
 
 assert.match(
   source,
-  /background:\s*isActive\s*\?\s*workspaceActiveBackground\(ws\.color\)\s*:[\s\S]*hoveredId === ws\.id/,
+  /background:\s*isActive\s*\?\s*workspaceActiveBackground\(workspaceColor\)\s*:[\s\S]*hoveredId === ws\.id/,
   'Collapsed active folders should use the same folder-color active background.'
 )
 

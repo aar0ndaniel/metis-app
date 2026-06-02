@@ -42,14 +42,26 @@ assert.match(
 
 assert.match(
   electronMainSource,
-  /function resolveRscriptCommand\(\): string \{[\s\S]*if \(!isLiteBuild\(\) && fs\.existsSync\(extractedRscriptPath\)\) \{[\s\S]*return extractedRscriptPath[\s\S]*METIS_RSCRIPT_PATH/,
-  'Bundle should prefer the extracted bundled Rscript before any stale Lite/system override.'
+  /function resolveRscriptCommand\(\): string \{[\s\S]*if \(!isLiteBuild\(\)\) \{[\s\S]*return extractedRscriptPath[\s\S]*METIS_RSCRIPT_PATH/,
+  'Bundle should use the bundled Rscript path before any stale Lite/system override.'
+)
+
+assert.doesNotMatch(
+  electronMainSource,
+  /if \(!isLiteBuild\(\) && fs\.existsSync\(extractedRscriptPath\)\)/,
+  'Bundle Rscript resolution should not fall back to a system Rscript when the extracted runtime is missing.'
 )
 
 assert.match(
   electronMainSource,
-  /function isLiteBuild\(\): boolean \{[\s\S]*const \{ archivePath \} = getBundledPortableRuntimePaths\(\)[\s\S]*return !fs\.existsSync\(archivePath\)/,
-  'Lite versus Bundle detection should be based on the archive shipped with the current app, not stale extracted runtimes.'
+  /function getConfiguredAppEdition\(\): 'Bundle' \| 'Lite' \{[\s\S]*__METIS_APP_EDITION__ === 'Lite' \? 'Lite' : 'Bundle'/,
+  'Electron main should use the compiled app edition to distinguish packaged Lite and Bundle builds.'
+)
+
+assert.match(
+  electronMainSource,
+  /function isLiteBuild\(\): boolean \{[\s\S]*if \(isDev\) return !fs\.existsSync\(archivePath\)[\s\S]*return getConfiguredAppEdition\(\) === 'Lite'/,
+  'Packaged Lite versus Bundle detection should use the build edition while dev keeps archive-based detection.'
 )
 
 assert.match(
@@ -104,6 +116,54 @@ assert.match(
   electronMainSource,
   /function isBundledPortableRuntimeReady\(\): boolean \{[\s\S]*process\.platform === 'win32' \|\| fs\.existsSync\(getBundledUnixRuntimeRelocationMarker\(runtimeDir\)\)/,
   'Unix bundled R should not be considered ready until conda-unpack has completed.'
+)
+
+assert.match(
+  electronMainSource,
+  /function isBundledPortableRuntimeReady\(\): boolean \{[\s\S]*if \(fs\.existsSync\(archivePath\)\) return false[\s\S]*return isLiteBuild\(\)/,
+  'A packaged Bundle with no runtime archive should stay in setup instead of being treated as runtime-ready.'
+)
+
+assert.match(
+  electronMainSource,
+  /function getBundledPortableRuntimeStatus\(\)[\s\S]*appEdition: getConfiguredAppEdition\(\)[\s\S]*archiveExists[\s\S]*archiveSize[\s\S]*runtimeDirExists[\s\S]*extractedRscriptExists[\s\S]*relocationMarkerExists[\s\S]*condaUnpackExists/,
+  'Bundle runtime diagnostics should report edition, archive, extraction, Rscript, and Unix relocation status.'
+)
+
+assert.match(
+  electronMainSource,
+  /Bundled Rscript missing at \$\{runtimeStatus\.extractedRscriptPath\}; archive exists=\$\{runtimeStatus\.archiveExists\}/,
+  'Plumber startup should log missing bundled Rscript status before returning not-ready.'
+)
+
+assert.match(
+  electronMainSource,
+  /await prepareBundledUnixRuntime\(runtimeStatus\.runtimeDir, runtimeStatus\.extractedRscriptPath\)/,
+  'Plumber startup should repair missing Unix relocation markers before launching bundled R.'
+)
+
+assert.match(
+  electronMainSource,
+  /ipcMain\.handle\('plumber:health'[\s\S]*const ready = await ensurePlumberReady\(\)[\s\S]*runtimeStatus: getBundledPortableRuntimeStatus\(\)[\s\S]*recentPlumberLogs: getRecentPlumberLogs\(\)/,
+  'Plumber health checks should expose runtime status and recent backend logs when startup fails.'
+)
+
+assert.match(
+  electronMainSource,
+  /PLS backend is not ready[\s\S]*runtimeStatus: getBundledPortableRuntimeStatus\(\)[\s\S]*recentPlumberLogs: getRecentPlumberLogs\(\)/,
+  'Analysis calls should include bundled runtime diagnostics when the R backend is not ready.'
+)
+
+assert.match(
+  electronMainSource,
+  /Lite build has no bundled R archive[\s\S]*skipping extraction[\s\S]*Bundled R archive was not found at \$\{archivePath\}/,
+  'Lite setup should skip missing archives, while Bundle installer extraction should fail clearly when the platform R archive is missing.'
+)
+
+assert.match(
+  electronMainSource,
+  /Failed to start \$\{executablePath\}: \$\{err\.message\}/,
+  'Archive and relocation process failures should include the executable that failed to start.'
 )
 
 assert.match(

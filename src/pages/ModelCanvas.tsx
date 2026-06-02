@@ -1045,7 +1045,7 @@ export default function ModelCanvas({
   // Drag-and-drop / New Construct Modal
   const [showNewConstructModal, setShowNewConstructModal] = useState(false)
   const [newConstructName, setNewConstructName] = useState('')
-  const [newConstructColor, setNewConstructColor] = useState(C.secondary)
+  const [newConstructColor, setNewConstructColor] = useState(SWATCH_COLORS[0])
   const [newConstructType, setNewConstructType] = useState<MeasurementType>('Reflective')
   const [newConstructIsHigherOrder, setNewConstructIsHigherOrder] = useState(false)
   const [hoveredNewConstructColor, setHoveredNewConstructColor] = useState<string | null>(null)
@@ -1056,7 +1056,7 @@ export default function ModelCanvas({
   const resetNewConstructModal = useCallback(() => {
     setShowNewConstructModal(false)
     setNewConstructName('')
-    setNewConstructColor(C.secondary)
+    setNewConstructColor(SWATCH_COLORS[0])
     setNewConstructType('Reflective')
     setNewConstructIsHigherOrder(false)
     setHoveredNewConstructColor(null)
@@ -3590,7 +3590,7 @@ export default function ModelCanvas({
       setNewConstructPos({ x: drawStart.x, y: drawStart.y })
       setPendingVars([])
       setNewConstructName(`VAR_${constructs.length + 1}`)
-      setNewConstructColor(C.secondary)
+      setNewConstructColor(SWATCH_COLORS[0])
       setShowNewConstructModal(true)
       setIsDrawing(false); setDrawStart(null); setDrawCurrent(null)
       return
@@ -3733,7 +3733,7 @@ export default function ModelCanvas({
       setNewConstructPos({ x: mouseX, y: mouseY })
       setPendingVars(draggedVars)
       setNewConstructName(draggedVars.length === 1 ? draggedVars[0] : `VAR_${constructs.length + 1}`)
-      setNewConstructColor(C.secondary)
+      setNewConstructColor(SWATCH_COLORS[0])
       setNewConstructType('Reflective')
       setNewConstructIsHigherOrder(false)
       setHoveredNewConstructColor(null)
@@ -5815,12 +5815,13 @@ export default function ModelCanvas({
             onClick={(e) => e.stopPropagation()}
             style={{
               width: 356,
-              backgroundColor: '#242424',
+              backgroundColor: C.panelPop,
               borderRadius: 14,
+              border: `1px solid ${C.floatingBorderSoft}`,
               boxShadow: 'var(--shadow-modal)',
             }}
           >
-            <div style={{ height: 188, padding: '22px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16, backgroundColor: '#242424' }}>
+            <div style={{ height: 188, padding: '22px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16, backgroundColor: C.panelPop }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
                 <div
                   style={{
@@ -5837,15 +5838,15 @@ export default function ModelCanvas({
                   <span style={{ color: newConstructColor, fontFamily: 'DM Sans, sans-serif', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>+</span>
                 </div>
                 <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
-                  <h2 style={{ color: '#F5F1E7', fontSize: 16, fontWeight: 500, margin: 0, fontFamily: 'DM Sans, sans-serif', lineHeight: 1.2 }}>New Construct</h2>
-                  <p style={{ color: '#A8A8A8', fontSize: 10, margin: 0, lineHeight: 1.35, fontFamily: 'DM Sans, sans-serif' }}>
+                  <h2 style={{ color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, margin: 0, fontFamily: 'DM Sans, sans-serif', lineHeight: 1.2 }}>New Construct</h2>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: 10, margin: 0, lineHeight: 1.35, fontFamily: 'DM Sans, sans-serif' }}>
                     Enter construct name and choose a color
                   </p>
                 </div>
               </div>
 
               <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0, borderRadius: 5, padding: '9px 8px', border: '1px solid #3a3a3a', display: 'flex', alignItems: 'center' }}>
+                <div style={{ flex: 1, minWidth: 0, borderRadius: 5, padding: '9px 8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-input)', display: 'flex', alignItems: 'center' }}>
                   <input 
                     autoFocus
                     value={newConstructName}
@@ -5860,7 +5861,7 @@ export default function ModelCanvas({
                       background: 'none',
                       border: 'none',
                       outline: 'none',
-                      color: '#F5F1E7',
+                      color: 'var(--color-text-primary)',
                       fontSize: 12,
                       fontFamily: 'DM Sans, sans-serif',
                       lineHeight: 1.2,
@@ -5915,10 +5916,11 @@ export default function ModelCanvas({
                     width: 158,
                     height: 32,
                     borderRadius: 999,
-                    backgroundColor: '#191919',
+                    backgroundColor: C.panelControl,
                     padding: 2,
                     display: 'flex',
-                    boxShadow: '0 1px 2px rgba(0,0,0,0.34)',
+                    border: `1px solid ${C.floatingBorderSoft}`,
+                    boxShadow: 'var(--shadow-modal-popover)',
                   }}
                 >
                   {(['Reflective', 'Formative'] as const).map((type) => {
@@ -5932,8 +5934,8 @@ export default function ModelCanvas({
                           flex: 1,
                           border: 'none',
                           borderRadius: 999,
-                          backgroundColor: active ? '#373737' : '#191919',
-                          color: active ? '#d3d3d3' : '#8F8F8F',
+                          backgroundColor: active ? C.panelControlActive : 'transparent',
+                          color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
                           fontSize: 10,
                           fontWeight: 400,
                           fontFamily: 'DM Sans, sans-serif',
@@ -5978,7 +5980,7 @@ export default function ModelCanvas({
                       height: 12,
                       borderRadius: 999,
                       border: '1px solid rgb(var(--color-accent-rgb) / 0.62)',
-                      backgroundColor: newConstructIsHigherOrder ? 'var(--color-accent)' : '#191919',
+                      backgroundColor: newConstructIsHigherOrder ? 'var(--color-accent)' : C.panelControl,
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
@@ -5987,21 +5989,21 @@ export default function ModelCanvas({
                   >
                     {newConstructIsHigherOrder && <Check size={8} color="var(--color-on-accent)" weight="bold" />}
                   </span>
-                  <span style={{ color: '#D7CDBC', fontSize: 10, fontWeight: 400, whiteSpace: 'nowrap' }}>Higher-order construct</span>
+                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 10, fontWeight: 400, whiteSpace: 'nowrap' }}>Higher-order construct</span>
                 </button>
               </div>
             </div>
 
-            <div style={{ height: 64, padding: '0 24px', backgroundColor: '#202020', display: 'flex', justifyContent: 'end', alignItems: 'center', gap: 12 }}>
+            <div style={{ height: 64, padding: '0 24px', backgroundColor: 'var(--color-surface)', borderTop: `1px solid ${C.floatingBorderSoft}`, display: 'flex', justifyContent: 'end', alignItems: 'center', gap: 12 }}>
               <button
                 onClick={resetNewConstructModal}
                 style={{
                   width: 92,
                   height: 34,
                   borderRadius: 6,
-                  border: 'none',
-                  backgroundColor: '#2B2B2B',
-                  color: '#8F8F8F',
+                  border: `1px solid ${C.floatingBorderSoft}`,
+                  backgroundColor: C.panelControl,
+                  color: 'var(--color-text-secondary)',
                   fontSize: 11,
                   fontWeight: 400,
                   cursor: 'pointer',
@@ -6162,12 +6164,13 @@ export default function ModelCanvas({
             onClick={(event) => event.stopPropagation()}
             style={{
               width: 313,
-              backgroundColor: '#242424',
+              backgroundColor: C.panelPop,
               borderRadius: 14,
+              border: `1px solid ${C.floatingBorderSoft}`,
               boxShadow: 'var(--shadow-modal)',
             }}
           >
-            <div style={{ minHeight: 99, padding: '18px 20px 8px', display: 'flex', flexDirection: 'column', gap: 12, backgroundColor: '#242424' }}>
+            <div style={{ minHeight: 99, padding: '18px 20px 8px', display: 'flex', flexDirection: 'column', gap: 12, backgroundColor: C.panelPop }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div
                   style={{
@@ -6185,19 +6188,19 @@ export default function ModelCanvas({
                   <span style={{ color: 'var(--color-warning)', fontFamily: 'DM Sans, sans-serif', fontSize: 15, fontWeight: 800 }}>!</span>
                 </div>
                 <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <h2 style={{ color: '#F5F1E7', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}>
+                  <h2 style={{ color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}>
                     Path direction conflict
                   </h2>
-                  <p style={{ color: '#ffffff80', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.35 }}>
+                  <p style={{ color: 'var(--color-text-secondary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.35 }}>
                     Resolve the path direction before continuing.
                   </p>
                 </div>
               </div>
-              <p style={{ color: '#D7CDBC', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
+              <p style={{ color: 'var(--color-text-secondary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
                 {constructs.find((construct) => construct.id === hocPathConflict.hocId)?.name ?? 'This construct'} is {hocPathConflict.currentType}, but this path suggests {hocPathConflict.suggestedType}.
               </p>
             </div>
-            <div style={{ padding: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: '#242424' }}>
+            <div style={{ padding: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: C.panelPop }}>
               <button
                 type="button"
                 onClick={keepHocMeasurementType}
@@ -6205,9 +6208,9 @@ export default function ModelCanvas({
                   width: '100%',
                   height: 32,
                   borderRadius: 6,
-                  border: 'none',
-                  backgroundColor: '#2B2B2B',
-                  color: '#D7CDBC',
+                  border: `1px solid ${C.floatingBorderSoft}`,
+                  backgroundColor: C.panelControl,
+                  color: 'var(--color-text-secondary)',
                   cursor: 'pointer',
                   fontFamily: 'DM Sans, sans-serif',
                   fontSize: 10,

@@ -140,8 +140,32 @@ assert.match(
 )
 assert.doesNotMatch(
   newConstructModal,
-  /color:\s*'#FFFFFF'/,
-  'New latent variable modal should not force literal white text in light theme.'
+  /#242424|#202020|#2B2B2B|#191919|#373737|#3a3a3a|#F5F1E7|#D7CDBC|#ffffff80|#A8A8A8|#8F8F8F|#d3d3d3/,
+  'New latent variable modal should not force dark-theme shell colors in light theme.'
+)
+
+const hocPathChoiceModal = sliceBetween('{hocPathRoleChoice && (', '{hocPathConflict && (')
+assert.match(
+  hocPathChoiceModal,
+  /backgroundColor:\s*C\.panelPop[\s\S]*color:\s*'var\(--color-text-primary\)'[\s\S]*color:\s*'var\(--color-text-secondary\)'/,
+  'HOC path type choice should use theme-aware surface and text tokens.'
+)
+assert.doesNotMatch(
+  hocPathChoiceModal,
+  /#242424|#202020|#2B2B2B|#191919|#373737|#3a3a3a|#F5F1E7|#D7CDBC|#ffffff80/,
+  'HOC path type choice should not force dark modal colors in light theme.'
+)
+
+const hocConflictModal = sliceBetween('{hocPathConflict && (', '{showExitModal &&')
+assert.match(
+  hocConflictModal,
+  /backgroundColor:\s*C\.panelPop[\s\S]*border:\s*`1px solid \$\{C\.floatingBorderSoft\}`/,
+  'HOC direction conflict modal should use theme-aware popover chrome.'
+)
+assert.doesNotMatch(
+  hocConflictModal,
+  /#242424|#202020|#2B2B2B|#191919|#373737|#3a3a3a|#F5F1E7|#D7CDBC|#ffffff80/,
+  'HOC direction conflict modal should not force dark modal colors in light theme.'
 )
 
 console.log('PASS model canvas light popup coverage')

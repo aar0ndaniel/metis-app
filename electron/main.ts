@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, screen, type Rectangle } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu, type MenuItemConstructorOptions, type Rectangle } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -8,6 +8,8 @@ import { spawn, spawnSync, exec, execSync, type ChildProcess } from 'child_proce
 import { createServer } from 'net'
 import JSZip from 'jszip'
 import { isRendererWriteTargetAllowed } from '../src/utils/securityPaths'
+
+declare const __METIS_APP_EDITION__: string | undefined
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
@@ -51,6 +53,120 @@ const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FI
 const sampleDatasetFileName = 'sample dataset.csv'
 const missingValueTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
 
+function sendRendererMenuAction(action: string) {
+  const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
+  if (!targetWindow || targetWindow.isDestroyed()) return
+  targetWindow.webContents.send('menu:action', action)
+}
+
+function nativeMenuAction(label: string, action: string, accelerator?: string): MenuItemConstructorOptions {
+  return {
+    label,
+    accelerator,
+    click: () => sendRendererMenuAction(action),
+  }
+}
+
+function installApplicationMenu() {
+  if (process.platform !== 'darwin') return
+
+  const appName = app.name || 'metis'
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: appName,
+      submenu: [
+        nativeMenuAction(`About ${appName}`, 'open-about'),
+        { type: 'separator' },
+        nativeMenuAction('Preferences...', 'open-preferences', 'Command+,'),
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        nativeMenuAction(`Quit ${appName}`, 'quit-app', 'Command+Q'),
+      ],
+    },
+    {
+      label: 'File',
+      submenu: [
+        nativeMenuAction('New Workspace', 'new-workspace', 'Command+N'),
+        nativeMenuAction('New Model', 'new-model', 'Command+Shift+N'),
+        { type: 'separator' },
+        nativeMenuAction('Open Workspace...', 'open-workspace', 'Command+O'),
+        { type: 'separator' },
+        nativeMenuAction('Save', 'file:save', 'Command+S'),
+        nativeMenuAction('Save As...', 'file:save-as', 'Command+Shift+S'),
+        { type: 'separator' },
+        nativeMenuAction('Import Dataset...', 'import-dataset', 'Command+I'),
+        nativeMenuAction('Import R Script...', 'import-rscript'),
+        { type: 'separator' },
+        nativeMenuAction('Export R Script', 'results:export-r-script'),
+        { type: 'separator' },
+        nativeMenuAction('Close Model', 'canvas:go-home', 'Command+W'),
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        nativeMenuAction('Undo', 'edit:undo', 'Command+Z'),
+        nativeMenuAction('Redo', 'edit:redo', 'Command+Shift+Z'),
+        { type: 'separator' },
+        nativeMenuAction('Cut', 'edit:cut', 'Command+X'),
+        nativeMenuAction('Copy', 'edit:copy', 'Command+C'),
+        nativeMenuAction('Paste', 'edit:paste', 'Command+V'),
+        nativeMenuAction('Delete', 'edit:delete'),
+        { type: 'separator' },
+        nativeMenuAction('Select All', 'edit:selectall', 'Command+A'),
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        nativeMenuAction('Zoom In', 'view:zoom-in', 'Command+Plus'),
+        nativeMenuAction('Zoom Out', 'view:zoom-out', 'Command+-'),
+        nativeMenuAction('Fit to Screen', 'view:fit-screen', 'Command+0'),
+        { type: 'separator' },
+        nativeMenuAction('Toggle Zoom Control', 'view:toggle-zoom-control'),
+        nativeMenuAction('Toggle Indicators Panel', 'view:toggle-vars'),
+        nativeMenuAction('Toggle Properties Panel', 'view:toggle-props'),
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Analysis',
+      submenu: [
+        nativeMenuAction('Run PLS-SEM', 'run-pls', 'Command+Enter'),
+        nativeMenuAction('Run Bootstrap', 'run-bootstrap', 'Command+B'),
+        nativeMenuAction('PLS Predict', 'run-pls-predict'),
+        nativeMenuAction('Advanced analysis', 'run-advanced-analysis'),
+      ],
+    },
+    {
+      label: 'Tark it',
+      submenu: [
+        nativeMenuAction('Create Tark Report', 'open-tark'),
+      ],
+    },
+    {
+      label: 'Help',
+      submenu: [
+        nativeMenuAction('Documentation', 'open-docs'),
+        nativeMenuAction('Getting Started', 'open-tour'),
+        { type: 'separator' },
+        nativeMenuAction('Feedback', 'open-feedback'),
+        nativeMenuAction('Report a Bug', 'open-report-bug'),
+        nativeMenuAction('Cite Metis', 'open-cite-metis'),
+      ],
+    },
+    { role: 'windowMenu' },
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
 function hasWorkspaceFileExtension(targetPath: string): boolean {
   const fileName = path.basename(String(targetPath ?? '').trim()).toLowerCase()
   return WORKSPACE_FILE_EXTENSIONS.some((extension) => fileName.endsWith(extension))
@@ -83,6 +199,7 @@ function plumberBridgeExceptionResponse(err: any, action: string) {
     rscript: resolvedRscript,
     error: `Metis could not complete the ${action} request because the local R analysis engine stopped responding. Try a smaller run, close other heavy apps, or restart Metis and run it again.`,
     backendDetail: err?.message || 'Unknown bridge error.',
+    runtimeStatus: getBundledPortableRuntimeStatus(),
     recentPlumberLogs: getRecentPlumberLogs(),
   }
 }
@@ -1542,7 +1659,7 @@ function getBundledRscriptEnv(rscriptPath: string): NodeJS.ProcessEnv | null {
 
 function resolveRscriptCommand(): string {
   const { extractedRscriptPath } = getBundledPortableRuntimePaths()
-  if (!isLiteBuild() && fs.existsSync(extractedRscriptPath)) {
+  if (!isLiteBuild()) {
     return extractedRscriptPath
   }
 
@@ -1699,7 +1816,25 @@ async function startPlumberServer(): Promise<boolean> {
   const scriptPath = resolvePlumberScriptPath()
   if (!fs.existsSync(scriptPath)) {
     console.warn('[plumber] Script not found at', scriptPath)
+    rememberPlumberLog('system', `Plumber script not found at ${scriptPath}`)
     return false
+  }
+
+  const runtimeStatus = getBundledPortableRuntimeStatus()
+  if (!isLiteBuild() && !runtimeStatus.extractedRscriptExists) {
+    rememberPlumberLog('system', `Bundled Rscript missing at ${runtimeStatus.extractedRscriptPath}; archive exists=${runtimeStatus.archiveExists} size=${runtimeStatus.archiveSize ?? 'null'}`)
+    console.warn('[plumber] Bundled Rscript missing before startup:', runtimeStatus)
+    return false
+  }
+
+  if (!isLiteBuild() && process.platform !== 'win32') {
+    try {
+      await prepareBundledUnixRuntime(runtimeStatus.runtimeDir, runtimeStatus.extractedRscriptPath)
+    } catch (err: any) {
+      rememberPlumberLog('system', `Bundled Unix R runtime relocation failed: ${err?.message || err}`)
+      console.warn('[plumber] Bundled Unix R runtime relocation failed:', err?.message || err)
+      return false
+    }
   }
 
   const preferredPort = Number(process.env.METIS_PLUMBER_PORT || String(DEFAULT_PLUMBER_PORT))
@@ -1745,6 +1880,7 @@ async function startPlumberServer(): Promise<boolean> {
 
   const isReady = await waitForPlumber(plumberBaseUrl)
   if (!isReady) {
+    rememberPlumberLog('system', `Health check timed out for ${plumberBaseUrl}`)
     console.warn('[plumber] Health check timed out')
   } else {
     console.log('[plumber] Ready at', plumberBaseUrl)
@@ -1935,19 +2071,66 @@ function getBundledUnixRuntimeRelocationMarker(runtimeDir: string): string {
   return path.join(runtimeDir, '.metis-conda-unpacked')
 }
 
+function getFileSizeIfPresent(filePath: string): number | null {
+  try {
+    return fs.statSync(filePath).size
+  } catch {
+    return null
+  }
+}
+
+function getBundledPortableRuntimeStatus() {
+  const { extractedRscriptPath, archivePath, runtimeDir, extractionRoot } = getBundledPortableRuntimePaths()
+  const relocationMarkerPath = process.platform === 'win32'
+    ? null
+    : getBundledUnixRuntimeRelocationMarker(runtimeDir)
+  const condaUnpackPath = process.platform === 'win32'
+    ? null
+    : path.join(runtimeDir, 'bin', 'conda-unpack')
+
+  return {
+    platform: process.platform,
+    appEdition: getConfiguredAppEdition(),
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    archivePath,
+    archiveExists: fs.existsSync(archivePath),
+    archiveSize: getFileSizeIfPresent(archivePath),
+    extractionRoot,
+    runtimeDir,
+    runtimeDirExists: fs.existsSync(runtimeDir),
+    extractedRscriptPath,
+    extractedRscriptExists: fs.existsSync(extractedRscriptPath),
+    relocationMarkerPath,
+    relocationMarkerExists: relocationMarkerPath ? fs.existsSync(relocationMarkerPath) : null,
+    condaUnpackPath,
+    condaUnpackExists: condaUnpackPath ? fs.existsSync(condaUnpackPath) : null,
+  }
+}
+
 function isBundledPortableRuntimeReady(): boolean {
   const { extractedRscriptPath, archivePath, runtimeDir } = getBundledPortableRuntimePaths()
   if (fs.existsSync(extractedRscriptPath)) {
     return process.platform === 'win32' || fs.existsSync(getBundledUnixRuntimeRelocationMarker(runtimeDir))
   }
   if (fs.existsSync(archivePath)) return false
-  return true
+  return isLiteBuild()
 }
 
-/** Returns true when no bundled R runtime was shipped (Lite build). */
+function getConfiguredAppEdition(): 'Bundle' | 'Lite' {
+  try {
+    return __METIS_APP_EDITION__ === 'Lite' ? 'Lite' : 'Bundle'
+  } catch {
+    return 'Bundle'
+  }
+}
+
+/** Returns true when this app was built as Lite. Dev keeps archive-based detection for local workflows. */
 function isLiteBuild(): boolean {
   const { archivePath } = getBundledPortableRuntimePaths()
-  return !fs.existsSync(archivePath)
+  if (isDev) return !fs.existsSync(archivePath)
+  return getConfiguredAppEdition() === 'Lite'
 }
 
 function getDataPath(): string {
@@ -2488,6 +2671,7 @@ app.whenReady().then(() => {
   console.log('[main] Preload path:', preloadPath)
   console.log('[main] Preload exists:', fs.existsSync(preloadPath))
   syncProcessSecurityEnv()
+  installApplicationMenu()
 
   // Windows: check if launched by double-clicking a workspace file
   const argvWorkspaceFile = process.argv.slice(1).find(
@@ -3530,7 +3714,19 @@ ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFile
 
 ipcMain.handle('plumber:health', async () => {
   try {
-    await ensurePlumberReady()
+    const ready = await ensurePlumberReady()
+    if (!ready) {
+      return {
+        success: false,
+        status: 0,
+        url: plumberBaseUrl,
+        rscript: resolvedRscript,
+        error: 'PLS backend is not ready.',
+        runtimeStatus: getBundledPortableRuntimeStatus(),
+        recentPlumberLogs: getRecentPlumberLogs(),
+      }
+    }
+
     const response = await fetch(`${plumberBaseUrl}/health`, {
       headers: buildPlumberHeaders(),
     })
@@ -3541,6 +3737,8 @@ ipcMain.handle('plumber:health', async () => {
       url: plumberBaseUrl,
       rscript: resolvedRscript,
       body: text,
+      runtimeStatus: getBundledPortableRuntimeStatus(),
+      recentPlumberLogs: response.ok ? undefined : getRecentPlumberLogs(),
     }
   } catch (err: any) {
     return {
@@ -3549,6 +3747,8 @@ ipcMain.handle('plumber:health', async () => {
       url: plumberBaseUrl,
       rscript: resolvedRscript,
       error: err.message,
+      runtimeStatus: getBundledPortableRuntimeStatus(),
+      recentPlumberLogs: getRecentPlumberLogs(),
     }
   }
 })
@@ -3567,6 +3767,7 @@ async function postToPlumber(pathname: string, payload: any) {
         url: plumberBaseUrl,
         rscript: resolvedRscript,
         error: `PLS backend is not ready. Verify Rscript is installed and no firewall or Windows port exclusion is blocking ${plumberBaseUrl}.`,
+        runtimeStatus: getBundledPortableRuntimeStatus(),
         recentPlumberLogs: getRecentPlumberLogs(),
       }
     }
@@ -3588,6 +3789,7 @@ async function postToPlumber(pathname: string, payload: any) {
         rscript: resolvedRscript,
         error: `The R analysis engine stopped responding before it could return results. This can happen when a long bootstrap or prediction run is too heavy for the machine. Try fewer samples, close other heavy apps, or restart Metis and run again.`,
         backendDetail: err?.message || 'Local R backend request failed.',
+        runtimeStatus: getBundledPortableRuntimeStatus(),
         bridgeTimings: {
           route: pathname,
           totalSeconds: Number(elapsedSeconds.toFixed(3)),
@@ -3609,6 +3811,7 @@ async function postToPlumber(pathname: string, payload: any) {
         rscript: resolvedRscript,
         error: `The R analysis engine started the response but Metis could not finish receiving it. Try fewer samples, close other heavy apps, or restart Metis and run again.`,
         backendDetail: err?.message || 'Could not read the R backend response.',
+        runtimeStatus: getBundledPortableRuntimeStatus(),
         bridgeTimings: {
           route: pathname,
           totalSeconds: Number(((Date.now() - requestStarted) / 1000).toFixed(3)),
@@ -3653,6 +3856,7 @@ async function postToPlumber(pathname: string, payload: any) {
       url: plumberBaseUrl,
       rscript: resolvedRscript,
       bridgeTimings,
+      runtimeStatus: response.ok ? undefined : getBundledPortableRuntimeStatus(),
       recentPlumberLogs: response.ok ? undefined : getRecentPlumberLogs(),
       ...data,
     }
@@ -3664,6 +3868,7 @@ async function postToPlumber(pathname: string, payload: any) {
     url: plumberBaseUrl,
     rscript: resolvedRscript,
     error: `404 - Resource Not Found (${pathname})`,
+    runtimeStatus: getBundledPortableRuntimeStatus(),
     recentPlumberLogs: getRecentPlumberLogs(),
   }
 }
@@ -3811,12 +4016,15 @@ async function runProcess(executablePath: string, args: string[], options: { cwd
     let stdout = ''
     child.stdout?.on('data', (chunk) => { stdout += String(chunk) })
     child.stderr?.on('data', (chunk) => { stderr += String(chunk) })
-    child.on('error', reject)
+    child.on('error', (err) => {
+      reject(new Error(`Failed to start ${executablePath}: ${err.message}`))
+    })
     child.on('exit', (code) => {
       if (code === 0) {
         resolve()
       } else {
-        reject(new Error(stderr.trim() || stdout.trim() || `${path.basename(executablePath)} exited with code ${code}`))
+        const output = stderr.trim() || stdout.trim() || 'no process output'
+        reject(new Error(`${path.basename(executablePath)} ${args.join(' ')} exited with code ${code}: ${output}`))
       }
     })
   })
@@ -3856,8 +4064,12 @@ async function extractRPortable(sendProgress: (step: string, detail: string) => 
   const { extractedRscriptPath, archivePath, runtimeDir, extractionRoot } = getBundledPortableRuntimePaths()
 
   if (!fs.existsSync(archivePath)) {
-    console.log('[install] Bundled R archive not found at', archivePath, '— skipping extraction')
-    return
+    if (isLiteBuild()) {
+      console.log('[install] Lite build has no bundled R archive — skipping extraction')
+      return
+    }
+
+    throw new Error(`Bundled R archive was not found at ${archivePath}. Add the platform runtime archive before running the Bundle installer.`)
   }
 
   if (fs.existsSync(extractedRscriptPath)) {

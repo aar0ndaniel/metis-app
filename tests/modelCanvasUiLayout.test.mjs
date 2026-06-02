@@ -41,7 +41,7 @@ assert.doesNotMatch(source.slice(source.indexOf('id="model-switcher"'), source.i
 const canvasToolbarSource = source.slice(source.lastIndexOf('bottom: 52', source.indexOf('{/* ─── Delete Modal')), source.indexOf('{/* ─── Delete Modal'))
 assert.doesNotMatch(canvasToolbarSource, /#[0-9A-Fa-f]{3,8}/, 'floating canvas menu should not use hard-coded hex colors')
 assert.match(titleBar, /background:\s*'#202020'/, 'title bar shell should stay fixed at #202020')
-assert.match(titleBar, /height:\s*36,[\s\S]*padding:\s*'0 16px'/, 'title bar should keep its compact height')
+assert.match(titleBar, /height:\s*36,[\s\S]*padding:\s*isMac \? '0 16px 0 80px' : '0 16px'/, 'title bar should keep its compact height while reserving traffic light space on macOS')
 assert.match(titleBar, /width:\s*22,[\s\S]*height:\s*22,[\s\S]*<AppLogo size=\{14\}/, 'title bar logo should stay visually compact')
 assert.doesNotMatch(titleBar, /House|aria-label="Workspace home"|id="titlebar-home"/, 'title bar should not duplicate home navigation with a separate home icon')
 assert.match(titleBar, /action:\s*'toggle-home-canvas'[\s\S]*<AppLogo/, 'brand button should own canvas-safe workspace navigation')

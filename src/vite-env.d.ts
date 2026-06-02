@@ -11,6 +11,7 @@ interface Window {
     close: () => void
     isMaximized: () => Promise<boolean>
     onWindowStateChanged: (cb: (data: { isMaximized: boolean }) => void) => () => void
+    onNativeMenuAction: (cb: (action: string) => void) => () => void
     notifyAppReady: () => void
     sendRendererReady: () => void
     openFile: (options?: any) => Promise<any>

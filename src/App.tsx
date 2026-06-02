@@ -72,6 +72,8 @@ const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
 const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
 const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
 const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
+const DEFAULT_INTERFACE_CONTRAST = 75
+const MIN_READABLE_INTERFACE_CONTRAST = 75
 const METIS_TOUR_COMPLETED_KEY = 'metis:tour-completed'
 const LEGACY_TOUR_COMPLETED_KEY = 'pls:tour-completed'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
@@ -124,10 +126,12 @@ function readSavedAccentColor(): string {
 function readSavedInterfaceContrast(): number {
   const raw = localStorage.getItem(METIS_PREF_INTERFACE_CONTRAST_KEY) ?? localStorage.getItem(LEGACY_PREF_INTERFACE_CONTRAST_KEY)
   const parsed = Number(raw)
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 68
+  return Number.isFinite(parsed)
+    ? Math.max(MIN_READABLE_INTERFACE_CONTRAST, Math.min(100, parsed))
+    : DEFAULT_INTERFACE_CONTRAST
 }
 
-function applySavedVisualPreferences() {
+function applySavedVisualPreferences(options: { skipSavedContrast?: boolean } = {}) {
   const root = document.documentElement
   root.setAttribute('data-font-scale', readStartupFontScale())
   const savedAccentColor = readSavedAccentColor()
@@ -152,8 +156,13 @@ function applySavedVisualPreferences() {
     })
   }
 
+  if (options.skipSavedContrast) {
+    root.style.setProperty('--app-interface-contrast-filter', 'contrast(100%)')
+    return
+  }
+
   const contrast = readSavedInterfaceContrast()
-  const contrastPercent = Math.max(0, Math.min(160, 100 + (contrast - 68)))
+  const contrastPercent = Math.max(100, Math.min(160, 100 + (contrast - DEFAULT_INTERFACE_CONTRAST)))
   root.style.setProperty('--app-interface-contrast-filter', `contrast(${contrastPercent}%)`)
 }
 
@@ -261,7 +270,7 @@ function AppShell() {
   const navigate  = useNavigate()
   const isInstallerPreview = location.pathname.startsWith('/installer-preview') || location.pathname.startsWith('/setup-wizard')
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => isInstallerPreview ? 'Light' : getSavedThemePreference())
-  const [theme, setTheme] = useState<AppTheme>(() => isInstallerPreview ? 'Light' : resolveThemePreference(getSavedThemePreference()))
+  const [theme, setTheme] = useState<AppTheme>(() => isInstallerPreview ? 'Light' : getSavedTheme())
   const [prefsOpen,      setPrefsOpen]      = useState(false)
   const [tarkOpen, setTarkOpen] = useState(false)
   const [prefsInitialTab, setPrefsInitialTab] = useState<'general' | 'updates'>('general')
@@ -407,8 +416,8 @@ function AppShell() {
   }, [isInstallerPreview, navigate])
 
   useEffect(() => {
-    applySavedVisualPreferences()
-  }, [])
+    applySavedVisualPreferences({ skipSavedContrast: isInstallerPreview })
+  }, [isInstallerPreview])
 
   useEffect(() => {
     if (isInstallerPreview) return
@@ -491,7 +500,7 @@ function AppShell() {
   useEffect(() => {
     const readCurrentThemePreference = () => isInstallerPreview ? getInstallerPreviewTheme() : getSavedThemePreference()
     const applyCurrentPreferences = () => {
-      applySavedVisualPreferences()
+      applySavedVisualPreferences({ skipSavedContrast: isInstallerPreview })
       setVisualPreferenceRevision((revision) => revision + 1)
       const nextPreference = readCurrentThemePreference()
       setThemePreference(nextPreference)
@@ -513,11 +522,12 @@ function AppShell() {
     }
 
     if (isInstallerPreview) {
-      setThemePreference('Light')
       setTheme('Light')
     } else {
-      applyCurrentPreferences()
+      setTheme(getSavedTheme())
     }
+    setThemePreference(readCurrentThemePreference())
+    if (!isInstallerPreview) applyCurrentPreferences()
     const handleThemePreview = (event: Event) => {
       const detail = (event as CustomEvent).detail
       if (detail && detail.theme && detail.preference) {
@@ -1110,6 +1120,14 @@ function AppShell() {
     window.addEventListener('pls:action', handler)
     return () => window.removeEventListener('pls:action', handler)
   }, [navigate, workspaces, activeWorkspaceId, openDatasetFilePicker, openRScriptFilePicker, currentScreen, location.pathname, requestQuit, openModelInCanvas, openWorkspaceFromFilePath, currentCanvasModelId])
+
+  useEffect(() => {
+    const unsubscribe = (window as any).electronAPI?.onNativeMenuAction?.((action: string) => {
+      if (!action) return
+      window.dispatchEvent(new CustomEvent('pls:action', { detail: { action } }))
+    })
+    return () => unsubscribe?.()
+  }, [])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {

@@ -21,7 +21,7 @@ assert.match(
 
 assert.match(
   source,
-  /const rawBody = await response\.text\(\)[\s\S]*?JSON\.parse\(rawBody\)[\s\S]*?error: rawBody\.trim\(\)/,
+  /let rawBody = ''[\s\S]*?rawBody = await response\.text\(\)[\s\S]*?JSON\.parse\(rawBody\)[\s\S]*?error: rawBody\.trim\(\)/,
   'Plumber responses should tolerate non-JSON error bodies so route failures surface clearly.'
 )
 

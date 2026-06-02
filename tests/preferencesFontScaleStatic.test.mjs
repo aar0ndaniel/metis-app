@@ -22,7 +22,7 @@ assert.match(
 
 assert.match(
   appSource,
-  /function applySavedVisualPreferences\(\)[\s\S]*root\.setAttribute\('data-font-scale', readStartupFontScale\(\)\)/,
+  /function applySavedVisualPreferences\(options: \{ skipSavedContrast\?: boolean \} = \{\}\)[\s\S]*root\.setAttribute\('data-font-scale', readStartupFontScale\(\)\)/,
   'App should apply font scale through the shared visual-preferences path.',
 )
 
@@ -30,6 +30,24 @@ assert.match(
   appSource,
   /window\.addEventListener\('pls:preferences-updated', applyCurrentPreferences\)/,
   'App should reapply font scale when preferences are saved.',
+)
+
+assert.match(
+  prefsSource,
+  /const DEFAULT_INTERFACE_CONTRAST = 75[\s\S]*const MIN_READABLE_INTERFACE_CONTRAST = 75/,
+  'Preferences should default interface contrast to the readable 75% baseline.',
+)
+
+assert.match(
+  prefsSource,
+  /Math\.max\(MIN_READABLE_INTERFACE_CONTRAST, Math\.min\(100, parsed\)\)/,
+  'Preferences should clamp saved contrast values below the readable floor.',
+)
+
+assert.match(
+  prefsSource,
+  /min=\{MIN_READABLE_INTERFACE_CONTRAST\}[\s\S]*onChange=\{\(event\) => setInterfaceContrast\(Math\.max\(MIN_READABLE_INTERFACE_CONTRAST, Number\(event\.target\.value\)\)\)\}/,
+  'The interface contrast slider should not write values below the readable baseline.',
 )
 
 assert.match(

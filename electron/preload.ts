@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('window:state-changed', handler)
     return () => ipcRenderer.removeListener('window:state-changed', handler)
   },
+  onNativeMenuAction: (cb: (action: string) => void) => {
+    const handler = (_: unknown, action: string) => cb(action)
+    ipcRenderer.on('menu:action', handler)
+    return () => ipcRenderer.removeListener('menu:action', handler)
+  },
   notifyAppReady: () => ipcRenderer.send('app:renderer-ready'),
   sendRendererReady: () => ipcRenderer.send('app:renderer-ready'),
   platform:  process.platform,

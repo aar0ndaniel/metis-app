@@ -56,6 +56,8 @@ const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
 const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
 const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
+const DEFAULT_INTERFACE_CONTRAST = 75
+const MIN_READABLE_INTERFACE_CONTRAST = 75
 const METIS_UPDATES_URL = 'https://metis.emend.it.com/updates.html'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
 const GENERAL_PREVIEW_WIDTH = 1920
@@ -152,9 +154,11 @@ function getSavedInterfaceContrastSetting(): number {
   try {
     const raw = localStorage.getItem(METIS_PREF_INTERFACE_CONTRAST_KEY) ?? localStorage.getItem(LEGACY_PREF_INTERFACE_CONTRAST_KEY)
     const parsed = Number(raw)
-    return Number.isFinite(parsed) ? Math.max(0, Math.min(100, parsed)) : 68
+    return Number.isFinite(parsed)
+      ? Math.max(MIN_READABLE_INTERFACE_CONTRAST, Math.min(100, parsed))
+      : DEFAULT_INTERFACE_CONTRAST
   } catch {
-    return 68
+    return DEFAULT_INTERFACE_CONTRAST
   }
 }
 
@@ -562,7 +566,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     setThemePreference('Dark')
     setFontScale('Default')
     setAccentColour(DEFAULT_ACCENT_CHOICE)
-    setInterfaceContrast(68)
+    setInterfaceContrast(DEFAULT_INTERFACE_CONTRAST)
     setAutosaveOn(true)
     setAutosaveInterval('Every 5 minutes')
     setWarnUnsaved(true)
@@ -1115,10 +1119,10 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       <input
         aria-label="Interface contrast"
         type="range"
-        min={0}
+        min={MIN_READABLE_INTERFACE_CONTRAST}
         max={100}
         value={interfaceContrast}
-        onChange={(event) => setInterfaceContrast(Number(event.target.value))}
+        onChange={(event) => setInterfaceContrast(Math.max(MIN_READABLE_INTERFACE_CONTRAST, Number(event.target.value)))}
         style={{ position: 'absolute', inset: 0, opacity: 0, cursor: 'pointer' }}
       />
     </div>

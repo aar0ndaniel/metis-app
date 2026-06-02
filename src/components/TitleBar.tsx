@@ -380,15 +380,16 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
   ]
 
   const logoVariant = theme === 'Light' ? 'black' : 'white'
-  const showTitleBarDivider = false
+  const showTitleBarDivider = currentScreen === 'canvas'
+  const isMac = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin'
 
   return (
     <div
       className="flex items-center shrink-0 select-none drag-region relative z-50"
       style={{
         height: 36,
-        padding: '0 16px',
-        gap: 24,
+        padding: isMac ? '0 16px 0 80px' : '0 16px',
+        gap: isMac ? 16 : 24,
         borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
         ...(theme === 'Light'
           ? { background: 'var(--color-titlebar-bg)' }
@@ -430,10 +431,10 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
       </div>
 
       {/* Divider between logo and menus */}
-      <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-surface)', flexShrink: 0 }} />
+      {!isMac && <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-surface)', flexShrink: 0 }} />}
 
       {/* Menu items — exact from Pencil: gap 2, padding [4,10], cornerRadius 5 */}
-      <nav className="flex items-center no-drag" style={{ gap: 2 }}>
+      {!isMac && <nav className="flex items-center no-drag" style={{ gap: 2 }}>
         {menus.map((menu) => (
           <div key={menu.label} className="relative">
             <div className="relative h-full flex items-center">
@@ -512,13 +513,13 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
           </div>
           </div>
         ))}
-      </nav>
+      </nav>}
 
       {/* Spacer (fills remaining space, also drag region) */}
       <div className="flex-1 h-full" />
 
       {/* Window controls */}
-      <div
+      {!isMac && <div
         className="flex h-full items-center no-drag"
         style={{
           ...({ WebkitAppRegion: 'no-drag' } as any),
@@ -567,7 +568,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
         >
           <X size={15} weight="bold" color="currentColor" />
         </button>
-      </div>
+      </div>}
     </div>
   )
 }
