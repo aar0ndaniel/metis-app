@@ -13,11 +13,9 @@
     "build:bundle": "npm run build:bundle:win",
     "build:bundle:win": "npm run build:icons && tsc && vite build && node scripts/sync-r-portable-zip.mjs && electron-builder --config build/electron-builder.bundle.yml --win --publish never && node scripts/clean-release-debug.mjs",
     "build:bundle:mac": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs darwin && node scripts/smoke-r-bundle-runtime.mjs darwin && electron-builder --config build/electron-builder.bundle.yml --mac --publish never && node scripts/clean-release-debug.mjs",
-    "build:bundle:linux": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs linux && node scripts/smoke-r-bundle-runtime.mjs linux && electron-builder --config build/electron-builder.bundle.yml --linux --publish never && node scripts/clean-release-debug.mjs",
     "build:lite": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --publish never && node scripts/clean-release-debug.mjs",
     "build:lite:win": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --win --publish never && node scripts/clean-release-debug.mjs",
     "build:lite:mac": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --mac --publish never && node scripts/clean-release-debug.mjs",
-    "build:lite:linux": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --linux --publish never && node scripts/clean-release-debug.mjs",
     "build:installers": "npm run build:bundle && npm run build:lite",
     "typecheck": "tsc --noEmit",
     "audit:high": "npm audit --omit=dev --audit-level=high"
@@ -90,8 +88,7 @@
           "renv.lock",
           "renv/**",
           "R-Portable.zip",
-          "R-macos.tar.gz",
-          "R-linux.tar.gz"
+          "R-macos.tar.gz"
         ]
       }
     ],
@@ -110,7 +107,7 @@
     },
     "fileAssociations": [
       {
-        "ext": "ada",
+        "ext": "metisws",
         "name": "metis Workspace",
         "role": "Editor"
       }

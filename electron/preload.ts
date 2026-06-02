@@ -60,7 +60,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace: extract embedded dataset to a temp file for the R backend
   extractDataset: (payload: string | { adaFilePath: string; datasetId?: string }) => ipcRenderer.invoke('workspace:extractDataset', payload),
 
-  // Workspace: listen for a .ada file opened via OS file association
+  // Workspace: listen for a workspace file opened via OS file association
   onOpenFile: (cb: (filePath: string) => void) => {
     const handler = (_: unknown, filePath: string) => cb(filePath)
     ipcRenderer.on('workspace:openedViaFile', handler)

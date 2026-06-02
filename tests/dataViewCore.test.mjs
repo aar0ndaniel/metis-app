@@ -66,7 +66,7 @@ await runTest('dataset workspace helpers expose migration and linking behavior',
 
   const workspace = {
     id: 'ws-1',
-    name: 'Research.ada',
+    name: 'Research.metisws',
     color: '#181818',
     expanded: true,
     datasetTempPath: 'C:/tmp/original.csv',

@@ -45,8 +45,16 @@ const allowedDatasetReadExtensions = new Set(['.csv', '.xlsx', '.xls'])
 const allowedRendererReadExtensions = new Set([...allowedDatasetReadExtensions, '.r'])
 const allowedRendererWriteExtensions = new Set(['.csv', '.png', '.xlsx', '.html', '.htm', '.json', '.r'])
 const allowedRendererOpenExtensions = new Set(['.html', '.htm'])
+const WORKSPACE_FILE_EXTENSION = '.metisws'
+const LEGACY_WORKSPACE_FILE_EXTENSION = '.ada'
+const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FILE_EXTENSION]
 const sampleDatasetFileName = 'sample dataset.csv'
 const missingValueTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
+
+function hasWorkspaceFileExtension(targetPath: string): boolean {
+  const fileName = path.basename(String(targetPath ?? '').trim()).toLowerCase()
+  return WORKSPACE_FILE_EXTENSIONS.some((extension) => fileName.endsWith(extension))
+}
 
 function rememberPlumberLog(level: 'stdout' | 'stderr' | 'system', text: string) {
   const lines = String(text || '')
@@ -258,7 +266,7 @@ function sendMainWindowState(win = mainWindow) {
 }
 
 function queueOpenWorkspaceFile(filePath: string) {
-  if (!filePath.toLowerCase().endsWith('.ada')) return
+  if (!hasWorkspaceFileExtension(filePath)) return
   rememberApprovedWorkspacePath(filePath)
   pendingOpenFilePath = filePath
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame()) {
@@ -273,20 +281,20 @@ if (!hasSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
-    const argvAdaFile = argv.slice(1).find(
-      arg => typeof arg === 'string' && arg.toLowerCase().endsWith('.ada') && fs.existsSync(arg)
+    const argvWorkspaceFile = argv.slice(1).find(
+      arg => typeof arg === 'string' && hasWorkspaceFileExtension(arg) && fs.existsSync(arg)
     )
 
     focusMainWindow()
 
-    if (argvAdaFile) {
-      console.log('[main] Reusing existing instance for .ada file:', argvAdaFile)
-      queueOpenWorkspaceFile(argvAdaFile)
+    if (argvWorkspaceFile) {
+      console.log('[main] Reusing existing instance for workspace file:', argvWorkspaceFile)
+      queueOpenWorkspaceFile(argvWorkspaceFile)
     }
   })
 }
 
-// macOS: file opened by double-clicking an .ada file while app is running
+// macOS: file opened by double-clicking a workspace file while app is running
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
   queueOpenWorkspaceFile(filePath)
@@ -1029,7 +1037,7 @@ function summarizeDatasetFile(filePath: string): {
 
 function isWorkspaceFileLikePath(targetPath: string): boolean {
   const resolved = path.resolve(String(targetPath ?? '').trim())
-  return path.basename(resolved).toLowerCase().endsWith('.ada')
+  return hasWorkspaceFileExtension(resolved)
 }
 
 function queryWindowsRegistryValue(key: string, valueName: string, timeout = 6000): string | null {
@@ -2122,7 +2130,7 @@ function validateWorkspaceFilePath(targetPath: string, allowDirectory = true): s
     throw new Error('Workspace path is required.')
   }
   if (!isWorkspaceFileLikePath(resolved)) {
-    throw new Error('Workspace path must point to a .ada workspace file.')
+    throw new Error('Workspace path must point to a .metisws workspace file or legacy .ada workspace.')
   }
   if (!isWorkspacePathAllowed(resolved)) {
     throw new Error('Workspace path is not approved for this action.')
@@ -2130,7 +2138,7 @@ function validateWorkspaceFilePath(targetPath: string, allowDirectory = true): s
   if (fs.existsSync(resolved)) {
     const stat = fs.statSync(resolved)
     if (stat.isDirectory() && !allowDirectory) {
-      throw new Error('Workspace save target must be a .ada file, not a directory.')
+      throw new Error('Workspace save target must be a .metisws file, not a directory.')
     }
   }
   return resolved
@@ -2481,14 +2489,14 @@ app.whenReady().then(() => {
   console.log('[main] Preload exists:', fs.existsSync(preloadPath))
   syncProcessSecurityEnv()
 
-  // Windows: check if launched by double-clicking a .ada file
-  const argvAdaFile = process.argv.slice(1).find(
-    arg => typeof arg === 'string' && arg.toLowerCase().endsWith('.ada') && fs.existsSync(arg)
+  // Windows: check if launched by double-clicking a workspace file
+  const argvWorkspaceFile = process.argv.slice(1).find(
+    arg => typeof arg === 'string' && hasWorkspaceFileExtension(arg) && fs.existsSync(arg)
   )
-  if (argvAdaFile) {
-    rememberApprovedWorkspacePath(argvAdaFile)
-    pendingOpenFilePath = argvAdaFile
-    console.log('[main] .ada file passed via argv:', argvAdaFile)
+  if (argvWorkspaceFile) {
+    rememberApprovedWorkspacePath(argvWorkspaceFile)
+    pendingOpenFilePath = argvWorkspaceFile
+    console.log('[main] workspace file passed via argv:', argvWorkspaceFile)
   }
 
   // Restore saved Rscript path for lite builds so plumber finds it immediately
@@ -2624,7 +2632,7 @@ ipcMain.handle('app:reportRendererError', async (_event, payload: any) => {
 
 ipcMain.on('app:renderer-ready', () => {
   revealMainWindow()
-  // If the app was opened by double-clicking a .ada file, notify the renderer
+  // If the app was opened by double-clicking a workspace file, notify the renderer
   if (pendingOpenFilePath && mainWindow && !mainWindow.isDestroyed()) {
     const filePath = pendingOpenFilePath
     pendingOpenFilePath = null
@@ -2841,14 +2849,14 @@ ipcMain.handle('app:welcomeContext', async () => {
   }
 })
 
-// ─── Workspace persistence (.ada single-file format) ─────────────────────────
+// ─── Workspace persistence (.metisws single-file format) ─────────────────────
 //
-// Each workspace is stored as a single `Name.ada` JSON file in the metis
+// Each new workspace is stored as a single `Name.metisws` JSON file in the metis
 // data directory. The file embeds the dataset as base64 so the workspace is
 // fully self-contained — double-clicking opens metis via the OS file
 // association registered in the installer.
 //
-// Backward compatibility: old `.ada` folder workspaces (v1) are still read.
+// Backward compatibility: old `.ada` file/folder workspaces are still read.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface WorkspaceManifest {
@@ -2887,12 +2895,16 @@ type AdaWorkspaceFile = AdaFileV2 | AdaFileV3
 
 /** Sanitises a name to a safe filename base (no extension). */
 function sanitizeFileName(name: string): string {
-  return name.replace(/\.ada$/i, '').replace(/[^\w\s\-]/g, '_').trim() || 'workspace'
+  return name
+    .replace(/\.metisws$/i, '')
+    .replace(/\.ada$/i, '')
+    .replace(/[^\w\s\-]/g, '_')
+    .trim() || 'workspace'
 }
 
-/** Returns the absolute path of the .ada FILE for a workspace name. */
+/** Returns the absolute path of the .metisws file for a workspace name. */
 function getWorkspaceFilePath(name: string): string {
-  return path.join(getDataPath(), `${sanitizeFileName(name)}.ada`)
+  return path.join(getDataPath(), `${sanitizeFileName(name)}${WORKSPACE_FILE_EXTENSION}`)
 }
 
 /** Returns the temp directory used for extracted datasets. */
@@ -3055,7 +3067,7 @@ function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: strin
   return writeDatasetBufferIntoWorkspace(workspacePath, datasetId, fileBuffer, originalName)
 }
 
-/** Parses a v2 .ada file and (if it contains a dataset) extracts to temp. */
+/** Parses a workspace file and (if it contains a dataset) extracts to temp. */
 function readAdaFile(adaFilePath: string): (WorkspaceManifest & { path: string; _format: 'v2' | 'v3' }) | null {
   try {
     const raw = fs.readFileSync(adaFilePath, 'utf-8')
@@ -3123,7 +3135,7 @@ function readLegacyWorkspaceFolder(folderPath: string): (WorkspaceManifest & { p
   }
 }
 
-/** Open a specific workspace .ada file or legacy folder, even outside the app data directory. */
+/** Open a specific workspace file or legacy folder, even outside the app data directory. */
 ipcMain.handle('workspace:openFile', async (_, workspaceFilePath: string) => {
   try {
     const resolvedPath = validateWorkspaceFilePath(workspaceFilePath)
@@ -3144,7 +3156,7 @@ ipcMain.handle('workspace:openFile', async (_, workspaceFilePath: string) => {
   }
 })
 
-/** Embed dataset into .ada file and return the temp path for the R backend. */
+/** Embed dataset into the workspace file and return the temp path for the R backend. */
 ipcMain.handle('file:copyToWorkspace', async (_, data) => {
   try {
     const originalFilePath = String(data?.originalFilePath ?? '').trim()
@@ -3237,7 +3249,7 @@ ipcMain.handle('dataset:useSample', async (_, data: { workspacePath: string; dat
   }
 })
 
-/** Scan metis data directory for .ada files (new) and .ada folders (legacy). */
+/** Scan metis data directory for workspace files and legacy .ada folders. */
 ipcMain.handle('workspace:list', async () => {
   const dataPath = getDataPath()
   try {
@@ -3250,11 +3262,12 @@ ipcMain.handle('workspace:list', async () => {
     const workspaces: any[] = []
     for (const entry of entries) {
       const fullPath = path.join(dataPath, entry.name)
-      const isAda = entry.name.toLowerCase().endsWith('.ada')
-      if (entry.isFile() && isAda) {
+      const isWorkspaceFile = hasWorkspaceFileExtension(entry.name)
+      const isLegacyFolder = entry.name.toLowerCase().endsWith(LEGACY_WORKSPACE_FILE_EXTENSION)
+      if (entry.isFile() && isWorkspaceFile) {
         const ws = readAdaFile(fullPath)
         if (ws) workspaces.push(ws)
-      } else if (entry.isDirectory() && isAda) {
+      } else if (entry.isDirectory() && isLegacyFolder) {
         // Legacy v1 folder
         const ws = readLegacyWorkspaceFolder(fullPath)
         if (ws) workspaces.push(ws)
@@ -3266,7 +3279,7 @@ ipcMain.handle('workspace:list', async () => {
   }
 })
 
-/** Create a new workspace as a single .ada file. */
+/** Create a new workspace as a single .metisws file. */
 ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
   console.log('[main] workspace:create request', { name: wsData.name, id: wsData.id })
   try {
@@ -3280,7 +3293,7 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
       embeddedDatasets: [],
     }
     fs.writeFileSync(adaFilePath, JSON.stringify(fileData, null, 2), 'utf-8')
-    console.log('[main] Workspace .ada file created')
+    console.log('[main] Workspace .metisws file created')
     return { success: true, path: adaFilePath }
   } catch (err: any) {
     console.error('[main] workspace:create error:', err.message)
@@ -3289,7 +3302,7 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
   }
 })
 
-/** Save updated workspace data to its .ada file (preserves embedded datasets). */
+/** Save updated workspace data to its workspace file (preserves embedded datasets). */
 ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: string }) => {
   console.log('[main] workspace:save request', { name: wsData.name, id: wsData.id })
   try {
@@ -3307,7 +3320,8 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
     }
     // Guard against legacy v1 directory at the same path (prevents EISDIR)
     if (fs.existsSync(adaFilePath) && !fs.statSync(adaFilePath).isFile()) {
-      adaFilePath = adaFilePath.replace(/\.ada$/i, '_v2.ada')
+      const parsed = path.parse(adaFilePath)
+      adaFilePath = path.join(parsed.dir, `${parsed.name}_v2${WORKSPACE_FILE_EXTENSION}`)
       console.warn('[main] workspace:save — legacy folder conflict, writing to:', adaFilePath)
     }
 
@@ -3345,7 +3359,7 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
   }
 })
 
-/** Delete a workspace .ada file (or legacy folder). Also cleans up temp datasets. */
+/** Delete a workspace file (or legacy folder). Also cleans up temp datasets. */
 ipcMain.handle('workspace:delete', async (_, wsData: Partial<WorkspaceManifest> & { path?: string }) => {
   const dataPath = path.resolve(getDataPath())
   try {
@@ -3476,7 +3490,7 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
 })
 
 /**
- * Extract the embedded dataset from a .ada file to a temp location.
+ * Extract the embedded dataset from a workspace file to a temp location.
  * The R backend calls this (via IPC) to get a real file path it can read.
  */
 ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFilePath?: string; datasetId?: string }) => {

@@ -12,7 +12,7 @@ assert.match(source, /pendingDraftWriteRef/, 'ModelCanvas should keep the latest
 assert.match(source, /flushPendingDraftWrite/, 'ModelCanvas should be able to flush a pending local recovery draft before save/navigation.')
 assert.match(source, /cancelPendingDraftWrite/, 'ModelCanvas should cancel pending local recovery writes after a clean save.')
 
-assert.match(source, /const WORKSPACE_SAVE_DEBOUNCE_MS = 2_000/, 'ModelCanvas should debounce full workspace .ada saves after canvas edits.')
+assert.match(source, /const WORKSPACE_SAVE_DEBOUNCE_MS = 2_000/, 'ModelCanvas should debounce full workspace .metisws saves after canvas edits.')
 assert.match(source, /queueWorkspaceSnapshotSave/, 'ModelCanvas should queue full workspace saves instead of writing every edit synchronously.')
 assert.match(
   source,

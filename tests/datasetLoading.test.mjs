@@ -73,7 +73,7 @@ await runTest('dataset loader returns cached dataset rows before touching the fi
   globalThis.localStorage.setItem(cacheKey, JSON.stringify({
     datasetId: 'ds-cached',
     fileName: 'cached.csv',
-    workspaceName: 'Cached.ada',
+    workspaceName: 'Cached.metisws',
     headers: ['A', 'B'],
     allRows: [['1', '2'], ['3', '4']],
     totalRows: 2,
@@ -89,7 +89,7 @@ await runTest('dataset loader returns cached dataset rows before touching the fi
   const result = await loadDatasetSnapshot({
     datasetId: 'ds-cached',
     fileName: 'cached.csv',
-    workspaceName: 'Cached.ada',
+    workspaceName: 'Cached.metisws',
     api: {
       readFile: async () => {
         throw new Error('readFile should not be called when cache is present')
@@ -118,8 +118,8 @@ await runTest('dataset loader falls back to workspace extraction when cache is m
     datasetId: 'ds-workspace',
     fileName: 'workspace.csv',
     workspaceId: 'ws-1',
-    workspaceName: 'Workspace.ada',
-    workspacePath: 'C:/tmp/Workspace.ada',
+    workspaceName: 'Workspace.metisws',
+    workspacePath: 'C:/tmp/Workspace.metisws',
     api: {
       extractDataset: async () => ({ success: true, datasetTempPath: 'C:/tmp/extracted/workspace.csv' }),
       readFile: async () => ({ success: true, data: csvBase64 }),

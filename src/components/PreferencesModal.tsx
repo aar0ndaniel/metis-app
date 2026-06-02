@@ -1171,7 +1171,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           {rowDivider()}
           {generalRow(
             <>
-              {labelBlock('Metis workspace folder', 'Folder Metis scans for .ada workspaces.')}
+              {labelBlock('Metis workspace folder', 'Folder Metis scans for .metisws workspaces.')}
               {folderLocationControl('workspace', workspaceFolder, () => void handleBrowseWorkspaceFolder(), 'Browse for Metis workspace folder')}
             </>,
             82,
@@ -1620,7 +1620,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     fullPreferenceViewport.height / GENERAL_PREVIEW_HEIGHT,
   )
   const fullPreferenceScale = Number.isFinite(fullPreferenceScaleRaw) && fullPreferenceScaleRaw > 0
-    ? fullPreferenceScaleRaw
+    ? Math.min(1, fullPreferenceScaleRaw)
     : 1
   const fullPreferenceFrameWidth = Math.max(GENERAL_PREVIEW_WIDTH, fullPreferenceViewport.width / fullPreferenceScale)
   const fullPreferenceFrameHeight = Math.max(GENERAL_PREVIEW_HEIGHT, fullPreferenceViewport.height / fullPreferenceScale)

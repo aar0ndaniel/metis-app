@@ -98,7 +98,7 @@ function truncateDatasetName(name: string): string {
 }
 
 function getWorkspaceDisplayName(name: string): string {
-  return name.replace(/\.(ada|metis)$/i, '')
+  return name.replace(/\.(ada|metis|metisws)$/i, '')
 }
 
 function countWorkspaceDatasets(workspace: Workspace | null | undefined): number {
@@ -322,7 +322,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
     if (!hasStateWorkspace && workspaceId && (workspaceName || workspacePath)) {
       options.unshift({
         id: workspaceId,
-        name: workspaceName || 'Workspace.ada',
+        name: workspaceName || 'Workspace.metisws',
         color: 'var(--color-accent)',
         expanded: true,
         path: workspacePath,
@@ -492,7 +492,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
       const finalPath = persisted.internalName || fileName || 'dataset.csv'
       const normalizedWorkspacePath = targetWorkspacePath.replace(/\\/g, '/')
       const absoluteDatasetPath = persisted.datasetTempPath
-        || (normalizedWorkspacePath && !normalizedWorkspacePath.toLowerCase().endsWith('.ada')
+        || (normalizedWorkspacePath && !/\.(ada|metis|metisws)$/i.test(normalizedWorkspacePath)
           ? `${normalizedWorkspacePath}/${finalPath}`
           : finalPath)
 

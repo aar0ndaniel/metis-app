@@ -34,7 +34,6 @@ extraResources:
       - renv/**
       - R-Portable.zip
       - R-macos.tar.gz
-      - R-linux.tar.gz
 
 win:
   target: nsis
@@ -49,14 +48,6 @@ mac:
   icon: build/icon.icns
   artifactName: metis ${version} Bundle macOS.${ext}
 
-linux:
-  target:
-    - AppImage
-    - deb
-  category: Education
-  icon: build/icon.png
-  artifactName: metis ${version} Bundle Linux.${ext}
-
 nsis:
   oneClick: true
   allowToChangeInstallationDirectory: false
@@ -67,6 +58,6 @@ nsis:
   installerHeaderIcon: build/icon.ico
 
 fileAssociations:
-  - ext: ada
+  - ext: metisws
     name: metis Workspace
     role: Editor

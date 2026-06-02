@@ -61,7 +61,7 @@ assert.match(
 assert.match(
   electronMainSource,
   /R-Portable\.zip[\s\S]*R-macos\.tar\.gz[\s\S]*R-linux\.tar\.gz/,
-  'Bundle runtime extraction should select platform-specific R archives, using tarballs for Unix runtimes.'
+  'Bundle runtime extraction should keep future Linux runtime support while the current build rollout remains Windows/macOS only.'
 )
 
 assert.match(
@@ -136,10 +136,10 @@ assert.match(
   'macOS Bundle builds should smoke-test the conda-packed runtime before packaging.'
 )
 
-assert.match(
+assert.doesNotMatch(
   packageSource,
-  /"build:bundle:linux"[\s\S]*verify-r-bundle-archive\.mjs linux[\s\S]*smoke-r-bundle-runtime\.mjs linux/,
-  'Linux Bundle builds should smoke-test the conda-packed runtime before packaging.'
+  /"build:bundle:linux"|"build:lite:linux"/,
+  'Active package scripts should exclude Linux until Linux packaging is ready.'
 )
 
 console.log('PASS cross-platform runtime guards')

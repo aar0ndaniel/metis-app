@@ -104,7 +104,7 @@ export function resolveDatasetFilePathFromRequest(
     return filePath
   }
 
-  if (filePath === 'dataset.csv' && /(\.ada|\.metis)$/i.test(normalizedWorkspacePath)) {
+  if (filePath === 'dataset.csv' && /\.(ada|metis|metisws)$/i.test(normalizedWorkspacePath)) {
     return ''
   }
 

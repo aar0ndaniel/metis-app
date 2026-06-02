@@ -95,7 +95,7 @@ await runTest('diagnostics redact absolute filesystem paths from exported detail
     message: 'Calculation started.',
     details: {
       datasetPath: 'C:\\Users\\aaron\\Downloads\\metis\\sample dataset.csv',
-      workspacePath: 'C:\\Users\\aaron\\Downloads\\metis\\Study.ada',
+      workspacePath: 'C:\\Users\\aaron\\Downloads\\metis\\Study.metisws',
       nested: {
         datasetTempPath: 'C:\\Users\\aaron\\AppData\\Roaming\\metis\\temp-datasets\\ws__ds.csv',
       },
@@ -106,7 +106,7 @@ await runTest('diagnostics redact absolute filesystem paths from exported detail
   const [entry] = getDiagnostics()
   assert.ok(entry, 'Expected a diagnostic entry to be recorded')
   assert.equal(entry.details?.datasetPath, '[redacted-path: sample dataset.csv]')
-  assert.equal(entry.details?.workspacePath, '[redacted-path: Study.ada]')
+  assert.equal(entry.details?.workspacePath, '[redacted-path: Study.metisws]')
   assert.equal(entry.details?.nested?.datasetTempPath, '[redacted-path: ws__ds.csv]')
   assert.equal(entry.details?.filePath, 'datasets\\sample dataset.csv')
 })
@@ -131,7 +131,7 @@ await runTest('dataset view cache keeps full rows in memory but persists metadat
     fileName: 'sample.csv',
     filePath: 'datasets/sample.csv',
     workspaceId: 'ws-1',
-    workspaceName: 'Study.ada',
+    workspaceName: 'Study.metisws',
     headers: ['A', 'B'],
     allRows: [['1', '2'], ['3', '4']],
     totalRows: 2,

@@ -78,6 +78,36 @@ record_timing <- function(timings, phase, seconds, details = list()) {
 
 format_timing_details <- function(details) {
   if (!length(details)) return("")
+  core_detail_names <- c("cores", "detected_cores", "reserved_cores", "core_policy")
+  has_core_plan <- all(vapply(core_detail_names, function(name) !is.null(details[[name]]), logical(1)))
+  if (has_core_plan) {
+    detail_value <- function(name) {
+      value <- details[[name]]
+      if (length(value) > 1L) value <- paste(value, collapse = ",")
+      as.character(value[[1]])
+    }
+    parts <- character(0)
+    if (!is.null(details$nboot)) {
+      parts <- c(parts, sprintf("nboot=%s", detail_value("nboot")))
+    }
+    parts <- c(parts, sprintf(
+      "core plan: using %s of %s logical cores; reserved %s for desktop responsiveness; core_policy=%s",
+      detail_value("cores"),
+      detail_value("detected_cores"),
+      detail_value("reserved_cores"),
+      detail_value("core_policy")
+    ))
+    extra_names <- setdiff(names(details), c("nboot", core_detail_names))
+    if (length(extra_names)) {
+      parts <- c(parts, vapply(extra_names, function(name) {
+        value <- details[[name]]
+        if (is.null(value)) return(sprintf("%s=NULL", name))
+        if (length(value) > 1L) value <- paste(value, collapse = ",")
+        sprintf("%s=%s", name, as.character(value[[1]]))
+      }, character(1), USE.NAMES = FALSE))
+    }
+    return(sprintf(" (%s)", paste(parts, collapse = ", ")))
+  }
   parts <- vapply(names(details), function(name) {
     value <- details[[name]]
     if (is.null(value)) return(sprintf("%s=NULL", name))

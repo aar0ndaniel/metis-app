@@ -1097,7 +1097,7 @@ function AppShell() {
       if (action === 'open-workspace') {
         const result = await (window as any).electronAPI?.openFile?.({
           title: 'Open Workspace',
-          filters: [{ name: 'metis Workspace', extensions: ['ada'] }],
+          filters: [{ name: 'metis Workspace', extensions: ['metisws', 'ada'] }],
           properties: ['openFile'],
         })
         if (result && !result.canceled && result.filePaths?.length > 0) {
@@ -1416,7 +1416,7 @@ function AppShell() {
             const id  = `ws-${Date.now()}`
             const newWs: Workspace = {
               id,
-              name: `${name}.ada`,
+              name: `${name}.metisws`,
               color,
               expanded: true,
               children: [],
@@ -1444,7 +1444,7 @@ function AppShell() {
               const newWsId = `ws-${Date.now()}`
               const newWs: Workspace = {
                 id: newWsId,
-                name: `${newWsData.name}.ada`,
+                name: `${newWsData.name}.metisws`,
                 color: newWsData.color,
                 expanded: true,
                 children: [],

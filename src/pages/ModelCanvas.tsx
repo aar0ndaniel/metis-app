@@ -1357,7 +1357,7 @@ export default function ModelCanvas({
       const newWsId = `ws-${Date.now()}`
       const newWorkspace = {
         id: newWsId,
-        name: `${newWsData.name}.ada`,
+        name: `${newWsData.name}.metisws`,
         color: newWsData.color,
         expanded: true,
         children: [],
@@ -3859,7 +3859,7 @@ export default function ModelCanvas({
   const floatingPanelBottom = 52
   const currentCanvasTab = canvasTabs.find((tab) => tab.modelId === modelId) ?? canvasTabs[0]
   const currentModelSwitcherLabel = currentCanvasTab
-    ? `${stripModelDisplayName(String(currentCanvasTab.model?.name || currentCanvasTab.modelId).replace(/\.(hbe|ada)$/i, ''))}${dirtyModels[currentCanvasTab.modelId] ? '*' : ''}`
+    ? `${stripModelDisplayName(String(currentCanvasTab.model?.name || currentCanvasTab.modelId).replace(/\.(hbe|ada|metisws)$/i, ''))}${dirtyModels[currentCanvasTab.modelId] ? '*' : ''}`
     : stripModelDisplayName(currentModel?.name ?? 'Untitled model')
   const currentWorkspaceSwitcherLabel = currentCanvasTab
     ? stripWorkspaceDisplayName(currentCanvasTab.workspace?.name || '')
@@ -4818,7 +4818,7 @@ export default function ModelCanvas({
                   {canvasTabs.map((tab) => {
                     const isActiveTab = tab.modelId === modelId
                     const workspaceLabel = stripWorkspaceDisplayName(tab.workspace?.name || '')
-                    const modelLabel = stripModelDisplayName(String(tab.model?.name || tab.modelId).replace(/\.(hbe|ada)$/i, ''))
+                    const modelLabel = stripModelDisplayName(String(tab.model?.name || tab.modelId).replace(/\.(hbe|ada|metisws)$/i, ''))
                     const isDirtyTab = !!dirtyModels[tab.modelId]
                     return (
                       <button

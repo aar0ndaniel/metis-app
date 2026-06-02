@@ -20,8 +20,8 @@ assert.match(
 
 assert.match(
   plumberSource,
-  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*9L\s*\)\s*2L\s*else\s*1L[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
-  'Default analysis cores should reserve two cores above 9 detected cores and one core at 9 or fewer detected cores.'
+  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s+if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
+  'Default analysis cores should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.'
 )
 
 assert.match(
@@ -57,7 +57,7 @@ for (const releasePlumberPath of [
 
   assert.match(
     releasePlumberSource,
-    /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*9L\s*\)\s*2L\s*else\s*1L[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
+    /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s+if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
     `${releasePlumberPath} should match the dynamic bundled core fallback.`
   )
 
@@ -104,6 +104,12 @@ assert.match(
   plumberSource,
   /details\s*=\s*list\([\s\S]*nboot\s*=\s*nboot[\s\S]*cores\s*=\s*cores[\s\S]*detected_cores\s*=\s*core_plan\$detected_cores[\s\S]*reserved_cores\s*=\s*core_plan\$reserved_cores[\s\S]*core_policy\s*=\s*core_plan\$policy/,
   'Bootstrap timing details should log the local core plan for machine-specific validation.'
+)
+
+assert.match(
+  plumberSource,
+  /format_timing_details\s*<-\s*function\s*\(details\)[\s\S]*core plan: using[\s\S]*logical cores[\s\S]*reserved[\s\S]*core_policy/,
+  'Timing details should explain the bootstrap core plan instead of only printing a raw cores number.'
 )
 
 assert.match(
