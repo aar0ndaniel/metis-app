@@ -4,6 +4,24 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-06-02 — v0.0.2 rollout, landing-page sync, and roadmap direction
+
+- `2026-06-02T05:57:16+00:00` — Reviewed the current Metis app repo state for the public rollout sync. Repo was on branch `next-rollout`, clean, synced with `buildlog/next-rollout`, and seven commits ahead of `origin/main`.
+- `2026-06-02T05:57:16+00:00` — Current rollout head was `580c590 Prepare next rollout desktop builds`. The current pushed rollout work ahead of `origin/main` was:
+  - `580c590` Prepare next rollout desktop builds.
+  - `2fcc5db` Bump GitHub Actions to Node.js 24-compatible versions, using Node 22 LTS.
+  - `60f15ef` Add `--publish never` to Electron Builder scripts to prevent implicit CI publishing.
+  - `350383f` Skip icon regeneration when output files already exist, removing PyQt5 as a normal-build dependency.
+  - `1158433` Prepare next rollout macOS build.
+  - `ccb6b21` Checkpoint current rollout work.
+  - `dd42228` Prepare next rollout build.
+- `2026-06-02T05:57:16+00:00` — Public release context to preserve: v0.0.2 is the current rollout line, Windows and macOS downloads are part of the public download story, macOS builds are represented for Apple Silicon ARM64 and Intel x64 users, and Linux remains in development rather than current availability.
+- `2026-06-02T05:57:16+00:00` — Product capabilities that should stay visible in release and landing copy: higher-order constructs, easier HOC drawing and linking, explicit HOC/LOC measurement-path handling, HOC direction-conflict warnings, HOC dimension results tables, accent color selection, improved preference mode, storage/font-scale/appearance polish, faster default bootstrap runs, bounded local bootstrap core planning, PLS core caching, and clearer timing metadata.
+- `2026-06-02T05:57:16+00:00` — Roadmap direction captured from user feedback: Linux packaging is in development; signing/notarization should not be framed as active roadmap work; planned analysis direction should emphasize MGA, MICOM and permutation MGA, segmentation workflows such as FIMIX-PLS and PLS-POS, nonlinear effects, endogeneity checks, Gaussian copula workflows, higher-order construct examples, and advanced exports.
+- `2026-06-02T05:57:16+00:00` — Landing page sync completed in `C:\Users\aaron\dev\landingpage`: docs, updates/release notes, roadmap, download, index, navigation, and styling were updated to reflect the current v0.0.2 rollout.
+- `2026-06-02T05:57:16+00:00` — Landing page details preserved: system requirements use a mobile accordion instead of horizontal table scrolling, internet requirement says only `Needed for download only.`, macOS installer selection is explicit for ARM64 and x64 DMGs, macOS cards do not show fixed build-size labels, Linux appears in development, signing/notarization roadmap wording was removed, and the index wall promotion was replaced with benchmarking against SmartPLS, ADANCO, AMOS, Analyva, and other PLS applications.
+- `2026-06-02T05:57:16+00:00` — Landing verification completed: `node --check script.js`, `git diff --check` with only line-ending warnings, stale-copy sweep for old Windows-only/macOS-size/notarization text, and static HTML script/local-anchor checks for `index.html`, `docs.html`, `updates.html`, `roadmap.html`, and `download.html`.
+
 ## 2026-05-27 — Higher-order construct modal planning
 
 - `2026-05-27T19:48:31+00:00` — User requested that the Facebook second-order construct question be solved in Metis, beginning with a Pencil redesign of the construct modal before implementation.
