@@ -10,7 +10,8 @@ const installRPackagesScript = await fs.readFile(path.join(workspaceRoot, 'scrip
 const gitIgnore = await fs.readFile(path.join(workspaceRoot, '.gitignore'), 'utf8').catch(() => '')
 
 assert.match(workflow, /workflow_dispatch:/, 'Cross-platform release workflow should be manually runnable.')
-assert.match(workflow, /runner: macos-latest[\s\S]*artifact: metis-macos-arm64-release[\s\S]*runner: macos-15-intel[\s\S]*artifact: metis-macos-x64-release/, 'Workflow should build macOS arm64 and macOS Intel on native runners.')
+assert.match(workflow, /name: macOS arm64 Bundle test[\s\S]*runs-on: macos-latest/, 'Temporary workflow should build only the macOS arm64 Bundle on the Apple Silicon runner.')
+assert.doesNotMatch(workflow, /macos-15-intel|metis-macos-x64-release|\$\{\{\s*matrix\./, 'Temporary workflow should skip Intel matrix builds until macOS Bundle debugging is complete.')
 assert.doesNotMatch(workflow, /\n  linux-release:|build:lite:linux|build:bundle:linux|R-linux\.tar\.gz|metis-linux-release|release\/lite\/\*\.AppImage|release\/bundle\/\*\.deb/, 'Workflow should exclude Linux release builds until Linux packaging is ready.')
 assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY:\s*"false"/, 'Initial macOS release should be unsigned.')
 assert.match(workflow, /Run release guard tests[\s\S]*npm run typecheck[\s\S]*crossPlatformRuntimeStatic\.test\.mjs[\s\S]*productionReleaseStatic\.test\.mjs[\s\S]*crossPlatformReleaseWorkflow\.test\.mjs[\s\S]*installerSetupTheme\.test\.mjs/, 'Workflow should run release guard tests before building artifacts.')
@@ -24,8 +25,9 @@ assert.match(workflow, /GITHUB_PAT:\s*\$\{\{\s*github\.token\s*\}\}/, 'Workflow 
 assert.match(workflow, /\$PWD\/R-Bundled\/bin\/Rscript" scripts\/install-required-r-packages\.R/, 'Workflow should use the bounded required-package installer instead of inline R install commands.')
 assert.doesNotMatch(workflow, /install\.packages\(c\("plumber", "seminr", "semPower"\)/, 'Workflow should not keep long inline CRAN package install commands.')
 assert.match(workflow, /conda-pack[\s\S]*--arcroot R-Bundled/, 'Workflow should create tarballs with the R-Bundled top-level directory.')
-assert.match(workflow, /Build macOS Lite[\s\S]*build:lite:mac[\s\S]*Build bundled macOS R runtime[\s\S]*R-macos\.tar\.gz[\s\S]*verify-r-bundle-archive\.mjs darwin[\s\S]*smoke-r-bundle-runtime\.mjs darwin[\s\S]*Build macOS Bundle[\s\S]*build:bundle:mac/, 'macOS job should build Lite before creating, verifying, smoke-testing, and packaging the Bundle runtime.')
-assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*release\/lite\/\*\.dmg[\s\S]*release\/lite\/\*\.zip[\s\S]*release\/bundle\/\*\.dmg[\s\S]*release\/bundle\/\*\.zip[\s\S]*r-api\/R-macos\.tar\.gz/, 'Workflow should upload macOS Lite, Bundle, and runtime archive artifacts.')
+assert.doesNotMatch(workflow, /Build macOS Lite|build:lite:mac|release\/lite\/\*\.dmg|release\/lite\/\*\.zip/, 'Temporary workflow should skip Lite builds and artifacts.')
+assert.match(workflow, /Build bundled macOS R runtime[\s\S]*R-macos\.tar\.gz[\s\S]*verify-r-bundle-archive\.mjs darwin[\s\S]*smoke-r-bundle-runtime\.mjs darwin[\s\S]*Build macOS Bundle[\s\S]*build:bundle:mac/, 'Temporary macOS job should create, verify, smoke-test, and package only the Bundle runtime.')
+assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*name: metis-macos-arm64-bundle-test[\s\S]*release\/bundle\/\*\.dmg[\s\S]*release\/bundle\/\*\.zip[\s\S]*r-api\/R-macos\.tar\.gz/, 'Temporary workflow should upload only macOS arm64 Bundle artifacts and the runtime archive.')
 assert.match(gitIgnore, /^r-api\/R-macos\.tar\.gz$/m, 'Generated macOS R runtime archive should stay ignored because Actions builds it.')
 
 assert.match(installRPackagesScript, /required_packages <- c\("jsonlite", "Matrix", "plumber", "readxl", "seminr", "seminrExtras", "semPower"\)/, 'R package installer should only target the app-required package set.')

@@ -1521,6 +1521,7 @@ export default function ModelCanvas({
           status: result.status ?? null,
           error: result.error ?? null,
           normalizedMessage: msg,
+          ...bridgeDiagnosticDetails(result),
         })
         if (/dataset not found|no dataset|backend unavailable|cannot reach local pls backend|r runtime|rscript|plumber backend unavailable/i.test(msg)) {
           setCautionModal({
@@ -3089,6 +3090,11 @@ export default function ModelCanvas({
     if (fromId === toId) return
     const id = `p-${Date.now()}`
     if (requestedHocRole === 'measurement') {
+      const conflict = getHocPathConflict(fromId, toId, id)
+      if (conflict) {
+        setHocPathConflict(conflict)
+        return
+      }
       commitDirectPath(fromId, toId, id, constructs, paths, 'measurement')
       return
     }

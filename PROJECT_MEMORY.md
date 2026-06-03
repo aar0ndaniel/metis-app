@@ -4,6 +4,16 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-06-02 — macOS native menu and active model titlebar update
+
+- `2026-06-02T17:15:10+00:00` — User clarified the macOS reference in `s.pen`: the Pencil traffic-light treatment represents Apple's native traffic lights, not custom renderer traffic lights, and the macOS menu should match the Metis app menu template.
+- `2026-06-02T17:15:10+00:00` — Updated `electron/main.ts` so the native macOS menu bar is scoped to `metis`, `File`, `Edit`, `View`, `Analysis`, `Tark it`, and `Help`, with the label children explicitly matching the React titlebar menu labels/actions.
+- `2026-06-02T17:15:10+00:00` — Native macOS menu child actions now mirror the renderer actions: workspace/model creation, open workspace/recent, save/save as, imports, export R script, close model, edit operations, preferences, view toggles, analysis actions, Tark report creation, documentation, tour, feedback, bug report, citation, and about.
+- `2026-06-02T17:15:10+00:00` — Updated the main `BrowserWindow` chrome so macOS uses a native frame with `titleBarStyle: 'hidden'`, preserving Apple's native traffic lights; non-macOS platforms remain frameless for the custom renderer window controls.
+- `2026-06-02T17:15:10+00:00` — Updated `src/App.tsx` and `src/components/TitleBar.tsx` so the app derives the active model name from canvas, results, and Tark preview routes, then shows that model name centered in the macOS titlebar only.
+- `2026-06-02T17:15:10+00:00` — Updated `tests/macTitleBarNativeMenuStatic.test.mjs` to lock the native macOS menu template, native traffic-light window-frame behavior, and macOS active-model title contract.
+- `2026-06-02T17:15:10+00:00` — Verification passed: `node tests\macTitleBarNativeMenuStatic.test.mjs`, `node tests\titleBarMenuChrome.test.mjs`, `node tests\modelCanvasUiLayout.test.mjs`, `node tests\resultsViewWorkspaceShell.test.mjs`, `node tests\tarkLaunchStatic.test.mjs`, and `cmd /c npm run typecheck`. Direct `npm run typecheck` in PowerShell was blocked by the local execution policy, so `cmd /c` was used instead.
+
 ## 2026-06-02 — v0.0.2 rollout, landing-page sync, and roadmap direction
 
 - `2026-06-02T05:57:16+00:00` — Reviewed the current Metis app repo state for the public rollout sync. Repo was on branch `next-rollout`, clean, synced with `buildlog/next-rollout`, and seven commits ahead of `origin/main`.

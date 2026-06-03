@@ -95,6 +95,12 @@ function installApplicationMenu() {
         nativeMenuAction('New Model', 'new-model', 'Command+Shift+N'),
         { type: 'separator' },
         nativeMenuAction('Open Workspace...', 'open-workspace', 'Command+O'),
+        {
+          label: 'Open Recent',
+          submenu: [
+            { label: 'No Recent Models', enabled: false },
+          ],
+        },
         { type: 'separator' },
         nativeMenuAction('Save', 'file:save', 'Command+S'),
         nativeMenuAction('Save As...', 'file:save-as', 'Command+Shift+S'),
@@ -119,6 +125,8 @@ function installApplicationMenu() {
         nativeMenuAction('Delete', 'edit:delete'),
         { type: 'separator' },
         nativeMenuAction('Select All', 'edit:selectall', 'Command+A'),
+        { type: 'separator' },
+        nativeMenuAction('Preferences', 'open-preferences', 'Command+,'),
       ],
     },
     {
@@ -128,11 +136,9 @@ function installApplicationMenu() {
         nativeMenuAction('Zoom Out', 'view:zoom-out', 'Command+-'),
         nativeMenuAction('Fit to Screen', 'view:fit-screen', 'Command+0'),
         { type: 'separator' },
-        nativeMenuAction('Toggle Zoom Control', 'view:toggle-zoom-control'),
-        nativeMenuAction('Toggle Indicators Panel', 'view:toggle-vars'),
-        nativeMenuAction('Toggle Properties Panel', 'view:toggle-props'),
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
+        nativeMenuAction('Zoom Control', 'view:toggle-zoom-control'),
+        nativeMenuAction('Indicators Panel', 'view:toggle-vars'),
+        nativeMenuAction('Properties Panel', 'view:toggle-props'),
       ],
     },
     {
@@ -142,6 +148,8 @@ function installApplicationMenu() {
         nativeMenuAction('Run Bootstrap', 'run-bootstrap', 'Command+B'),
         nativeMenuAction('PLS Predict', 'run-pls-predict'),
         nativeMenuAction('Advanced analysis', 'run-advanced-analysis'),
+        { type: 'separator' },
+        { label: 'Algorithm Settings', enabled: false },
       ],
     },
     {
@@ -159,9 +167,10 @@ function installApplicationMenu() {
         nativeMenuAction('Feedback', 'open-feedback'),
         nativeMenuAction('Report a Bug', 'open-report-bug'),
         nativeMenuAction('Cite Metis', 'open-cite-metis'),
+        { type: 'separator' },
+        nativeMenuAction(`About ${appName}`, 'open-about'),
       ],
     },
-    { role: 'windowMenu' },
   ]
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
@@ -2516,8 +2525,9 @@ function createWindow() {
     maxHeight:isSetup ? undefined : installerPreviewHeight,
     backgroundColor: readStoredThemePreference() === 'light' ? '#F4F6F8' : '#181818',
     titleBarStyle: isSetup ? 'hidden' : 'hidden',
-    // Use frameless chrome so the custom React title bar and circular controls are visible.
-    frame: false,
+    // macOS keeps the native traffic lights with titleBarStyle: hidden; other
+    // platforms stay frameless for the renderer window controls.
+    frame: process.platform === 'darwin' && isSetup,
     transparent: false,
     roundedCorners: true,
     resizable: isSetup,

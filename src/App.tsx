@@ -32,6 +32,7 @@ import {
   type DatasetViewCacheEntry,
 } from './utils/datasetViewCache'
 import { readWorkspaceClientCache, writeWorkspaceClientCache } from './utils/workspaceClientCache'
+import { stripModelDisplayName } from './utils/displayNames'
 import {
   DEFAULT_ACCENT_CHOICE,
   LEGACY_PREF_ACCENT_COLOR_KEY,
@@ -292,6 +293,11 @@ function AppShell() {
   const currentCanvasModelId = location.pathname.startsWith('/canvas/')
     ? decodeURIComponent(location.pathname.split('/')[2] ?? '')
     : ''
+  const currentResultsModelId = location.pathname.startsWith('/results/')
+    ? decodeURIComponent(location.pathname.split('/')[2] ?? '')
+    : location.pathname.startsWith('/tark-preview/')
+      ? decodeURIComponent(location.pathname.split('/')[3] ?? '')
+      : ''
 
   // ── Load workspaces from the metis data directory on first mount ───────────
   useEffect(() => {
@@ -794,6 +800,17 @@ function AppShell() {
   if (location.pathname.startsWith('/canvas'))  currentScreen = 'canvas'
   else if (location.pathname.startsWith('/results') || location.pathname.startsWith('/tark-preview')) currentScreen = 'results'
   else if (location.pathname.startsWith('/import') || location.pathname.startsWith('/dataview') || location.pathname === '/rcode') currentScreen = 'import'
+  const activeTitleModelName = (() => {
+    const modelId = currentCanvasModelId || currentResultsModelId
+    if (!modelId || (currentScreen !== 'canvas' && currentScreen !== 'results')) return ''
+
+    for (const workspace of workspaces) {
+      const model = workspace.children.find((child) => child.type === 'model' && child.id === modelId)
+      if (model) return stripModelDisplayName(model.name || modelId)
+    }
+
+    return stripModelDisplayName(modelId)
+  })()
 
   // ── Hidden file input ref — fallback when electronAPI.openFile is unavailable ─
   const fileInputRef        = useRef<HTMLInputElement>(null)
@@ -1305,7 +1322,7 @@ function AppShell() {
             : 'Browser mode: window.electronAPI is not available. Run `npm run electron:dev` to test native file dialogs and the R/Plumber backend.'}
         </div>
       )}
-      {!isInstallerPreview && <TitleBar currentScreen={currentScreen} theme={theme} />}
+      {!isInstallerPreview && <TitleBar currentScreen={currentScreen} theme={theme} activeModelName={activeTitleModelName} />}
       <div className="flex-1 overflow-hidden">
         <Routes>
           <Route path="/installer-preview" element={<InstallerPreview />} />

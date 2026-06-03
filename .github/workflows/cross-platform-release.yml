@@ -12,18 +12,8 @@ env:
 
 jobs:
   macos-release:
-    name: macOS ${{ matrix.arch }} Lite and Bundle
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: arm64
-            runner: macos-latest
-            artifact: metis-macos-arm64-release
-          - arch: x64
-            runner: macos-15-intel
-            artifact: metis-macos-x64-release
+    name: macOS arm64 Bundle test
+    runs-on: macos-latest
     defaults:
       run:
         shell: bash -l {0}
@@ -55,9 +45,6 @@ jobs:
           node tests/crossPlatformReleaseWorkflow.test.mjs
           node tests/installerSetupTheme.test.mjs
 
-      - name: Build macOS Lite
-        run: npm run build:lite:mac
-
       - name: Build bundled macOS R runtime
         env:
           R_ARCHIVE: R-macos.tar.gz
@@ -83,11 +70,9 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
+          name: metis-macos-arm64-bundle-test
           if-no-files-found: error
           path: |
-            release/lite/*.dmg
-            release/lite/*.zip
             release/bundle/*.dmg
             release/bundle/*.zip
             r-api/R-macos.tar.gz

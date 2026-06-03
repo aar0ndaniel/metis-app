@@ -26,6 +26,7 @@ interface TitleBarProps {
   /** Which screen we're on — controls which menu items are grayed out */
   currentScreen?: 'home' | 'canvas' | 'results' | 'import'
   theme?: 'Dark' | 'Light'
+  activeModelName?: string
 }
 
 function buildTarkMenu(): MenuItem[] {
@@ -261,7 +262,7 @@ function MenuDropdown({
 }
 
 // ─── TitleBar ──────────────────────────────────────────────────────────────────
-export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: TitleBarProps) {
+export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activeModelName = '' }: TitleBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [showVars, setShowVars] = useState(true)
   const [showProps, setShowProps] = useState(true)
@@ -382,6 +383,8 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
   const logoVariant = theme === 'Light' ? 'black' : 'white'
   const showTitleBarDivider = currentScreen === 'canvas'
   const isMac = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin'
+  const activeModelTitle = activeModelName.trim()
+  const showActiveModelTitle = isMac && (currentScreen === 'canvas' || currentScreen === 'results') && activeModelTitle.length > 0
 
   return (
     <div
@@ -429,6 +432,28 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
           </span>
         </button>
       </div>
+
+      {showActiveModelTitle && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-0 flex h-full max-w-[44vw] -translate-x-1/2 items-center justify-center"
+          style={{ ...({ WebkitAppRegion: 'drag' } as any) }}
+        >
+          <span
+            style={{
+              color: 'var(--color-title-tab)',
+              fontFamily: 'DM Sans, sans-serif',
+              fontSize: 13,
+              fontWeight: 700,
+              letterSpacing: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {activeModelTitle}
+          </span>
+        </div>
+      )}
 
       {/* Divider between logo and menus */}
       {!isMac && <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-surface)', flexShrink: 0 }} />}

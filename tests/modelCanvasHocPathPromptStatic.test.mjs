@@ -46,8 +46,8 @@ assert.match(
 
 assert.match(
   canvas,
-  /requestedHocRole === 'measurement'[\s\S]*commitDirectPath\(fromId, toId, id, constructs, paths, 'measurement'\)/,
-  'Holding Shift while drawing an HOC-to-LOC path should create a lower-order construct path directly.',
+  /requestedHocRole === 'measurement'[\s\S]*const conflict = getHocPathConflict\(fromId, toId, id\)[\s\S]*setHocPathConflict\(conflict\)[\s\S]*commitDirectPath\(fromId, toId, id, constructs, paths, 'measurement'\)/,
+  'Holding Shift while drawing an HOC-to-LOC path should still show the direction conflict prompt before creating a lower-order construct path.',
 )
 
 assert.match(
