@@ -4,14 +4,21 @@ declare const __METIS_APP_NAME__: string
 declare const __METIS_APP_VERSION__: string
 declare const __METIS_APP_EDITION__: string
 
+type NativeMenuViewState = {
+  showVars: boolean
+  showProps: boolean
+  showZoomControl: boolean
+}
+
 interface Window {
   electronAPI: {
     minimize: () => void
     maximize: () => void
     close: () => void
     isMaximized: () => Promise<boolean>
-    onWindowStateChanged: (cb: (data: { isMaximized: boolean }) => void) => () => void
+    onWindowStateChanged: (cb: (data: { isMaximized: boolean; isFullScreen?: boolean }) => void) => () => void
     onNativeMenuAction: (cb: (action: string) => void) => () => void
+    setNativeMenuState: (state: NativeMenuViewState) => void
     notifyAppReady: () => void
     sendRendererReady: () => void
     openFile: (options?: any) => Promise<any>

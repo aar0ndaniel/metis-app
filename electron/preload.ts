@@ -1,13 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+type NativeMenuViewState = {
+  showVars: boolean
+  showProps: boolean
+  showZoomControl: boolean
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Window controls
   minimize:  () => ipcRenderer.send('window:minimize'),
   maximize:  () => ipcRenderer.send('window:maximize'),
   close:     () => ipcRenderer.send('window:close'),
   isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
-  onWindowStateChanged: (cb: (data: { isMaximized: boolean }) => void) => {
-    const handler = (_: unknown, data: { isMaximized: boolean }) => cb(data)
+  onWindowStateChanged: (cb: (data: { isMaximized: boolean; isFullScreen?: boolean }) => void) => {
+    const handler = (_: unknown, data: { isMaximized: boolean; isFullScreen?: boolean }) => cb(data)
     ipcRenderer.on('window:state-changed', handler)
     return () => ipcRenderer.removeListener('window:state-changed', handler)
   },
@@ -16,6 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('menu:action', handler)
     return () => ipcRenderer.removeListener('menu:action', handler)
   },
+  setNativeMenuState: (state: NativeMenuViewState) => ipcRenderer.send('native-menu:view-state', state),
   notifyAppReady: () => ipcRenderer.send('app:renderer-ready'),
   sendRendererReady: () => ipcRenderer.send('app:renderer-ready'),
   platform:  process.platform,

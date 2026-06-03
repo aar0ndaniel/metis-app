@@ -8,6 +8,11 @@ const labelForType = (t: 'pls' | 'bootstrap' | 'plspredict' | 'advanced') =>
       : t === 'plspredict' ? 'PLSpredict'
         : 'Advanced analysis'
 
+const formatEstimate = (seconds: number) => {
+  const minutes = Math.max(1, Math.round(seconds / 60))
+  return `Est. ~${minutes} min`
+}
+
 export default function CalculatingChip() {
   const state = useCalculation()
   const dispatch = useCalculationDispatch()
@@ -47,7 +52,7 @@ export default function CalculatingChip() {
   if (state.active && state.active.view === 'chip' && state.active.status !== 'done') {
     const a = state.active
     const progressText = a.progressMode === 'indeterminate'
-      ? (a.subLabel || 'Running')
+      ? (a.estimatedSeconds ? formatEstimate(a.estimatedSeconds) : (a.subLabel || 'Running'))
       : `${Math.round(a.progressPct)}%`
     return (
       <div

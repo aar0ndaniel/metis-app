@@ -26,6 +26,7 @@ export type ActiveCalc = {
   progressMode: ProgressMode
   progressPct: number          // 0-100; for 'phase' mode this is computed from phases
   subLabel?: string            // e.g. "2,847 / 5,000"
+  estimatedSeconds?: number
   view: 'modal' | 'chip' | 'silenced'
   status: 'running' | 'stopping' | 'done' | 'error'
   errorMessage?: string

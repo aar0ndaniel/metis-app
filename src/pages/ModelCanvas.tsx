@@ -214,8 +214,26 @@ interface PersistCanvasSnapshotOptions {
 const METIS_STORAGE_PREFIX = 'metis:'
 const LEGACY_STORAGE_PREFIX = 'pls:'
 const HOC_PATH_PROMPT_PREF_SUFFIX = 'prefs:showHocPathPrompt'
+const STRUCTURAL_PATH_STROKE_WIDTH = 2.4
+const SELECTED_PATH_STROKE_WIDTH = 3.2
+const INDICATOR_PATH_STROKE_WIDTH = 1.8
+
+function indicatorArrowMarkerId(constructId: string): string {
+  return `indicator-arrow-${constructId.replace(/[^A-Za-z0-9_-]/g, '_')}`
+}
+
 function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
+}
+
+function estimateBootstrapSeconds(samples: number): number {
+  const safeSamples = Number.isFinite(samples) && samples > 0 ? samples : 500
+  return Math.max(60, Math.round((safeSamples / 1250) * 60))
+}
+
+function formatBootstrapEstimate(seconds: number): string {
+  const minutes = Math.max(1, Math.round(seconds / 60))
+  return minutes === 1 ? 'about 1 minute' : `about ${minutes} minutes`
 }
 
 function readSharedStorageValue(suffix: string): string | null {
@@ -1860,6 +1878,8 @@ export default function ModelCanvas({
         type: 'bootstrap',
         title: `Bootstrapping ${totalNboot.toLocaleString()} samples`,
         progressMode: 'indeterminate',
+        subLabel: `${totalNboot.toLocaleString()} samples - estimated ${formatBootstrapEstimate(estimateBootstrapSeconds(totalNboot))}`,
+        estimatedSeconds: estimateBootstrapSeconds(totalNboot),
         phases: [
           { id: 'prep', label: 'Preparing base model', status: 'pending' },
           { id: 'resample', label: 'Resampling', status: 'pending' },
@@ -1874,7 +1894,7 @@ export default function ModelCanvas({
       calcDispatch({
         type: 'setProgress',
         pct: 0,
-        subLabel: `${totalNboot.toLocaleString()} bootstrap samples`,
+        subLabel: `${totalNboot.toLocaleString()} bootstrap samples - estimated ${formatBootstrapEstimate(estimateBootstrapSeconds(totalNboot))}`,
       })
       const bootstrapPayload = {
         ...basePayload,
@@ -4294,6 +4314,11 @@ export default function ModelCanvas({
               <marker id="arr-mod" markerWidth="7" markerHeight="5" refX="6.3" refY="2.5" orient="auto">
                 <polygon points="0 0,7 2.5,0 5" fill="var(--color-text-muted)" />
               </marker>
+              {constructs.map((construct) => (
+                <marker key={construct.id} id={indicatorArrowMarkerId(construct.id)} markerWidth="7" markerHeight="5" refX="6.3" refY="2.5" orient="auto">
+                  <polygon points="0 0,7 2.5,0 5" fill={construct.color} />
+                </marker>
+              ))}
             </defs>
 
             {/* MARQUEE RENDERING INSIDE SVG */}
@@ -4343,7 +4368,7 @@ export default function ModelCanvas({
                       : d}
                     fill="none"
                     stroke={isPathSel ? C.secondary : (isModeration ? 'var(--color-text-muted)' : 'var(--color-border)')}
-                    strokeWidth={isPathSel ? 2.5 : 1.5}
+                    strokeWidth={isPathSel ? SELECTED_PATH_STROKE_WIDTH : STRUCTURAL_PATH_STROKE_WIDTH}
                     strokeDasharray={isModeration ? '4,4' : undefined}
                     markerEnd={isPathSel ? 'url(#arr-sel)' : (isModeration ? 'url(#arr-mod)' : 'url(#arr)')}
                     style={{ pointerEvents: 'none' }}
@@ -4474,6 +4499,7 @@ export default function ModelCanvas({
                 ? 'var(--color-text-primary)'
                 : c.labelColor
               const showConnectedConstructHighlight = highlightedConstructId === c.id
+              const indicatorMarkerEnd = `url(#${indicatorArrowMarkerId(c.id)})`
 
               return (
                 <g key={c.id}>
@@ -4512,7 +4538,7 @@ export default function ModelCanvas({
                       >
                         {hasLive && pathSegments ? (
                           <>
-                            <path d={pathSegments.seg1} fill="none" stroke={c.color} strokeWidth={1.2} opacity={0.5} />
+                            <path d={pathSegments.seg1} fill="none" stroke={c.color} strokeWidth={INDICATOR_PATH_STROKE_WIDTH} opacity={0.5} />
                             <rect x={pathSegments.midX - 17} y={pathSegments.midY - 8} width={34} height={14} rx={3} fill={C.surface} stroke={C.borderFaint} strokeWidth={0.5} />
                             <text
                               x={pathSegments.midX} y={pathSegments.midY + 1}
@@ -4522,10 +4548,10 @@ export default function ModelCanvas({
                             >
                               {(liveVal as number).toFixed(3)}
                             </text>
-                            <path d={pathSegments.seg2} fill="none" stroke={c.color} strokeWidth={1.2} markerEnd="url(#arr)" opacity={0.5} />
+                            <path d={pathSegments.seg2} fill="none" stroke={c.color} strokeWidth={INDICATOR_PATH_STROKE_WIDTH} markerEnd={indicatorMarkerEnd} opacity={0.5} />
                           </>
                         ) : (
-                          <path d={p} fill="none" stroke={c.color} strokeWidth={1.2} markerEnd="url(#arr)" opacity={0.5} />
+                          <path d={p} fill="none" stroke={c.color} strokeWidth={INDICATOR_PATH_STROKE_WIDTH} markerEnd={indicatorMarkerEnd} opacity={0.5} />
                         )}
 
                         {/* Frame */}

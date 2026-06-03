@@ -9,6 +9,10 @@ const electronMainSource = await fs.readFile(path.join(workspaceRoot, 'electron'
 const verifierSource = await fs.readFile(path.join(workspaceRoot, 'scripts', 'verify-r-bundle-archive.mjs'), 'utf8')
 const smokeSource = await fs.readFile(path.join(workspaceRoot, 'scripts', 'smoke-r-bundle-runtime.mjs'), 'utf8')
 const packageSource = await fs.readFile(path.join(workspaceRoot, 'package.json'), 'utf8')
+const runtimePathsSource = electronMainSource.slice(
+  electronMainSource.indexOf('function getBundledPortableRuntimePaths'),
+  electronMainSource.indexOf('function getBundledUnixRuntimeRelocationMarker'),
+)
 
 assert.match(
   electronMainSource,
@@ -96,8 +100,14 @@ assert.doesNotMatch(
 
 assert.match(
   electronMainSource,
+  /function getBundledUnixRuntimeExtractionRoot\(\): string \{[\s\S]*app\.getPath\('cache'\)[\s\S]*'r-runtime'/,
+  'macOS and Linux bundled R should extract to the app cache r-runtime path so R launchers do not break on the Application Support space.'
+)
+
+assert.doesNotMatch(
+  runtimePathsSource,
   /path\.join\(app\.getPath\('userData'\), 'r-runtime'\)/,
-  'macOS and Linux bundled R should extract to writable userData, not packaged app resources.'
+  'macOS and Linux bundled R should not extract into Application Support because conda-packed R launchers split that path on the space.'
 )
 
 assert.match(
@@ -128,6 +138,18 @@ assert.match(
   electronMainSource,
   /function getBundledPortableRuntimeStatus\(\)[\s\S]*appEdition: getConfiguredAppEdition\(\)[\s\S]*archiveExists[\s\S]*archiveSize[\s\S]*runtimeDirExists[\s\S]*extractedRscriptExists[\s\S]*relocationMarkerExists[\s\S]*condaUnpackExists/,
   'Bundle runtime diagnostics should report edition, archive, extraction, Rscript, and Unix relocation status.'
+)
+
+assert.match(
+  electronMainSource,
+  /function getBundledPortableRuntimeStatus\(\)[\s\S]*legacyRuntimeDir[\s\S]*legacyRuntimeDirExists/,
+  'Bundle runtime diagnostics should report whether the old Application Support runtime still exists without selecting it as the active runtime.'
+)
+
+assert.match(
+  electronMainSource,
+  /function verifyBundledPortableRuntimeCanStart[\s\S]*Bundled R runtime could not start[\s\S]*verifyBundledPortableRuntimeCanStart\(extractedRscriptPath\)/,
+  'Bundle setup should smoke-check the extracted Rscript before accepting the runtime as installed.'
 )
 
 assert.match(

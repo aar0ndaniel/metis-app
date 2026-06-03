@@ -268,9 +268,12 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
   const [showProps, setShowProps] = useState(true)
   const [showZoomControl, setShowZoomControl] = useState(true)
   const [isMaximized, setIsMaximized] = useState(false)
+  const [isFullScreen, setIsFullScreen] = useState(false)
   const [recentModels, setRecentModels] = useState<{ id: string; name: string }[]>([])
   const [showAdvancedHint, setShowAdvancedHint] = useState(false)
+  const [showLogoHint, setShowLogoHint] = useState(false)
   const hintTimerRef = useRef<number | null>(null)
+  const logoHintTimerRef = useRef<number | null>(null)
   const [status, setStatus] = useState({
     canUndo: false,
     canRedo: false,
@@ -330,8 +333,9 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
 
     syncWindowState()
 
-    const unsub = window.electronAPI?.onWindowStateChanged?.(({ isMaximized }) => {
+    const unsub = window.electronAPI?.onWindowStateChanged?.(({ isMaximized, isFullScreen }) => {
       setIsMaximized(isMaximized)
+      setIsFullScreen(!!isFullScreen)
     })
 
     return () => {
@@ -339,6 +343,14 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
       unsub?.()
     }
   }, [])
+
+  useEffect(() => {
+    window.electronAPI?.setNativeMenuState?.({
+      showVars,
+      showProps,
+      showZoomControl,
+    })
+  }, [showProps, showVars, showZoomControl])
 
   const toggleMenu = (label: string) => {
     if (label === 'Analysis') setShowAdvancedHint(false)
@@ -370,6 +382,36 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
     }
   }, [currentScreen, status.canRunAdvanced, status.showAdvancedHintToken])
 
+  useEffect(() => {
+    if (currentScreen !== 'canvas') {
+      setShowLogoHint(false)
+      if (logoHintTimerRef.current) {
+        window.clearTimeout(logoHintTimerRef.current)
+        logoHintTimerRef.current = null
+      }
+      return
+    }
+
+    const storageKey = 'metis:titlebar-logo-home-hint-seen'
+    try {
+      if (sessionStorage.getItem(storageKey) === 'true') return
+      sessionStorage.setItem(storageKey, 'true')
+    } catch {}
+
+    setShowLogoHint(true)
+    logoHintTimerRef.current = window.setTimeout(() => {
+      setShowLogoHint(false)
+      logoHintTimerRef.current = null
+    }, 2800)
+
+    return () => {
+      if (logoHintTimerRef.current) {
+        window.clearTimeout(logoHintTimerRef.current)
+        logoHintTimerRef.current = null
+      }
+    }
+  }, [currentScreen])
+
   // Build menus with context-aware disabled states
   const menus: { label: string; items: MenuItem[]; width: number }[] = [
     { label: 'File', items: buildFileMenu(currentScreen, recentModels, status), width: 240 },
@@ -385,39 +427,25 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
   const isMac = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin'
   const activeModelTitle = activeModelName.trim()
   const showActiveModelTitle = isMac && (currentScreen === 'canvas' || currentScreen === 'results') && activeModelTitle.length > 0
-
-  return (
-    <div
-      className="flex items-center shrink-0 select-none drag-region relative z-50"
-      style={{
-        height: 36,
-        padding: isMac ? '0 16px 0 80px' : '0 16px',
-        gap: isMac ? 16 : 24,
-        borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
-        ...(theme === 'Light'
-          ? { background: 'var(--color-titlebar-bg)' }
-          : { background: '#202020' }),
-        ...({ WebkitAppRegion: 'drag' } as any),
-      }}
-    >
-      <div className="flex items-center no-drag shrink-0" style={{ gap: 7, ...({ WebkitAppRegion: 'no-drag' } as any) }}>
-        {/* Logo mark */}
-        <button
-          className="flex items-center no-drag shrink-0"
-          style={{ gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-          title={currentScreen === 'home' ? 'Return to last model' : 'Go to workspace home'}
-          onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'toggle-home-canvas' } }))}
+  const brandButton = (
+    <div className="relative flex items-center no-drag shrink-0" style={{ ...({ WebkitAppRegion: 'no-drag' } as any) }}>
+      <button
+        className="flex items-center no-drag shrink-0"
+        style={{ gap: isMac ? 0 : 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+        title={currentScreen === 'home' ? 'Return to last model' : 'Go to workspace home'}
+        onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'toggle-home-canvas' } }))}
+      >
+        <div
+          className="flex items-center justify-center shrink-0"
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 5,
+          }}
         >
-          <div
-            className="flex items-center justify-center shrink-0"
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: 5,
-            }}
-          >
-            <AppLogo size={14} variant={logoVariant} />
-          </div>
+          <AppLogo size={14} variant={logoVariant} />
+        </div>
+        {!isMac && (
           <span
             style={{
               color: 'var(--color-text-primary)',
@@ -430,7 +458,69 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
           >
             {APP_BRAND_NAME}
           </span>
-        </button>
+        )}
+      </button>
+
+      {currentScreen === 'canvas' && showLogoHint && (
+        <div
+          className="absolute left-0 top-full z-50 mt-2"
+          style={{ pointerEvents: 'none' }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              top: -4,
+              left: 7,
+              width: 8,
+              height: 8,
+              background: 'var(--color-accent)',
+              transform: 'rotate(45deg)',
+              borderTopLeftRadius: 2,
+            }}
+          />
+          <div
+            className="flex items-center gap-1.5 rounded-[8px] px-2.5 py-1.5"
+            style={{
+              background: 'var(--color-accent)',
+              color: '#111111',
+              boxShadow: '0 10px 22px rgba(0,0,0,0.22)',
+            }}
+          >
+            <HandPointing size={12} weight="fill" color="#111111" />
+            <span
+              style={{
+                fontFamily: 'Inter, DM Sans, sans-serif',
+                fontSize: 11,
+                fontWeight: 700,
+                lineHeight: 1.2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Back to Workspaces
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <div
+      className="flex items-center shrink-0 select-none drag-region relative z-50"
+      style={{
+        height: 36,
+        padding: isMac ? (isFullScreen ? '0 16px' : '0 16px 0 80px') : '0 0 0 16px',
+        gap: isMac ? 16 : 24,
+        borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
+        ...(theme === 'Light'
+          ? { background: 'var(--color-titlebar-bg)' }
+          : { background: '#202020' }),
+        ...({ WebkitAppRegion: 'drag' } as any),
+      }}
+    >
+      <div className="flex items-center no-drag shrink-0" style={{ gap: 7, ...({ WebkitAppRegion: 'no-drag' } as any) }}>
+        {/* Logo mark */}
+        {brandButton}
       </div>
 
       {showActiveModelTitle && (

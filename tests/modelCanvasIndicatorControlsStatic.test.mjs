@@ -16,6 +16,11 @@ assert.match(indicatorInterface, /ox\?: number[\s\S]*oy\?: number/, 'Indicators 
 assert.doesNotMatch(indicatorInterface, /width\?: number|height\?: number/, 'Indicators should not persist custom size fields.')
 assert.doesNotMatch(source, /indicatorResizing|onIndicatorResizeHandleMouseDown/, 'Selected indicators should not expose resize handles.')
 assert.match(source, /<path d=\{p\} fill="none" stroke=\{c\.color\}/, 'Indicator connector paths should inherit construct color.')
+assert.match(source, /function indicatorArrowMarkerId\(constructId: string\): string/, 'Indicator connector arrowheads should use construct-scoped SVG marker ids.')
+assert.match(source, /id=\{indicatorArrowMarkerId\(construct\.id\)\}[\s\S]*fill=\{construct\.color\}/, 'Indicator connector arrowheads should inherit their construct color.')
+assert.match(source, /const indicatorMarkerEnd = `url\(#\$\{indicatorArrowMarkerId\(c\.id\)\}\)`/, 'Indicator connector paths should reference their construct-scoped marker.')
+assert.match(source, /markerEnd=\{indicatorMarkerEnd\}/, 'Indicator connector paths should use their construct-scoped marker end.')
+assert.doesNotMatch(source, /stroke=\{c\.color\} strokeWidth=\{INDICATOR_PATH_STROKE_WIDTH\} markerEnd="url\(#arr\)"/, 'Indicator connector paths should not use the shared structural arrow marker.')
 assert.match(source, /fill=\{C\.surface\} stroke=\{showIndicatorSelection \? C\.secondary : C\.border\}/, 'Indicator boxes should use theme-aware surfaces and borders.')
 
 console.log('PASS model canvas indicator controls static contract')

@@ -1,14 +1,31 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { EyeSlash, StopCircle } from '@phosphor-icons/react'
 import { useCalculation, useCalculationDispatch } from '@/state/calculationContext'
 import CalcCancelDialog from './CalcCancelDialog'
+
+function formatDuration(seconds: number): string {
+  const safeSeconds = Math.max(0, Math.round(seconds))
+  const minutes = Math.floor(safeSeconds / 60)
+  const remainder = safeSeconds % 60
+  if (minutes <= 0) return `${remainder}s`
+  if (remainder === 0) return `${minutes} min`
+  return `${minutes} min ${remainder}s`
+}
 
 export default function CalculatingModal() {
   const state = useCalculation()
   const dispatch = useCalculationDispatch()
   const [showStopConfirm, setShowStopConfirm] = useState(false)
+  const [now, setNow] = useState(Date.now())
 
   const active = state.active
+  useEffect(() => {
+    if (!active || active.view !== 'modal' || (active.status !== 'running' && active.status !== 'stopping')) return
+    setNow(Date.now())
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [active])
+
   if (!active || active.view !== 'modal') return null
 
   const onStop = () => setShowStopConfirm(true)
@@ -23,6 +40,8 @@ export default function CalculatingModal() {
   const visibleProgressPct = active.status === 'running' || active.status === 'stopping'
     ? Math.max(active.progressPct, 6)
     : active.progressPct
+  const elapsedSeconds = Math.max(0, (now - active.startedAt) / 1000)
+  const estimateText = active.estimatedSeconds ? `About ${formatDuration(active.estimatedSeconds)}` : 'Varies by model'
 
   return (
     <div
@@ -45,6 +64,37 @@ export default function CalculatingModal() {
         <p className="text-xs mb-5" style={{ color: 'var(--color-text-secondary)' }}>
           {active.subLabel || currentPhase?.label || 'Working'}
         </p>
+
+        <div className="grid grid-cols-2 gap-2 mb-5">
+          <div
+            className="rounded-lg px-3 py-2"
+            style={{
+              background: 'rgb(var(--color-calculation-accent-rgb) / 0.10)',
+              border: '1px solid rgb(var(--color-calculation-accent-rgb) / 0.22)',
+            }}
+          >
+            <div className="text-[10px] uppercase tracking-[0.08em]" style={{ color: 'var(--color-text-secondary)' }}>
+              Estimated time
+            </div>
+            <div className="mt-1 text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>
+              {estimateText}
+            </div>
+          </div>
+          <div
+            className="rounded-lg px-3 py-2"
+            style={{
+              background: 'var(--color-panel-control)',
+              border: '1px solid var(--color-border)',
+            }}
+          >
+            <div className="text-[10px] uppercase tracking-[0.08em]" style={{ color: 'var(--color-text-secondary)' }}>
+              Elapsed
+            </div>
+            <div className="mt-1 text-sm font-semibold tabular-nums" style={{ color: 'var(--color-text-primary)' }}>
+              {formatDuration(elapsedSeconds)}
+            </div>
+          </div>
+        </div>
 
         <div className="h-2 rounded-full overflow-hidden mb-5 calculation-progress-track" style={{ background: 'var(--color-input)' }}>
           <div

@@ -1969,6 +1969,16 @@ const RESULTS_MIN_INDICATOR_LABEL_W = 44
 const RESULTS_MIN_LABEL_T = 0.12
 const RESULTS_MAX_LABEL_T = 0.88
 
+function estimateBootstrapSeconds(samples: number): number {
+  const safeSamples = Number.isFinite(samples) && samples > 0 ? samples : 500
+  return Math.max(60, Math.round((safeSamples / 1250) * 60))
+}
+
+function formatBootstrapEstimate(seconds: number): string {
+  const minutes = Math.max(1, Math.round(seconds / 60))
+  return minutes === 1 ? 'about 1 minute' : `about ${minutes} minutes`
+}
+
 function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
 }
@@ -4620,6 +4630,7 @@ export default function ResultsView() {
     title: string,
     phases: CalcPhase[],
     subLabel?: string,
+    estimatedSeconds?: number,
   ) => {
     calcDispatch({
       type: 'start',
@@ -4629,6 +4640,7 @@ export default function ResultsView() {
         progressMode: 'indeterminate',
         phases,
         subLabel,
+        estimatedSeconds,
       },
     })
   }, [calcDispatch])
@@ -4642,6 +4654,7 @@ export default function ResultsView() {
     setBootstrapOpen(false)
     setAnalysisBusy(true)
     const nboot = Number(settings?.subsamples) || 500
+    const estimatedSeconds = estimateBootstrapSeconds(nboot)
     startResultsCalculation(
       'bootstrap',
       `Bootstrapping ${nboot.toLocaleString()} samples`,
@@ -4650,7 +4663,8 @@ export default function ResultsView() {
         { id: 'resample', label: 'Resampling', status: 'pending' },
         { id: 'final', label: 'Finalizing results', status: 'pending' },
       ],
-      `${nboot.toLocaleString()} bootstrap samples`,
+      `${nboot.toLocaleString()} bootstrap samples - estimated ${formatBootstrapEstimate(estimatedSeconds)}`,
+      estimatedSeconds,
     )
     try {
       calcDispatch({ type: 'setPhase', phaseId: 'resample' })

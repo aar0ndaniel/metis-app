@@ -53,6 +53,18 @@ const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FI
 const sampleDatasetFileName = 'sample dataset.csv'
 const missingValueTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
 
+type NativeMenuViewState = {
+  showVars: boolean
+  showProps: boolean
+  showZoomControl: boolean
+}
+
+let nativeMenuViewState: NativeMenuViewState = {
+  showVars: true,
+  showProps: true,
+  showZoomControl: true,
+}
+
 function sendRendererMenuAction(action: string) {
   const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
   if (!targetWindow || targetWindow.isDestroyed()) return
@@ -63,6 +75,16 @@ function nativeMenuAction(label: string, action: string, accelerator?: string): 
   return {
     label,
     accelerator,
+    click: () => sendRendererMenuAction(action),
+  }
+}
+
+function nativeMenuCheckbox(label: string, action: string, checked: boolean, accelerator?: string): MenuItemConstructorOptions {
+  return {
+    label,
+    accelerator,
+    type: 'checkbox',
+    checked,
     click: () => sendRendererMenuAction(action),
   }
 }
@@ -85,7 +107,7 @@ function installApplicationMenu() {
         { role: 'hideOthers' },
         { role: 'unhide' },
         { type: 'separator' },
-        nativeMenuAction(`Quit ${appName}`, 'quit-app', 'Command+Q'),
+        { label: `Quit ${appName}`, role: 'quit', accelerator: 'Command+Q' },
       ],
     },
     {
@@ -136,9 +158,9 @@ function installApplicationMenu() {
         nativeMenuAction('Zoom Out', 'view:zoom-out', 'Command+-'),
         nativeMenuAction('Fit to Screen', 'view:fit-screen', 'Command+0'),
         { type: 'separator' },
-        nativeMenuAction('Zoom Control', 'view:toggle-zoom-control'),
-        nativeMenuAction('Indicators Panel', 'view:toggle-vars'),
-        nativeMenuAction('Properties Panel', 'view:toggle-props'),
+        nativeMenuCheckbox('Zoom Control', 'view:toggle-zoom-control', nativeMenuViewState.showZoomControl),
+        nativeMenuCheckbox('Indicators Panel', 'view:toggle-vars', nativeMenuViewState.showVars),
+        nativeMenuCheckbox('Properties Panel', 'view:toggle-props', nativeMenuViewState.showProps),
       ],
     },
     {
@@ -211,6 +233,18 @@ function plumberBridgeExceptionResponse(err: any, action: string) {
     runtimeStatus: getBundledPortableRuntimeStatus(),
     recentPlumberLogs: getRecentPlumberLogs(),
   }
+}
+
+function getPlumberNotReadyHint(): string {
+  if (!isLiteBuild()) {
+    return 'The bundled R analysis engine could not start. Run setup again or reinstall the current Bundle build so Metis can unpack R into its cache runtime folder.'
+  }
+
+  if (process.platform === 'win32') {
+    return `Verify Rscript is installed and no firewall or Windows port exclusion is blocking ${plumberBaseUrl}.`
+  }
+
+  return 'Verify Rscript is installed and Metis can launch it from the configured Lite setup path.'
 }
 
 function getThemePreferencePath(): string {
@@ -378,7 +412,8 @@ function isWorkAreaSizedWindow(win: BrowserWindow): boolean {
 
 function getMainWindowState(win = mainWindow) {
   const isMaximized = !!win && !win.isDestroyed() && (win.isMaximized() || isWorkAreaSizedWindow(win))
-  return { isMaximized }
+  const isFullScreen = !!win && !win.isDestroyed() && win.isFullScreen()
+  return { isMaximized, isFullScreen }
 }
 
 function rememberNormalMainWindowBounds(win: BrowserWindow) {
@@ -1201,7 +1236,7 @@ function getExistingWindowsInstallInfo(): ExistingWindowsInstallInfo {
   return { found: false, version: null, installLocation: null }
 }
 
-function probeRscriptExecutable(rscriptPath: string): RscriptProbeResult {
+function probeRscriptExecutable(rscriptPath: string, env?: NodeJS.ProcessEnv): RscriptProbeResult {
   const executablePath = normalizeExecutablePath(rscriptPath)
   const probeCode = [
     'cat("__METIS_BEGIN__\\n")',
@@ -1216,6 +1251,7 @@ function probeRscriptExecutable(rscriptPath: string): RscriptProbeResult {
       windowsHide: true,
       encoding: 'utf8',
       timeout: 10000,
+      ...(env ? { env: { ...process.env, ...env } } : {}),
     })
     const stdout = String(result.stdout ?? '')
     const stderr = String(result.stderr ?? '')
@@ -2049,7 +2085,22 @@ function getRegistryWorkspacePath(): string | null {
   return null
 }
 
-function getBundledPortableRuntimePaths(): { extractedRscriptPath: string; archivePath: string; runtimeDir: string; extractionRoot: string } {
+function getBundledUnixRuntimeExtractionRoot(): string {
+  return path.join(app.getPath('cache'), 'r-runtime')
+}
+
+function getBundledUnixRuntimeLegacyExtractionRoot(): string | null {
+  if (process.platform === 'win32') return null
+  return path.join(app.getPath('userData'), 'r-runtime')
+}
+
+function getBundledPortableRuntimePaths(): {
+  extractedRscriptPath: string
+  archivePath: string
+  runtimeDir: string
+  extractionRoot: string
+  legacyRuntimeDir: string | null
+} {
   const rApiResourcesDir = app.isPackaged
     ? path.join(process.resourcesPath, 'r-api')
     : path.join(process.cwd(), 'r-api')
@@ -2062,18 +2113,22 @@ function getBundledPortableRuntimePaths(): { extractedRscriptPath: string; archi
 
   const extractionRoot = process.platform === 'win32'
     ? rApiResourcesDir
-    : path.join(app.getPath('userData'), 'r-runtime')
+    : getBundledUnixRuntimeExtractionRoot()
 
   const runtimeDir = process.platform === 'win32'
     ? path.join(extractionRoot, 'R-Portable')
     : path.join(extractionRoot, 'R-Bundled')
+  const legacyExtractionRoot = getBundledUnixRuntimeLegacyExtractionRoot()
+  const legacyRuntimeDir = legacyExtractionRoot
+    ? path.join(legacyExtractionRoot, 'R-Bundled')
+    : null
 
   const extractedRscriptPath = process.platform === 'win32'
     ? path.join(runtimeDir, 'App', 'R-Portable', 'bin', 'Rscript.exe')
     : path.join(runtimeDir, 'bin', 'Rscript')
 
   const archivePath = path.join(rApiResourcesDir, archiveName)
-  return { extractedRscriptPath, archivePath, runtimeDir, extractionRoot }
+  return { extractedRscriptPath, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir }
 }
 
 function getBundledUnixRuntimeRelocationMarker(runtimeDir: string): string {
@@ -2089,7 +2144,7 @@ function getFileSizeIfPresent(filePath: string): number | null {
 }
 
 function getBundledPortableRuntimeStatus() {
-  const { extractedRscriptPath, archivePath, runtimeDir, extractionRoot } = getBundledPortableRuntimePaths()
+  const { extractedRscriptPath, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir } = getBundledPortableRuntimePaths()
   const relocationMarkerPath = process.platform === 'win32'
     ? null
     : getBundledUnixRuntimeRelocationMarker(runtimeDir)
@@ -2109,6 +2164,8 @@ function getBundledPortableRuntimeStatus() {
     extractionRoot,
     runtimeDir,
     runtimeDirExists: fs.existsSync(runtimeDir),
+    legacyRuntimeDir,
+    legacyRuntimeDirExists: legacyRuntimeDir ? fs.existsSync(legacyRuntimeDir) : null,
     extractedRscriptPath,
     extractedRscriptExists: fs.existsSync(extractedRscriptPath),
     relocationMarkerPath,
@@ -2121,10 +2178,25 @@ function getBundledPortableRuntimeStatus() {
 function isBundledPortableRuntimeReady(): boolean {
   const { extractedRscriptPath, archivePath, runtimeDir } = getBundledPortableRuntimePaths()
   if (fs.existsSync(extractedRscriptPath)) {
-    return process.platform === 'win32' || fs.existsSync(getBundledUnixRuntimeRelocationMarker(runtimeDir))
+    const relocationComplete = process.platform === 'win32' || fs.existsSync(getBundledUnixRuntimeRelocationMarker(runtimeDir))
+    if (!relocationComplete) return false
+    return probeRscriptExecutable(extractedRscriptPath, getBundledRscriptEnv(extractedRscriptPath) ?? undefined).ok
   }
   if (fs.existsSync(archivePath)) return false
   return isLiteBuild()
+}
+
+function verifyBundledPortableRuntimeCanStart(extractedRscriptPath: string): void {
+  const probe = probeRscriptExecutable(extractedRscriptPath, getBundledRscriptEnv(extractedRscriptPath) ?? undefined)
+  if (probe.ok) return
+
+  const detail = [
+    probe.error,
+    probe.stderr?.trim(),
+    probe.stdout?.trim(),
+  ].filter(Boolean).join(' | ')
+
+  throw new Error(`Bundled R runtime could not start from ${extractedRscriptPath}. ${detail || 'No Rscript output was produced.'}`)
 }
 
 function getConfiguredAppEdition(): 'Bundle' | 'Lite' {
@@ -2574,6 +2646,8 @@ function createWindow() {
 
     win.on('maximize', syncWindowState)
     win.on('unmaximize', syncWindowState)
+    win.on('enter-full-screen', syncWindowState)
+    win.on('leave-full-screen', syncWindowState)
     win.on('restore', syncWindowState)
     win.on('resize', syncWindowState)
     win.on('move', syncWindowState)
@@ -2876,6 +2950,14 @@ ipcMain.on('window:maximize', () => {
 })
 ipcMain.on('window:close', () => mainWindow?.close())
 ipcMain.handle('window:isMaximized', () => getMainWindowState().isMaximized)
+ipcMain.on('native-menu:view-state', (_, state: Partial<NativeMenuViewState>) => {
+  nativeMenuViewState = {
+    showVars: typeof state?.showVars === 'boolean' ? state.showVars : nativeMenuViewState.showVars,
+    showProps: typeof state?.showProps === 'boolean' ? state.showProps : nativeMenuViewState.showProps,
+    showZoomControl: typeof state?.showZoomControl === 'boolean' ? state.showZoomControl : nativeMenuViewState.showZoomControl,
+  }
+  installApplicationMenu()
+})
 
 // ─── File / Directory dialogs ─────────────────────────────────────────────────
 ipcMain.handle('dialog:openDirectory', async (_, options) => {
@@ -3776,7 +3858,7 @@ async function postToPlumber(pathname: string, payload: any) {
         status: 0,
         url: plumberBaseUrl,
         rscript: resolvedRscript,
-        error: `PLS backend is not ready. Verify Rscript is installed and no firewall or Windows port exclusion is blocking ${plumberBaseUrl}.`,
+        error: `PLS backend is not ready. ${getPlumberNotReadyHint()}`,
         runtimeStatus: getBundledPortableRuntimeStatus(),
         recentPlumberLogs: getRecentPlumberLogs(),
       }
@@ -4085,6 +4167,7 @@ async function extractRPortable(sendProgress: (step: string, detail: string) => 
   if (fs.existsSync(extractedRscriptPath)) {
     console.log('[install] Bundled R runtime already extracted, skipping')
     await prepareBundledUnixRuntime(runtimeDir, extractedRscriptPath)
+    verifyBundledPortableRuntimeCanStart(extractedRscriptPath)
     return
   }
 
@@ -4111,6 +4194,9 @@ async function extractRPortable(sendProgress: (step: string, detail: string) => 
     sendProgress('extracting', 'Relocating bundled R runtime...')
     await prepareBundledUnixRuntime(runtimeDir, extractedRscriptPath)
   }
+
+  sendProgress('extracting', 'Checking bundled R runtime...')
+  verifyBundledPortableRuntimeCanStart(extractedRscriptPath)
 
   console.log('[install] Bundled R runtime extracted successfully')
 }

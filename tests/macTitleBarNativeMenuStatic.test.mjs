@@ -60,14 +60,20 @@ assert.match(
 
 assert.match(
   nativeMenuSource,
+  /label:\s*`Quit \$\{appName\}`[\s\S]*role:\s*'quit'/,
+  'Native macOS Quit should use Electron quit role instead of routing through renderer menu actions.'
+)
+
+assert.match(
+  nativeMenuSource,
   /label:\s*'Edit'[\s\S]*nativeMenuAction\('Undo', 'edit:undo'[\s\S]*nativeMenuAction\('Redo', 'edit:redo'[\s\S]*nativeMenuAction\('Cut', 'edit:cut'[\s\S]*nativeMenuAction\('Copy', 'edit:copy'[\s\S]*nativeMenuAction\('Paste', 'edit:paste'[\s\S]*nativeMenuAction\('Delete', 'edit:delete'[\s\S]*nativeMenuAction\('Select All', 'edit:selectall'[\s\S]*nativeMenuAction\('Preferences', 'open-preferences', 'Command\+,'\)/,
   'Native macOS Edit menu should expose the same explicit renderer Edit menu children and actions.'
 )
 
 assert.match(
   nativeMenuSource,
-  /label:\s*'View'[\s\S]*nativeMenuAction\('Zoom In', 'view:zoom-in'[\s\S]*nativeMenuAction\('Zoom Out', 'view:zoom-out'[\s\S]*nativeMenuAction\('Fit to Screen', 'view:fit-screen'[\s\S]*nativeMenuAction\('Zoom Control', 'view:toggle-zoom-control'[\s\S]*nativeMenuAction\('Indicators Panel', 'view:toggle-vars'[\s\S]*nativeMenuAction\('Properties Panel', 'view:toggle-props'/,
-  'Native macOS View menu should expose the same explicit renderer View menu children and actions.'
+  /label:\s*'View'[\s\S]*nativeMenuAction\('Zoom In', 'view:zoom-in'[\s\S]*nativeMenuAction\('Zoom Out', 'view:zoom-out'[\s\S]*nativeMenuAction\('Fit to Screen', 'view:fit-screen'[\s\S]*nativeMenuCheckbox\('Zoom Control', 'view:toggle-zoom-control', nativeMenuViewState\.showZoomControl[\s\S]*nativeMenuCheckbox\('Indicators Panel', 'view:toggle-vars', nativeMenuViewState\.showVars[\s\S]*nativeMenuCheckbox\('Properties Panel', 'view:toggle-props', nativeMenuViewState\.showProps/,
+  'Native macOS View menu should expose checked panel visibility toggles that mirror the React titlebar menu.'
 )
 
 assert.doesNotMatch(
@@ -107,9 +113,21 @@ assert.match(
 )
 
 assert.match(
+  preload,
+  /setNativeMenuState:\s*\(state: NativeMenuViewState\) => ipcRenderer\.send\('native-menu:view-state', state\)/,
+  'Preload should expose a scoped bridge for syncing native macOS View menu checkbox state.'
+)
+
+assert.match(
   viteEnv,
   /onNativeMenuAction: \(cb: \(action: string\) => void\) => \(\) => void/,
   'The renderer type contract should include native menu action subscriptions.'
+)
+
+assert.match(
+  viteEnv,
+  /setNativeMenuState: \(state: NativeMenuViewState\) => void/,
+  'The renderer type contract should include native menu state sync.'
 )
 
 assert.match(
@@ -126,8 +144,8 @@ assert.match(
 
 assert.match(
   titleBar,
-  /padding:\s*isMac \? '0 16px 0 80px' : '0 16px'/,
-  'macOS titlebar should reserve space for native traffic lights.'
+  /padding:\s*isMac \? \(isFullScreen \? '0 16px' : '0 16px 0 80px'\) : '0 0 0 16px'/,
+  'macOS titlebar should reserve traffic-light space normally and move the logo flush left in full screen.'
 )
 
 assert.match(

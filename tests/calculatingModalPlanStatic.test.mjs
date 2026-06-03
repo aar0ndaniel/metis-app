@@ -17,6 +17,8 @@ const [
   plumberSource,
   viteEnvSource,
   titleBarSource,
+  calculatingModalSource,
+  calculatingChipSource,
 ] = await Promise.all([
   read('src/state/calculationContext.tsx'),
   read('src/pages/ModelCanvas.tsx'),
@@ -27,9 +29,12 @@ const [
   read('r-api/plumber.R'),
   read('src/vite-env.d.ts'),
   read('src/components/TitleBar.tsx'),
+  read('src/components/CalculatingModal.tsx'),
+  read('src/components/CalculatingChip.tsx'),
 ])
 
 assert.match(contextSource, /lastTransientDone/, 'CalculationContext should track a transient done chip.')
+assert.match(contextSource, /estimatedSeconds\?: number/, 'CalculationContext should carry an optional estimated duration for long-running analyses.')
 assert.match(contextSource, /clearTransientDone/, 'CalculationContext should auto-clear transient done state.')
 assert.match(contextSource, /__metisIsCalculating/, 'CalculationProvider should expose the busy flag for Electron quit confirmation.')
 assert.match(contextSource, /onConfirmQuitDuringCalc/, 'CalculationProvider should listen for Electron quit confirmation requests.')
@@ -44,6 +49,7 @@ assert.match(canvasSource, /runBootstrapModel/, 'Bootstrap should keep the singl
 assert.doesNotMatch(canvasSource, /runBootstrapChunked|onChunkStart|chunk_n/, 'ModelCanvas should not keep chunked bootstrap flow.')
 assert.match(canvasSource, /type: 'pls'[\s\S]*progressMode: 'indeterminate'/, 'PLS-SEM should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /type: 'bootstrap'[\s\S]*progressMode: 'indeterminate'/, 'Bootstrap should use indeterminate modal progress while the blocking backend call runs.')
+assert.match(canvasSource, /estimatedSeconds:\s*estimateBootstrapSeconds\(totalNboot\)/, 'Bootstrap should pass an estimated duration into the calculation modal.')
 assert.match(canvasSource, /type: 'plspredict'[\s\S]*progressMode: 'indeterminate'/, 'PLSpredict should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /type: 'advanced'[\s\S]*progressMode: 'indeterminate'/, 'Advanced analysis should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /Backend detail:/, 'Unexpected backend failures should show the real backend detail instead of only the generic model error.')
@@ -85,6 +91,12 @@ assert.match(mainSource, /confirm-quit-during-calc/, 'Electron main should ask t
 assert.match(mainSource, /quit-confirmed/, 'Electron main should accept the quit confirmed reply.')
 assert.match(mainSource, /quit-cancelled/, 'Electron main should accept the quit cancelled reply.')
 assert.doesNotMatch(mainSource, /runBootstrapChunk|finalizeBootstrap|run-bootstrap-chunk|finalize-bootstrap/, 'Electron main should not register chunked bootstrap IPC routes.')
+
+assert.match(calculatingModalSource, /active\.estimatedSeconds/, 'Calculating modal should read the active estimated duration.')
+assert.match(calculatingModalSource, /Estimated time[\s\S]*Elapsed/, 'Calculating modal should show estimated time and elapsed time while a run is active.')
+assert.match(calculatingModalSource, /dispatch\(\{ type: 'hide' \}\)/, 'Calculating modal should keep the existing Hide affordance while a calculation runs.')
+assert.match(calculatingChipSource, /estimatedSeconds/, 'Hidden calculation chip should read the estimate after the modal is hidden.')
+assert.match(calculatingChipSource, /Est\./, 'Hidden calculation chip should label its timing as an estimate.')
 
 assert.match(plumberSource, /analysis_core_plan <- function\(\)[\s\S]*max\(1L, min\(as\.integer\(requested\), as\.integer\(detected\)\)\)[\s\S]*analysis_cores <- function\(\)/, 'R API should keep bounded analysis core planning and compatibility selection.')
 assert.match(plumberSource, /reserve <- if \(detected > 16L\) \{\s*4L\s*\} else if \(detected > 10L\) \{\s*2L\s*\} else \{\s*1L\s*\}[\s\S]*requested <- detected - reserve/, 'R API should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.')
