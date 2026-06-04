@@ -639,8 +639,11 @@ validate_payload_object <- function(payload) {
   dataset_path <- require_scalar_string(payload$datasetPath, "datasetPath", max_chars = 1000)
   constructs <- validate_higher_order_dimensions(validate_constructs_payload(payload$constructs))
   construct_names <- vapply(constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
-  paths <- validate_paths_payload(payload$paths, construct_names)
   interactions <- validate_interactions_payload(payload$interactions %||% list(), construct_names)
+  interaction_construct_names <- vapply(interactions, function(interaction) {
+    paste0(interaction$iv, "*", interaction$moderator)
+  }, character(1), USE.NAMES = FALSE)
+  paths <- validate_paths_payload(payload$paths, c(construct_names, interaction_construct_names))
   algorithm <- require_optional_choice(payload$algorithm, "algorithm", c("standard", "consistent"), "standard")
   algorithm_settings <- validate_algorithm_settings_payload(payload$algorithmSettings)
 
