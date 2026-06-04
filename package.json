@@ -12,10 +12,14 @@
     "build": "npm run build:icons && tsc && vite build && node scripts/sync-r-portable-zip.mjs && electron-builder --publish never && node scripts/clean-release-debug.mjs",
     "build:bundle": "npm run build:bundle:win",
     "build:bundle:win": "npm run build:icons && tsc && vite build && node scripts/sync-r-portable-zip.mjs && electron-builder --config build/electron-builder.bundle.yml --win --publish never && node scripts/clean-release-debug.mjs",
-    "build:bundle:mac": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs darwin && node scripts/smoke-r-bundle-runtime.mjs darwin && electron-builder --config build/electron-builder.bundle.yml --mac --publish never && node scripts/clean-release-debug.mjs",
+    "build:bundle:mac": "npm run build:bundle:mac:arm64 && npm run build:bundle:mac:x64",
+    "build:bundle:mac:arm64": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs darwin arm64 && node scripts/smoke-r-bundle-runtime.mjs darwin arm64 && electron-builder --config build/electron-builder.bundle.yml --mac --arm64 --publish never && node scripts/clean-release-debug.mjs",
+    "build:bundle:mac:x64": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs darwin x64 && node scripts/smoke-r-bundle-runtime.mjs darwin x64 && electron-builder --config build/electron-builder.bundle.yml --mac --x64 --publish never && node scripts/clean-release-debug.mjs",
     "build:lite": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --publish never && node scripts/clean-release-debug.mjs",
     "build:lite:win": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --win --publish never && node scripts/clean-release-debug.mjs",
-    "build:lite:mac": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --mac --publish never && node scripts/clean-release-debug.mjs",
+    "build:lite:mac": "npm run build:lite:mac:arm64 && npm run build:lite:mac:x64",
+    "build:lite:mac:arm64": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --mac --arm64 --publish never && node scripts/clean-release-debug.mjs",
+    "build:lite:mac:x64": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --mac --x64 --publish never && node scripts/clean-release-debug.mjs",
     "build:installers": "npm run build:bundle && npm run build:lite",
     "typecheck": "tsc --noEmit",
     "audit:high": "npm audit --omit=dev --audit-level=high"
@@ -86,15 +90,33 @@
           "plumber.R",
           "renv-bootstrap.R",
           "renv.lock",
-          "renv/**",
-          "R-Portable.zip",
-          "R-macos.tar.gz"
+          "renv/**"
         ]
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "extraResources": [
+        {
+          "from": "r-api",
+          "to": "r-api",
+          "filter": [
+            "R-Portable.zip"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "extraResources": [
+        {
+          "from": "r-api",
+          "to": "r-api",
+          "filter": [
+            "R-macos-${arch}.tar.gz"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": true,

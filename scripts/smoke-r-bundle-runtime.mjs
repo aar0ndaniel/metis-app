@@ -10,12 +10,20 @@ const __dirname = path.dirname(__filename)
 const workspaceRoot = path.resolve(__dirname, '..')
 
 const platform = process.argv[2] || process.platform
+const arch = process.argv[3] || process.arch
+const supportedDarwinArchitectures = new Set(['arm64', 'x64'])
 const archiveByPlatform = {
-  darwin: 'R-macos.tar.gz',
   linux: 'R-linux.tar.gz',
 }
 
-const archiveName = archiveByPlatform[platform]
+if (platform === 'darwin' && !supportedDarwinArchitectures.has(arch)) {
+  console.error(`Unsupported macOS bundle architecture: ${arch}`)
+  process.exit(1)
+}
+
+const archiveName = platform === 'darwin'
+  ? `R-macos-${arch}.tar.gz`
+  : archiveByPlatform[platform]
 if (!archiveName) {
   console.error(`Runtime smoke test is only supported for macOS/Linux bundles, got: ${platform}`)
   process.exit(1)

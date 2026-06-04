@@ -32,13 +32,16 @@ extraResources:
       - renv-bootstrap.R
       - renv.lock
       - renv/**
-      - R-Portable.zip
-      - R-macos.tar.gz
 
 win:
   target: nsis
   icon: build/icon.ico
   artifactName: metis ${version} Bundle.${ext}
+  extraResources:
+    - from: r-api
+      to: r-api
+      filter:
+        - R-Portable.zip
 
 mac:
   target:
@@ -46,7 +49,12 @@ mac:
     - zip
   category: public.app-category.education
   icon: build/icon.icns
-  artifactName: metis ${version} Bundle macOS.${ext}
+  artifactName: metis ${version} Bundle macOS ${arch}.${ext}
+  extraResources:
+    - from: r-api
+      to: r-api
+      filter:
+        - R-macos-${arch}.tar.gz
 
 nsis:
   oneClick: true

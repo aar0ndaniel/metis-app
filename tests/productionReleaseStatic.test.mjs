@@ -132,22 +132,59 @@ const packageSource = await read('package.json')
 const bundleBuildSource = await read('build/electron-builder.bundle.yml')
 const liteBuildSource = await read('build/electron-builder.lite.yml')
 const packageJson = JSON.parse(packageSource)
+const bundleCommonResourcesSection = bundleBuildSource.slice(
+  bundleBuildSource.indexOf('extraResources:'),
+  bundleBuildSource.indexOf('\nwin:')
+)
+const bundleWinSection = bundleBuildSource.slice(
+  bundleBuildSource.indexOf('\nwin:'),
+  bundleBuildSource.indexOf('\nmac:')
+)
+const bundleMacSection = bundleBuildSource.slice(
+  bundleBuildSource.indexOf('\nmac:'),
+  bundleBuildSource.indexOf('\nnsis:')
+)
 assert.match(packageSource, /"from": "sample dataset\.csv"[\s\S]*"to": "sample-data\/sample dataset\.csv"/, 'Package build resources should include the sample dataset.')
-assert.match(packageSource, /"R-Portable\.zip"[\s\S]*"R-macos\.tar\.gz"/, 'Package build resources should list Windows and macOS R runtime archives for the current rollout.')
+assert.deepEqual(
+  packageJson.build.extraResources.find((resource) => resource.from === 'r-api')?.filter,
+  ['.Rprofile', 'plumber.R', 'renv-bootstrap.R', 'renv.lock', 'renv/**'],
+  'Common package build resources should exclude platform runtime archives.'
+)
+assert.deepEqual(
+  packageJson.build.win.extraResources.find((resource) => resource.from === 'r-api')?.filter,
+  ['R-Portable.zip'],
+  'Windows package build resources should include only the Windows R runtime archive.'
+)
+assert.deepEqual(
+  packageJson.build.mac.extraResources.find((resource) => resource.from === 'r-api')?.filter,
+  ['R-macos-${arch}.tar.gz'],
+  'macOS package build resources should include only the matching architecture macOS R runtime archive.'
+)
 assert.doesNotMatch(packageSource, /"R-linux\.tar\.gz"|"build:lite:linux"|"build:bundle:linux"/, 'Package scripts and resources should exclude Linux until Linux packaging is ready.')
 assert.equal(packageJson.build.fileAssociations[0].ext, 'metisws', 'Packaged app should register .metisws, not the Ada source-code extension.')
 assert.match(packageSource, /"build:lite:mac"/, 'Package scripts should expose a macOS Lite build.')
-assert.match(packageSource, /"build:bundle:mac"[\s\S]*verify-r-bundle-archive\.mjs darwin/, 'Package scripts should guard macOS Bundle builds with a macOS R archive check.')
+assert.match(packageSource, /"build:bundle:mac": "npm run build:bundle:mac:arm64 && npm run build:bundle:mac:x64"/, 'Package scripts should expose a combined macOS Bundle build for ARM and Intel.')
+assert.match(packageSource, /"build:bundle:mac:arm64"[\s\S]*verify-r-bundle-archive\.mjs darwin arm64[\s\S]*smoke-r-bundle-runtime\.mjs darwin arm64[\s\S]*--mac --arm64/, 'Package scripts should guard macOS ARM Bundle builds with the ARM R archive check and ARM builder target.')
+assert.match(packageSource, /"build:bundle:mac:x64"[\s\S]*verify-r-bundle-archive\.mjs darwin x64[\s\S]*smoke-r-bundle-runtime\.mjs darwin x64[\s\S]*--mac --x64/, 'Package scripts should guard macOS Intel Bundle builds with the Intel R archive check and Intel builder target.')
+assert.match(packageSource, /"build:lite:mac": "npm run build:lite:mac:arm64 && npm run build:lite:mac:x64"/, 'Package scripts should expose a combined macOS Lite build for ARM and Intel.')
+assert.match(packageSource, /"build:lite:mac:arm64"[\s\S]*--mac --arm64/, 'Package scripts should expose a macOS ARM Lite builder target.')
+assert.match(packageSource, /"build:lite:mac:x64"[\s\S]*--mac --x64/, 'Package scripts should expose a macOS Intel Lite builder target.')
 assert.match(bundleBuildSource, /from: sample dataset\.csv[\s\S]*to: sample-data\/sample dataset\.csv/, 'Bundle build should pack the sample dataset.')
-assert.match(bundleBuildSource, /R-Portable\.zip[\s\S]*R-macos\.tar\.gz/, 'Bundle build should allow Windows and macOS R runtime archives.')
+assert.doesNotMatch(bundleCommonResourcesSection, /R-Portable\.zip|R-macos(?:-\$\{arch\})?\.tar\.gz/, 'Common Bundle resources should not copy platform runtime archives.')
+assert.match(bundleWinSection, /extraResources:[\s\S]*R-Portable\.zip/, 'Windows Bundle resources should copy the Windows R runtime archive.')
+assert.doesNotMatch(bundleWinSection, /R-macos(?:-\$\{arch\})?\.tar\.gz/, 'Windows Bundle resources should not copy the macOS R runtime archive.')
+assert.match(bundleMacSection, /extraResources:[\s\S]*R-macos-\$\{arch\}\.tar\.gz/, 'macOS Bundle resources should copy the matching architecture macOS R runtime archive.')
+assert.doesNotMatch(bundleMacSection, /R-Portable\.zip/, 'macOS Bundle resources should not copy the Windows R runtime archive.')
 assert.doesNotMatch(bundleBuildSource, /R-linux\.tar\.gz|\nlinux:\r?\n/, 'Bundle build should exclude Linux targets and archives for now.')
 assert.doesNotMatch(bundleBuildSource, /\bBeta\b/, 'Bundle build artifact names should not include beta labeling.')
+assert.match(bundleBuildSource, /artifactName: metis \$\{version\} Bundle macOS \$\{arch\}\.\$\{ext\}/, 'Bundle macOS artifact names should include the architecture to avoid ARM and Intel output collisions.')
 assert.match(bundleBuildSource, /fileAssociations:\s*\r?\n\s*-\s*ext:\s*metisws/, 'Bundle build should register .metisws files.')
 assert.match(bundleBuildSource, /mac:[\s\S]*target:[\s\S]*dmg[\s\S]*zip/, 'Bundle build should define macOS DMG and zip targets.')
 assert.match(bundleBuildSource, /mac:[\s\S]*icon: build\/icon\.icns/, 'Bundle macOS builds should use an ICNS icon.')
 assert.doesNotMatch(bundleBuildSource, /fileAssociations:[\s\S]*icon:\s*build\/icon\.ico/, 'Cross-platform file associations should not force a Windows ICO icon.')
 assert.match(liteBuildSource, /from: sample dataset\.csv[\s\S]*to: sample-data\/sample dataset\.csv/, 'Lite build should pack the sample dataset.')
 assert.doesNotMatch(liteBuildSource, /\bBeta\b/, 'Lite build artifact names should not include beta labeling.')
+assert.match(liteBuildSource, /artifactName: metis \$\{version\} Lite macOS \$\{arch\}\.\$\{ext\}/, 'Lite macOS artifact names should include the architecture to avoid ARM and Intel output collisions.')
 assert.match(liteBuildSource, /fileAssociations:\s*\r?\n\s*-\s*ext:\s*metisws/, 'Lite build should register .metisws files.')
 assert.match(liteBuildSource, /mac:[\s\S]*target:[\s\S]*dmg[\s\S]*zip/, 'Lite build should define macOS DMG and zip targets.')
 assert.match(liteBuildSource, /mac:[\s\S]*icon: build\/icon\.icns/, 'Lite macOS builds should use an ICNS icon.')

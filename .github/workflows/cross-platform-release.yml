@@ -12,8 +12,18 @@ env:
 
 jobs:
   macos-release:
-    name: macOS arm64 Bundle test
-    runs-on: macos-latest
+    name: macOS ${{ matrix.arch }} Bundle + Lite
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            rArchive: R-macos-arm64.tar.gz
+          - arch: x64
+            runner: macos-15-intel
+            rArchive: R-macos-x64.tar.gz
     defaults:
       run:
         shell: bash -l {0}
@@ -47,7 +57,7 @@ jobs:
 
       - name: Build bundled macOS R runtime
         env:
-          R_ARCHIVE: R-macos.tar.gz
+          R_ARCHIVE: ${{ matrix.rArchive }}
           GITHUB_PAT: ${{ github.token }}
           DOWNLOAD_STATIC_LIBV8: "1"
         run: |
@@ -61,18 +71,23 @@ jobs:
 
       - name: Verify macOS bundled R runtime
         run: |
-          node scripts/verify-r-bundle-archive.mjs darwin
-          node scripts/smoke-r-bundle-runtime.mjs darwin
+          node scripts/verify-r-bundle-archive.mjs darwin ${{ matrix.arch }}
+          node scripts/smoke-r-bundle-runtime.mjs darwin ${{ matrix.arch }}
 
       - name: Build macOS Bundle
-        run: npm run build:bundle:mac
+        run: npm run build:bundle:mac:${{ matrix.arch }}
+
+      - name: Build macOS Lite
+        run: npm run build:lite:mac:${{ matrix.arch }}
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: metis-macos-arm64-bundle-test
+          name: metis-macos-${{ matrix.arch }}-release
           if-no-files-found: error
           path: |
-            release/bundle/*.dmg
-            release/bundle/*.zip
-            r-api/R-macos.tar.gz
+            release/bundle/*${{ matrix.arch }}*.dmg
+            release/bundle/*${{ matrix.arch }}*.zip
+            release/lite/*${{ matrix.arch }}*.dmg
+            release/lite/*${{ matrix.arch }}*.zip
+            r-api/${{ matrix.rArchive }}

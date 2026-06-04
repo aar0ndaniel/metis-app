@@ -76,8 +76,8 @@ assert.match(
 
 assert.match(
   electronMainSource,
-  /R-Portable\.zip[\s\S]*R-macos\.tar\.gz[\s\S]*R-linux\.tar\.gz/,
-  'Bundle runtime extraction should keep future Linux runtime support while the current build rollout remains Windows/macOS only.'
+  /R-Portable\.zip[\s\S]*R-macos-\$\{getBundledRuntimeArch\(\)\}\.tar\.gz[\s\S]*R-linux\.tar\.gz/,
+  'Bundle runtime extraction should use architecture-specific macOS runtime archives while keeping future Linux runtime support.'
 )
 
 assert.match(
@@ -100,8 +100,8 @@ assert.doesNotMatch(
 
 assert.match(
   electronMainSource,
-  /function getBundledUnixRuntimeExtractionRoot\(\): string \{[\s\S]*app\.getPath\('cache'\)[\s\S]*'r-runtime'/,
-  'macOS and Linux bundled R should extract to the app cache r-runtime path so R launchers do not break on the Application Support space.'
+  /function getBundledUnixRuntimeExtractionRoot\(\): string \{[\s\S]*app\.getPath\('cache'\)[\s\S]*'r-runtime'[\s\S]*getBundledRuntimeArch\(\)/,
+  'macOS and Linux bundled R should extract to an architecture-specific app cache r-runtime path so R launchers do not break on the Application Support space or share ARM and Intel runtimes.'
 )
 
 assert.doesNotMatch(
@@ -136,8 +136,8 @@ assert.match(
 
 assert.match(
   electronMainSource,
-  /function getBundledPortableRuntimeStatus\(\)[\s\S]*appEdition: getConfiguredAppEdition\(\)[\s\S]*archiveExists[\s\S]*archiveSize[\s\S]*runtimeDirExists[\s\S]*extractedRscriptExists[\s\S]*relocationMarkerExists[\s\S]*condaUnpackExists/,
-  'Bundle runtime diagnostics should report edition, archive, extraction, Rscript, and Unix relocation status.'
+  /function getBundledPortableRuntimeStatus\(\)[\s\S]*runtimeArch: getBundledRuntimeArch\(\)[\s\S]*appEdition: getConfiguredAppEdition\(\)[\s\S]*archiveName[\s\S]*archiveExists[\s\S]*archiveSize[\s\S]*runtimeDirExists[\s\S]*extractedRscriptExists[\s\S]*relocationMarkerExists[\s\S]*condaUnpackExists/,
+  'Bundle runtime diagnostics should report architecture, edition, archive, extraction, Rscript, and Unix relocation status.'
 )
 
 assert.match(
@@ -190,14 +190,20 @@ assert.match(
 
 assert.match(
   verifierSource,
-  /darwin: 'R-macos\.tar\.gz'[\s\S]*linux: 'R-linux\.tar\.gz'/,
-  'Bundle archive verifier should require platform-specific macOS and Linux runtime tarballs.'
+  /supportedDarwinArchitectures[\s\S]*linux: 'R-linux\.tar\.gz'[\s\S]*R-macos-\$\{arch\}\.tar\.gz/,
+  'Bundle archive verifier should require architecture-specific macOS runtime tarballs and platform-specific Linux runtime tarballs.'
 )
 
 assert.match(
   verifierSource,
   /R-Bundled\/bin\/Rscript[\s\S]*R-Bundled\/bin\/conda-unpack[\s\S]*REQUIRED_R_PACKAGES\.map/,
   'Bundle archive verifier should check Unix Rscript, conda-unpack, and required R package entries.'
+)
+
+assert.match(
+  smokeSource,
+  /supportedDarwinArchitectures[\s\S]*R-macos-\$\{arch\}\.tar\.gz/,
+  'Unix runtime smoke test should support architecture-specific macOS runtime tarballs.'
 )
 
 assert.match(
@@ -214,8 +220,8 @@ assert.match(
 
 assert.match(
   packageSource,
-  /"build:bundle:mac"[\s\S]*verify-r-bundle-archive\.mjs darwin[\s\S]*smoke-r-bundle-runtime\.mjs darwin/,
-  'macOS Bundle builds should smoke-test the conda-packed runtime before packaging.'
+  /"build:bundle:mac:arm64"[\s\S]*verify-r-bundle-archive\.mjs darwin arm64[\s\S]*smoke-r-bundle-runtime\.mjs darwin arm64[\s\S]*"build:bundle:mac:x64"[\s\S]*verify-r-bundle-archive\.mjs darwin x64[\s\S]*smoke-r-bundle-runtime\.mjs darwin x64/,
+  'macOS Bundle builds should smoke-test the matching architecture conda-packed runtime before packaging.'
 )
 
 assert.doesNotMatch(

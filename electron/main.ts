@@ -2085,8 +2085,12 @@ function getRegistryWorkspacePath(): string | null {
   return null
 }
 
+function getBundledRuntimeArch(): string {
+  return process.arch
+}
+
 function getBundledUnixRuntimeExtractionRoot(): string {
-  return path.join(app.getPath('cache'), 'r-runtime')
+  return path.join(app.getPath('cache'), 'r-runtime', getBundledRuntimeArch())
 }
 
 function getBundledUnixRuntimeLegacyExtractionRoot(): string | null {
@@ -2096,6 +2100,7 @@ function getBundledUnixRuntimeLegacyExtractionRoot(): string | null {
 
 function getBundledPortableRuntimePaths(): {
   extractedRscriptPath: string
+  archiveName: string
   archivePath: string
   runtimeDir: string
   extractionRoot: string
@@ -2108,7 +2113,7 @@ function getBundledPortableRuntimePaths(): {
   const archiveName = process.platform === 'win32'
     ? 'R-Portable.zip'
     : process.platform === 'darwin'
-      ? 'R-macos.tar.gz'
+      ? `R-macos-${getBundledRuntimeArch()}.tar.gz`
       : 'R-linux.tar.gz'
 
   const extractionRoot = process.platform === 'win32'
@@ -2128,7 +2133,7 @@ function getBundledPortableRuntimePaths(): {
     : path.join(runtimeDir, 'bin', 'Rscript')
 
   const archivePath = path.join(rApiResourcesDir, archiveName)
-  return { extractedRscriptPath, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir }
+  return { extractedRscriptPath, archiveName, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir }
 }
 
 function getBundledUnixRuntimeRelocationMarker(runtimeDir: string): string {
@@ -2144,7 +2149,7 @@ function getFileSizeIfPresent(filePath: string): number | null {
 }
 
 function getBundledPortableRuntimeStatus() {
-  const { extractedRscriptPath, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir } = getBundledPortableRuntimePaths()
+  const { extractedRscriptPath, archiveName, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir } = getBundledPortableRuntimePaths()
   const relocationMarkerPath = process.platform === 'win32'
     ? null
     : getBundledUnixRuntimeRelocationMarker(runtimeDir)
@@ -2154,10 +2159,12 @@ function getBundledPortableRuntimeStatus() {
 
   return {
     platform: process.platform,
+    runtimeArch: getBundledRuntimeArch(),
     appEdition: getConfiguredAppEdition(),
     packaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     appPath: app.getAppPath(),
+    archiveName,
     archivePath,
     archiveExists: fs.existsSync(archivePath),
     archiveSize: getFileSizeIfPresent(archivePath),

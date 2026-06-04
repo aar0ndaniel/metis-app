@@ -44,7 +44,7 @@ mac:
     - zip
   category: public.app-category.education
   icon: build/icon.icns
-  artifactName: metis ${version} Lite macOS.${ext}
+  artifactName: metis ${version} Lite macOS ${arch}.${ext}
 
 nsis:
   oneClick: true
