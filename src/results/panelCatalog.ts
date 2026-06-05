@@ -26,6 +26,10 @@ export interface PanelSection {
   items: PanelDefinition[]
 }
 
+export interface PanelCatalogOptions {
+  hasInteractions?: boolean
+}
+
 const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
   'pls-sem': [
     {
@@ -88,7 +92,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
   bootstrap: [
     {
       id: 'resampled-structural-effects',
-      label: 'Resampled structural effects',
+      label: 'Bootstrap structural effects',
       defaultOpen: true,
       items: [
         { id: 'path-coef', label: 'Path coefficients', iconKey: 'graph', showChart: true },
@@ -99,7 +103,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
     },
     {
       id: 'resampled-measurement-effects',
-      label: 'Resampled measurement effects',
+      label: 'Bootstrap measurement effects',
       defaultOpen: true,
       items: [
         { id: 'outer-loadings', label: 'Outer loadings', iconKey: 'table' },
@@ -200,15 +204,58 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
   ],
 }
 
-export function getPanelSectionsForMode(mode: AnalysisMode): PanelSection[] {
-  return PANEL_SECTIONS[mode].map((section) => ({
+function clonePanelSections(sections: PanelSection[]): PanelSection[] {
+  return sections.map((section) => ({
     ...section,
     items: section.items.map((item) => ({ ...item })),
   }))
 }
 
-export function getPanelDefinition(mode: AnalysisMode, panelId: string): PanelDefinition | null {
-  for (const section of PANEL_SECTIONS[mode]) {
+export function getPanelSectionsForMode(mode: AnalysisMode, options: PanelCatalogOptions = {}): PanelSection[] {
+  const sections = clonePanelSections(PANEL_SECTIONS[mode])
+  if (!options.hasInteractions) return sections
+
+  if (mode === 'pls-sem') {
+    const qualitySection = sections.find((section) => section.id === 'model-quality')
+    const rSquareIndex = qualitySection?.items.findIndex((item) => item.id === 'r-square') ?? -1
+    if (qualitySection && rSquareIndex >= 0) {
+      qualitySection.items.splice(rSquareIndex + 1, 0, {
+        id: 'moderation-r2-change',
+        label: 'R² change',
+        iconKey: 'graph',
+      })
+    }
+
+    const qualityIndex = sections.findIndex((section) => section.id === 'model-quality')
+    sections.splice(qualityIndex >= 0 ? qualityIndex + 1 : sections.length, 0, {
+      id: 'moderation-effects',
+      label: 'Moderation effects',
+      defaultOpen: true,
+      items: [
+        { id: 'moderation-summary', label: 'Interaction effects', iconKey: 'table' },
+        { id: 'moderation-slopes', label: 'Simple slope analysis', iconKey: 'table' },
+        { id: 'moderation-slope-chart', label: 'Slope plot', iconKey: 'graph' },
+      ],
+    })
+  }
+
+  if (mode === 'bootstrap') {
+    const structuralIndex = sections.findIndex((section) => section.id === 'resampled-structural-effects')
+    sections.splice(structuralIndex >= 0 ? structuralIndex + 1 : sections.length, 0, {
+      id: 'moderation-effects',
+      label: 'Moderation effects',
+      defaultOpen: true,
+      items: [
+        { id: 'moderation-bootstrap', label: 'Interaction effects', iconKey: 'table' },
+      ],
+    })
+  }
+
+  return sections
+}
+
+export function getPanelDefinition(mode: AnalysisMode, panelId: string, options: PanelCatalogOptions = {}): PanelDefinition | null {
+  for (const section of getPanelSectionsForMode(mode, options)) {
     const match = section.items.find((item) => item.id === panelId)
     if (match) return { ...match }
   }

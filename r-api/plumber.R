@@ -1631,7 +1631,11 @@ extract_specific_indirect_effects <- function(payload, boot_model, alpha = 0.05)
           for (idx in seq_len(length(path_nodes) - 1L)) {
             from_node <- path_nodes[[idx]]
             to_node <- path_nodes[[idx + 1L]]
-            product <- product * suppressWarnings(as.numeric(boot_model$boot_paths[from_node, to_node, k]))
+            if (from_node %in% rownames(boot_model$boot_paths) && to_node %in% colnames(boot_model$boot_paths)) {
+              product <- product * suppressWarnings(as.numeric(boot_model$boot_paths[from_node, to_node, k]))
+            } else {
+              product <- 0
+            }
           }
           product
         }, numeric(1))

@@ -78,10 +78,42 @@ assert.deepEqual(nonHocPayload, {
   indicators: ['PI1', 'PI2'],
 })
 
+const moderationConstructs = [
+  { id: 'gai', name: 'GAI', type: 'Reflective', indicators: [{ name: 'GAI1' }, { name: 'GAI2' }] },
+  { id: 'pwb', name: 'PWB', type: 'Reflective', indicators: [{ name: 'PWB1' }, { name: 'PWB2' }] },
+  { id: 'use', name: 'USE', type: 'Reflective', indicators: [{ name: 'USE1' }, { name: 'USE2' }] },
+]
+
+const moderationPaths = [
+  { id: 'gai-use', from: 'gai', to: 'use', kind: 'direct' },
+  { id: 'pwb-moderates-gai-use', from: 'pwb', to: 'use', kind: 'moderation', targetPathId: 'gai-use' },
+]
+
+const moderationResult = buildPlsModelPayloadParts(moderationConstructs, moderationPaths)
+assert.deepEqual(moderationResult.paths, [
+  { from: 'GAI', to: 'USE' },
+  { from: 'PWB', to: 'USE' },
+  { from: 'GAI*PWB', to: 'USE' },
+])
+assert.deepEqual(moderationResult.interactions, [
+  { iv: 'GAI', moderator: 'PWB', outcome: 'USE' },
+])
+assert.equal(moderationResult.directPathCount, 1)
+
 const modelCanvasSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
 const resultsViewSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
 
 assert.match(modelCanvasSource, /buildPlsModelPayloadParts/, 'ModelCanvas should use the shared HOC-aware payload helper.')
 assert.match(resultsViewSource, /buildPlsModelPayloadParts/, 'ResultsView reruns should use the shared HOC-aware payload helper.')
+assert.match(
+  modelCanvasSource,
+  /runPlsModel\(\{[\s\S]*?datasetPath:\s*datasetFilePath,[\s\S]*?constructs:\s*payloadConstructs,[\s\S]*?paths:\s*mappedPaths,[\s\S]*?interactions:\s*payloadParts\.interactions,[\s\S]*?\}\)/,
+  'Realtime PLS calculation should send moderation interactions to the backend.'
+)
+assert.match(
+  resultsViewSource,
+  /return\s*\{[\s\S]*?datasetPath,[\s\S]*?constructs,[\s\S]*?paths,[\s\S]*?interactions:\s*payloadParts\.interactions,[\s\S]*?algorithm:/,
+  'ResultsView reruns should preserve moderation interactions in the backend payload.'
+)
 
 console.log('PASS HOC payload contract')

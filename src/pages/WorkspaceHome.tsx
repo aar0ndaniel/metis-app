@@ -36,7 +36,7 @@ import type { Workspace, WorkspaceChild } from '../types/workspace'
 // ─── Workspace color swatches ─────────────────────────────────────────────────
 const WS_COLORS = WORKSPACE_ACCENT_FALLBACK_COLORS
 type WorkspacePanelKind = 'datasets' | 'results'
-type ConstructShape = 'circle' | 'oval' | 'square'
+type ConstructShape = 'circle' | 'oval' | 'rectangle' | 'square'
 const OVAL_RX_SCALE = 1.35
 const OVAL_RY_SCALE = 0.82
 
@@ -385,13 +385,13 @@ function getModelSnapshot(model: WorkspaceChild): { constructs: PreviewConstruct
   return { constructs, paths }
 }
 
-function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' {
-  return shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' | 'rectangle' {
+  return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
 }
 
 function getPreviewConstructRadii(construct: PreviewConstruct): { rx: number; ry: number } {
   const radius = construct.radius ?? 42
-  if (normalizeConstructShape(construct.shape) === 'oval') {
+  if (normalizeConstructShape(construct.shape) !== 'circle') {
     return {
       rx: Math.max(40, construct.ovalWidth ?? Math.round(radius * OVAL_RX_SCALE * 2)) / 2,
       ry: Math.max(40, construct.ovalHeight ?? Math.round(radius * OVAL_RY_SCALE * 2)) / 2,
@@ -405,6 +405,11 @@ function getPreviewEdgeOffset(construct: PreviewConstruct, ux: number, uy: numbe
   const { rx, ry } = getPreviewConstructRadii(construct)
   const scaledRx = Math.max(8, Math.min(14, rx * scale * 0.5))
   const scaledRy = Math.max(8, Math.min(14, ry * scale * 0.5))
+  if (normalizeConstructShape(construct.shape) === 'rectangle') {
+    const tx = Math.abs(ux) > 0.0001 ? scaledRx / Math.abs(ux) : Number.POSITIVE_INFINITY
+    const ty = Math.abs(uy) > 0.0001 ? scaledRy / Math.abs(uy) : Number.POSITIVE_INFINITY
+    return Math.min(tx, ty)
+  }
   return 1 / Math.sqrt((ux * ux) / (scaledRx * scaledRx) + (uy * uy) / (scaledRy * scaledRy))
 }
 
@@ -528,10 +533,22 @@ function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; ac
             const { rx, ry } = getPreviewConstructRadii(construct)
             const scaledRx = Math.max(8, Math.min(14, rx * scale * 0.5))
             const scaledRy = Math.max(8, Math.min(14, ry * scale * 0.5))
+            const normalizedShape = normalizeConstructShape(construct.shape)
 
             return (
               <g key={construct.id}>
-                {normalizeConstructShape(construct.shape) === 'oval' ? (
+                {normalizedShape === 'rectangle' ? (
+                  <rect
+                    x={centerX - scaledRx}
+                    y={centerY - scaledRy}
+                    width={scaledRx * 2}
+                    height={scaledRy * 2}
+                    rx={3}
+                    fill={hexToRgba(accentColor, 0.15)}
+                    stroke={accentColor}
+                    strokeWidth="1.2"
+                  />
+                ) : normalizedShape === 'oval' ? (
                   <ellipse
                     cx={centerX}
                     cy={centerY}

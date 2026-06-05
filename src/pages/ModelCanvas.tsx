@@ -84,7 +84,7 @@ interface Indicator {
   oy?: number
 }
 
-type ConstructShape = 'circle' | 'oval' | 'square'
+type ConstructShape = 'circle' | 'oval' | 'rectangle' | 'square'
 type MeasurementType = 'Reflective' | 'Formative'
 
 interface Construct {
@@ -226,16 +226,6 @@ function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
 }
 
-function estimateBootstrapSeconds(samples: number): number {
-  const safeSamples = Number.isFinite(samples) && samples > 0 ? samples : 500
-  return Math.max(60, Math.round((safeSamples / 1250) * 60))
-}
-
-function formatBootstrapEstimate(seconds: number): string {
-  const minutes = Math.max(1, Math.round(seconds / 60))
-  return minutes === 1 ? 'about 1 minute' : `about ${minutes} minutes`
-}
-
 function readSharedStorageValue(suffix: string): string | null {
   return localStorage.getItem(buildStorageKey(METIS_STORAGE_PREFIX, suffix))
     ?? localStorage.getItem(buildStorageKey(LEGACY_STORAGE_PREFIX, suffix))
@@ -305,8 +295,8 @@ const DEFAULT_INDICATOR_EDGE_GAP = 60
 const INDICATOR_LABEL_HEIGHT = 22
 const MIN_INDICATOR_LABEL_WIDTH = 44
 
-function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' {
-  return shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' | 'rectangle' {
+  return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
 }
 
 function getDefaultOvalDimensions(radius = DEFAULT_CONSTRUCT_RADIUS): { width: number; height: number } {
@@ -317,7 +307,7 @@ function getDefaultOvalDimensions(radius = DEFAULT_CONSTRUCT_RADIUS): { width: n
 }
 
 function getConstructDimensions(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { width: number; height: number } {
-  if (normalizeConstructShape(construct.shape) === 'oval') {
+  if (normalizeConstructShape(construct.shape) !== 'circle') {
     const defaults = getDefaultOvalDimensions(construct.radius)
     return {
       width: Math.max(MIN_OVAL_DIMENSION, construct.ovalWidth ?? defaults.width),
@@ -336,6 +326,11 @@ function getConstructRadii(construct: Pick<Construct, 'radius' | 'shape' | 'oval
 
 function getConstructEdgeOffset(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, ux: number, uy: number): number {
   const { rx, ry } = getConstructRadii(construct)
+  if (normalizeConstructShape(construct.shape) === 'rectangle') {
+    const tx = Math.abs(ux) > 0.0001 ? rx / Math.abs(ux) : Number.POSITIVE_INFINITY
+    const ty = Math.abs(uy) > 0.0001 ? ry / Math.abs(uy) : Number.POSITIVE_INFINITY
+    return Math.min(tx, ty)
+  }
   return 1 / Math.sqrt((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry))
 }
 
@@ -343,6 +338,9 @@ function isPointInConstruct(construct: Pick<Construct, 'x' | 'y' | 'radius' | 's
   const { rx, ry } = getConstructRadii(construct)
   const paddedRx = rx + padding
   const paddedRy = ry + padding
+  if (normalizeConstructShape(construct.shape) === 'rectangle') {
+    return Math.abs(x - construct.x) <= paddedRx && Math.abs(y - construct.y) <= paddedRy
+  }
   return ((x - construct.x) ** 2) / (paddedRx ** 2) + ((y - construct.y) ** 2) / (paddedRy ** 2) <= 1
 }
 
@@ -351,8 +349,8 @@ function buildConstructShapePatch(current: Construct, patch: Partial<Construct>)
   const nextShape = normalizeConstructShape(next.shape)
   const currentShape = normalizeConstructShape(current.shape)
 
-  if (nextShape === 'oval') {
-    const currentDimensions = currentShape === 'oval'
+  if (nextShape !== 'circle') {
+    const currentDimensions = currentShape !== 'circle'
       ? getConstructDimensions(current)
       : getDefaultOvalDimensions(current.radius)
     return {
@@ -362,7 +360,7 @@ function buildConstructShapePatch(current: Construct, patch: Partial<Construct>)
     }
   }
 
-  if (patch.shape === 'circle' && currentShape === 'oval') {
+  if (patch.shape === 'circle' && currentShape !== 'circle') {
     const { width, height } = getConstructDimensions(current)
     return {
       ...next,
@@ -1002,7 +1000,7 @@ export default function ModelCanvas({
     startRadius: number
     startWidth: number
     startHeight: number
-    startShape: 'circle' | 'oval'
+    startShape: 'circle' | 'oval' | 'rectangle'
   } | null>(null)
   const [groupResizing, setGroupResizing] = useState<GroupResizeState | null>(null)
   const [activePathDrag, setActivePathDrag] = useState<{ id: string; tx: number; ty: number } | null>(null)
@@ -1236,6 +1234,7 @@ export default function ModelCanvas({
           datasetPath: datasetFilePath,
           constructs: payloadConstructs,
           paths: mappedPaths,
+          interactions: payloadParts.interactions,
         })
 
         if (!result.success || !result.results) return
@@ -1878,8 +1877,7 @@ export default function ModelCanvas({
         type: 'bootstrap',
         title: `Bootstrapping ${totalNboot.toLocaleString()} samples`,
         progressMode: 'indeterminate',
-        subLabel: `${totalNboot.toLocaleString()} samples - estimated ${formatBootstrapEstimate(estimateBootstrapSeconds(totalNboot))}`,
-        estimatedSeconds: estimateBootstrapSeconds(totalNboot),
+        subLabel: `${totalNboot.toLocaleString()} samples`,
         phases: [
           { id: 'prep', label: 'Preparing base model', status: 'pending' },
           { id: 'resample', label: 'Resampling', status: 'pending' },
@@ -1894,7 +1892,7 @@ export default function ModelCanvas({
       calcDispatch({
         type: 'setProgress',
         pct: 0,
-        subLabel: `${totalNboot.toLocaleString()} bootstrap samples - estimated ${formatBootstrapEstimate(estimateBootstrapSeconds(totalNboot))}`,
+        subLabel: `${totalNboot.toLocaleString()} bootstrap samples`,
       })
       const bootstrapPayload = {
         ...basePayload,
@@ -2864,7 +2862,7 @@ export default function ModelCanvas({
       ? {
           ...c,
           radius: DEFAULT_CONSTRUCT_RADIUS,
-          ...(normalizeConstructShape(c.shape) === 'oval'
+          ...(normalizeConstructShape(c.shape) !== 'circle'
             ? { ovalWidth: defaultOval.width, ovalHeight: defaultOval.height }
             : {}),
         }
@@ -3415,7 +3413,7 @@ export default function ModelCanvas({
           x: groupResizing.anchorX + (snapshot.x - groupResizing.anchorX) * scaleX,
           y: groupResizing.anchorY + (snapshot.y - groupResizing.anchorY) * scaleY,
           radius: Math.max(20, snapshot.radius * radiusScale),
-          ...(normalizeConstructShape(construct.shape) === 'oval'
+          ...(normalizeConstructShape(construct.shape) !== 'circle'
             ? {
                 ovalWidth: Math.max(MIN_OVAL_DIMENSION, (snapshot.ovalWidth ?? getDefaultOvalDimensions(snapshot.radius).width) * Math.abs(scaleX)),
                 ovalHeight: Math.max(MIN_OVAL_DIMENSION, (snapshot.ovalHeight ?? getDefaultOvalDimensions(snapshot.radius).height) * Math.abs(scaleY)),
@@ -3460,7 +3458,7 @@ export default function ModelCanvas({
       const handleSignX = resizing.handle === 'tl' || resizing.handle === 'bl' ? -1 : 1
       const handleSignY = resizing.handle === 'tl' || resizing.handle === 'tr' ? -1 : 1
 
-      if (resizing.startShape === 'oval') {
+      if (resizing.startShape !== 'circle') {
         const handleAxis = resizing.handle === 'left' || resizing.handle === 'right'
           ? 'horizontal'
           : resizing.handle === 'top' || resizing.handle === 'bottom'
@@ -4493,7 +4491,10 @@ export default function ModelCanvas({
             {constructs.map(c => {
               const showConstructBounds = selected.includes(c.id) && !hasUnifiedSelectionBounds
               const constructRadii = getConstructRadii(c)
-              const isOval = normalizeConstructShape(c.shape) === 'oval'
+              const normalizedShape = normalizeConstructShape(c.shape)
+              const isOval = normalizedShape === 'oval'
+              const isRectangle = normalizedShape === 'rectangle'
+              const hasIndependentDimensions = normalizedShape !== 'circle'
               const resFontSize = Math.max(9, Math.min(constructRadii.rx, constructRadii.ry) * 0.36)
               const constructLabelColor = !c.labelColor || c.labelColor === '#FFFFFF'
                 ? 'var(--color-text-primary)'
@@ -4575,7 +4576,20 @@ export default function ModelCanvas({
                     onContextMenu={e => handleConstructContextMenu(e, c.id)}
                     style={{ cursor: hasUnifiedSelectionBounds && selected.includes(c.id) ? 'default' : 'grab' }}
                   >
-                    {showConnectedConstructHighlight && (isOval ? (
+                    {showConnectedConstructHighlight && (isRectangle ? (
+                      <rect
+                        x={-constructRadii.rx - 9}
+                        y={-constructRadii.ry - 9}
+                        width={(constructRadii.rx + 9) * 2}
+                        height={(constructRadii.ry + 9) * 2}
+                        rx={10}
+                        fill="rgb(var(--color-accent-rgb) / 0.18)"
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="7 4"
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    ) : isOval ? (
                       <ellipse
                         rx={constructRadii.rx + 9}
                         ry={constructRadii.ry + 9}
@@ -4596,7 +4610,9 @@ export default function ModelCanvas({
                       />
                     ))}
                     {/* Shape */}
-                    {isOval ? (
+                    {isRectangle ? (
+                      <rect x={-constructRadii.rx} y={-constructRadii.ry} width={constructRadii.rx * 2} height={constructRadii.ry * 2} rx={8} fill={c.color} stroke="none" />
+                    ) : isOval ? (
                       <ellipse rx={constructRadii.rx} ry={constructRadii.ry} fill={c.color} stroke="none" />
                     ) : (
                       <circle r={c.radius} fill={c.color} stroke="none" />
@@ -4629,7 +4645,7 @@ export default function ModelCanvas({
                             { x: 0, y: constructRadii.ry * 2, h: 'bl' as ResizeHandle },
                             { x: constructRadii.rx * 2, y: constructRadii.ry * 2, h: 'br' as ResizeHandle },
                           ]
-                          const sideResizeHandles = isOval ? [
+                          const sideResizeHandles = hasIndependentDimensions ? [
                             { x: 0, y: constructRadii.ry, h: 'left' as ResizeHandle },
                             { x: constructRadii.rx * 2, y: constructRadii.ry, h: 'right' as ResizeHandle },
                             { x: constructRadii.rx, y: 0, h: 'top' as ResizeHandle },
@@ -5003,15 +5019,32 @@ export default function ModelCanvas({
                     />
                     <span style={{ fontSize: 11, color: normalizeConstructShape(selectedConstruct?.shape) === 'oval' ? C.secondary : C.textDim, fontWeight: 700 }}>Oval</span>
                   </button>
+                  <button
+                    onClick={() => updateSelected({ shape: 'rectangle' })}
+                    style={{
+                      flex: 1, height: 32, borderRadius: 8,
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      boxShadow: 'none',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                    }}
+                  >
+                    <FrameCorners
+                      size={14}
+                      color={normalizeConstructShape(selectedConstruct?.shape) === 'rectangle' ? C.secondary : C.textDim}
+                      weight="fill"
+                    />
+                    <span style={{ fontSize: 11, color: normalizeConstructShape(selectedConstruct?.shape) === 'rectangle' ? C.secondary : C.textDim, fontWeight: 700 }}>Rectangle</span>
+                  </button>
                 </div>
               </div>
 
               {/* Construct Size */}
               <div style={{ padding: '12px 14px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>
-                  {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) === 'oval' ? 'Width / Height' : 'Size'}
+                  {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) !== 'circle' ? 'Width / Height' : 'Size'}
                 </span>
-                {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) === 'oval' ? (
+                {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) !== 'circle' ? (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {([
                       { label: 'W', value: constructWidthDraft, setValue: setConstructWidthDraft },

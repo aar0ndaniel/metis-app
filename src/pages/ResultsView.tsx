@@ -64,7 +64,15 @@ import { getPanelDataFromResults } from '../results/panelData'
 import { classifyPanelEmptyState, getBaseModelReferenceLabel, rowsContainOnlyMessage } from '../results/panelDiagnostics'
 import { getExportSectionTitles, getModeResultsLabel, getPanelTitle } from '../results/panelExport'
 import { buildClipboardTableHtml, buildClipboardTableText, type ExportTableSection } from '../results/clipboardTables'
-import { deriveSpecificIndirectRows } from '../results/panelDerivedData'
+import {
+  buildModerationSlopeChartSvg,
+  deriveModerationSummaryRows,
+  deriveModerationSlopeRows,
+  deriveModerationR2ChangeRows,
+  deriveModerationBootstrapRows,
+  deriveSpecificIndirectRows,
+  hasModerationInteractions,
+} from '../results/panelDerivedData'
 import {
   buildConstructIndicatorLookup,
   buildMeasurementMatrix,
@@ -259,8 +267,8 @@ const PANEL_ICON_OVERRIDES: Record<string, ElementType> = {
   'cipma-priorities': ListChecks,
 }
 
-function buildSidebarSections(mode: AnalysisMode): SidebarSection[] {
-  return getPanelSectionsForMode(mode).map((section) => ({
+function buildSidebarSections(mode: AnalysisMode, hasInteractions = false): SidebarSection[] {
+  return getPanelSectionsForMode(mode, { hasInteractions }).map((section) => ({
     ...section,
     items: section.items.map((item) => ({
       id: item.id,
@@ -279,6 +287,7 @@ function modelHasMediationPaths(savedModel: any): boolean {
   const outgoingBySource = new Map<string, Set<string>>()
 
   paths.forEach((path: any) => {
+    if (path?.kind === 'moderation') return
     const from = String(path?.from ?? '')
     const to = String(path?.to ?? '')
     if (!from || !to || from === to) return
@@ -307,6 +316,48 @@ function modelHasMediationPaths(savedModel: any): boolean {
 // ============================================================================
 // RESULT PARSERS  — extract real R/seminr data from analysisResults
 // ============================================================================
+
+function getDerivedModerationPanelData(
+  mode: AnalysisMode,
+  panelId: string,
+  savedModel: any,
+  analysisResults: any,
+): any | null {
+  if (mode === 'pls-sem') {
+    if (panelId === 'moderation-summary') return deriveModerationSummaryRows(savedModel, analysisResults)
+    if (panelId === 'moderation-slopes') return deriveModerationSlopeRows(savedModel, analysisResults)
+    if (panelId === 'moderation-slope-chart') return deriveModerationSlopeRows(savedModel, analysisResults)
+    if (panelId === 'moderation-r2-change') return deriveModerationR2ChangeRows(savedModel, analysisResults)
+  }
+
+  if (mode === 'bootstrap' && panelId === 'moderation-bootstrap') {
+    return deriveModerationBootstrapRows(savedModel, analysisResults)
+  }
+
+  return null
+}
+
+function mergeRSquareRowsWithModeration(
+  rows: Array<Record<string, unknown>>,
+  moderationR2Rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  if (!moderationR2Rows.length) return rows
+
+  const moderationByDv = new Map(
+    moderationR2Rows.map((row) => [String(row.DV ?? row.dv ?? ''), row])
+  )
+  return rows.map((row) => {
+    const construct = String(row.construct ?? row.Construct ?? row.row_name ?? row.Row ?? '')
+    const moderation = moderationByDv.get(construct)
+    if (!moderation) return row
+    return {
+      ...row,
+      delta_r2: moderation.delta_r2,
+      f2_interaction: moderation.f2_interaction,
+      effect_size: moderation.effect_size,
+    }
+  })
+}
 
 function getDecimals() {
   const d = readSharedStorageValue('prefs:decimalPlaces')
@@ -435,7 +486,7 @@ function formatMetricValue(value: unknown): string {
 
 function isTStatisticHeader(header: string): boolean {
   const compact = normalizeMetricKey(header)
-  return compact === 'tstat' || compact === 'tstatistic' || compact === 'tvalue' || compact === 'tvalues'
+  return compact === 'tstat' || compact === 'tstatistic' || compact.startsWith('tstatistics') || compact === 'tvalue' || compact === 'tvalues'
 }
 
 function findPValueCell(row: Record<string, unknown> | null | undefined): unknown {
@@ -453,7 +504,7 @@ function findTStatisticCell(row: Record<string, unknown> | null | undefined): un
     if (isRowField(key)) continue
     if (isTStatisticHeader(key)) return value
   }
-  return findMetricValue(row, ['t stat', 't statistic', 't value', 't_value', 'tstatistic', 't_values'])
+  return findMetricValue(row, ['t stat', 't statistic', 't statistics', 't statistics ostdev', 't value', 't_value', 'tstatistic', 't_values'])
 }
 
 function findEstimateCell(row: Record<string, unknown> | null | undefined): unknown {
@@ -462,6 +513,9 @@ function findEstimateCell(row: Record<string, unknown> | null | undefined): unkn
     'coef',
     'original est',
     'original estimate',
+    'original sample',
+    'original sample o',
+    'path coefficient',
     'original_estimate',
     'original coefficient',
     'bootstrap mean',
@@ -1040,7 +1094,7 @@ function normalizeAnalysisFailureMessage(error: unknown): string {
 function buildDiagramResults(
   ar: any,
   canvasConstructs?: CanvasConstruct[],
-  canvasPaths?: Array<{ from: string; to: string }>,
+  canvasPaths?: Array<{ from: string; to: string; kind?: 'direct' | 'moderation' }>,
   fallbackAr?: any,
 ): import('../components/PathDiagram').DiagramResults {
   const constructScores: Record<string, any> = {}
@@ -1233,6 +1287,7 @@ function buildDiagramResults(
           const cor = sda > 0 && sdb > 0 ? cov / (sda * sdb) : NaN
 
           const isModelEdge = (canvasPaths ?? []).some((p) => {
+            if (p.kind === 'moderation') return false
             const fromName = nameById.get(p.from) ?? p.from
             const toName = nameById.get(p.to) ?? p.to
             return fromName === from && toName === to
@@ -1636,6 +1691,7 @@ function buildPathDiagramSvg(
   const constructs = model.constructs
   const paths = model.paths ?? []
   const byId = Object.fromEntries(constructs.map(c => [c.id, c]))
+  const pathById = Object.fromEntries(paths.map(p => [p.id, p]))
 
   const indicatorEntries: Array<{
     constructId: string
@@ -1658,13 +1714,13 @@ function buildPathDiagramSvg(
   })
 
   const allX = [
-    ...constructs.map(c => c.x - c.radius - 5),
-    ...constructs.map(c => c.x + c.radius + 5),
+    ...constructs.map(c => c.x - getResultsConstructRadii(c).rx - 5),
+    ...constructs.map(c => c.x + getResultsConstructRadii(c).rx + 5),
     ...indicatorEntries.flatMap(i => [i.ix - i.labelW / 2, i.ix + i.labelW / 2]),
   ]
   const allY = [
-    ...constructs.map(c => c.y - c.radius - 5),
-    ...constructs.map(c => c.y + c.radius + 5),
+    ...constructs.map(c => c.y - getResultsConstructRadii(c).ry - 5),
+    ...constructs.map(c => c.y + getResultsConstructRadii(c).ry + 5),
     ...indicatorEntries.map(i => i.iy - i.labelH / 2),
     ...indicatorEntries.map(i => i.iy + i.labelH / 2),
   ]
@@ -1682,6 +1738,9 @@ function buildPathDiagramSvg(
       <marker id="exp-arr-measure" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
         <polygon points="0 0,8 3,0 6" fill="context-stroke"></polygon>
       </marker>
+      <marker id="exp-arr-mod" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0,8 3,0 6" fill="${exportAccent.color}"></polygon>
+      </marker>
     </defs>
   `
 
@@ -1693,10 +1752,12 @@ function buildPathDiagramSvg(
     if (dist < 1) return ['', '', {x: 0, y: 0}]
     const ux = dx / dist
     const uy = dy / dist
-    const startX = from.x + ux * from.radius
-    const startY = from.y + uy * from.radius
-    const endX = to.x - ux * to.radius
-    const endY = to.y - uy * to.radius
+    const start = getResultsConstructEdgePoint(from, to.x, to.y)
+    const end = getResultsConstructEdgePoint(to, from.x, from.y)
+    const startX = start.x
+    const startY = start.y
+    const endX = end.x
+    const endY = end.y
     const t = clampResultsLabelT(labelT)
     const midX = startX + (endX - startX) * t
     const midY = startY + (endY - startY) * t
@@ -1752,6 +1813,27 @@ function buildPathDiagramSvg(
     }
   }
 
+  const splitLineAtT = (startX: number, startY: number, endX: number, endY: number, labelT = 0.5, gap = 34) => {
+    const dx = endX - startX
+    const dy = endY - startY
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1
+    const t = clampResultsLabelT(labelT)
+    const x = startX + dx * t
+    const y = startY + dy * t
+    const gapUx = (dx / dist) * (gap / 2)
+    const gapUy = (dy / dist) * (gap / 2)
+    return {
+      path1: `M${startX},${startY} L${x - gapUx},${y - gapUy}`,
+      path2: `M${x + gapUx},${y + gapUy} L${endX},${endY}`,
+      x,
+      y,
+    }
+  }
+
+  const constructEdgePoint = (construct: CanvasConstruct, x: number, y: number) => {
+    return getResultsConstructEdgePoint(construct, x, y)
+  }
+
   const measurementMap = diagramResults.measurementResults ?? {}
 
   const measurementSvg = indicatorEntries.map((ind) => {
@@ -1763,9 +1845,9 @@ function buildPathDiagramSvg(
     const uy = ind.iy - c.y
     const dist = Math.sqrt(ux * ux + uy * uy)
     if (dist < 1) return ''
-    const r = c.radius
-    const startX = c.x + (ux / dist) * r
-    const startY = c.y + (uy / dist) * r
+    const start = getResultsConstructEdgePoint(c, ind.ix, ind.iy)
+    const startX = start.x
+    const startY = start.y
     let ix = ind.ix, iy = ind.iy
     if      (dir === 'top')    iy += ind.labelH / 2
     else if (dir === 'bottom') iy -= ind.labelH / 2
@@ -1776,8 +1858,9 @@ function buildPathDiagramSvg(
     const midX = startX + (ix - startX) * labelT
     const midY = startY + (iy - startY) * labelT
     const gap = 24
-    const gapUx = (ix - startX) / dist * (gap / 2)
-    const gapUy = (iy - startY) / dist * (gap / 2)
+    const pathDist = Math.sqrt((ix - startX) ** 2 + (iy - startY) ** 2) || 1
+    const gapUx = (ix - startX) / pathDist * (gap / 2)
+    const gapUy = (iy - startY) / pathDist * (gap / 2)
     const seg1X = midX - gapUx
     const seg1Y = midY - gapUy
     const seg2X = midX + gapUx
@@ -1790,6 +1873,26 @@ function buildPathDiagramSvg(
   }).join('')
 
   const pathSvg = paths.map((p) => {
+    if (p.kind === 'moderation') {
+      const targetPathId = p.targetPathId
+      const targetPath = targetPathId ? pathById[targetPathId] : null
+      const moderator = byId[p.from]
+      const iv = targetPath ? byId[targetPath.from] : null
+      const dv = targetPath ? byId[targetPath.to] : null
+      if (!targetPath || targetPath.kind === 'moderation' || !moderator || !iv || !dv) return ''
+
+      const targetMid = { x: (iv.x + dv.x) / 2, y: (iv.y + dv.y) / 2 }
+      const start = constructEdgePoint(moderator, targetMid.x, targetMid.y)
+      const split = splitLineAtT(start.x, start.y, targetMid.x, targetMid.y, p.labelT)
+      // Moderation labels use the IV*Moderator interaction coefficient returned by seminr.
+      const interactionName = `${iv.name}*${moderator.name}`
+      const pathVal = diagramResults.pathResults?.[`${interactionName}-${dv.name}`]?.coef
+      const txt = Number.isFinite(pathVal as number)
+        ? `<text x="${split.x}" y="${split.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${exportAccent.color}">${(pathVal as number).toFixed(getDecimals())}</text>`
+        : ''
+      return `<g><path d="${split.path1}" stroke="${exportAccent.color}" stroke-width="1.8" stroke-dasharray="5 4" fill="none"></path><path d="${split.path2}" stroke="${exportAccent.color}" stroke-width="1.8" stroke-dasharray="5 4" fill="none" marker-end="url(#exp-arr-mod)"></path><circle cx="${targetMid.x}" cy="${targetMid.y}" r="3.4" fill="${exportAccent.color}"></circle>${txt}</g>`
+    }
+
     const from = byId[p.from]
     const to = byId[p.to]
     if (!from || !to) return ''
@@ -1800,16 +1903,23 @@ function buildPathDiagramSvg(
   }).join('')
 
   const constructSvg = constructs.map((c) => {
-    const hasIncoming = paths.some((path) => path.to === c.id)
+    const hasIncoming = paths.some((path) => path.kind !== 'moderation' && path.to === c.id)
     const r2 = diagramResults.constructScores?.[c.name]?.r2
+    const { rx, ry } = getResultsConstructRadii(c)
+    const normalizedShape = normalizeResultsConstructShape(c.shape)
+    const shapeSvg = normalizedShape === 'rectangle'
+      ? `<rect x="${c.x - rx}" y="${c.y - ry}" width="${rx * 2}" height="${ry * 2}" rx="8" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></rect>`
+      : normalizedShape === 'oval'
+        ? `<ellipse cx="${c.x}" cy="${c.y}" rx="${rx}" ry="${ry}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></ellipse>`
+        : `<circle cx="${c.x}" cy="${c.y}" r="${c.radius}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></circle>`
     const r2Text = hasIncoming && Number.isFinite(r2 as number)
       ? `<text x="${c.x}" y="${c.y + 6}" text-anchor="middle" font-size="13" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(r2 as number).toFixed(getDecimals())}</text>`
       : ''
     return `
       <g>
-        <circle cx="${c.x}" cy="${c.y}" r="${c.radius}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></circle>
+        ${shapeSvg}
         ${r2Text}
-        <text x="${c.x}" y="${c.y + c.radius + 18}" text-anchor="middle" font-size="12" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(c.name)}</text>
+        <text x="${c.x}" y="${c.y + ry + 18}" text-anchor="middle" font-size="12" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(c.name)}</text>
       </g>
     `
   }).join('')
@@ -1845,6 +1955,22 @@ function formatResultTableHeader(header: string, selectedPanel?: string): string
   if (normalizedHeader === 'row') {
     return 'Row'
   }
+  if (normalizedHeader === 'betainteraction') return 'β interaction'
+  if (normalizedHeader === 'tstat') return 'T-stat'
+  if (normalizedHeader === 'pvalue') return 'p-value'
+  if (normalizedHeader === 'f2') return 'f²'
+  if (normalizedHeader === 'f2interaction') return 'f² interaction'
+  if (normalizedHeader === 'deltar2') return 'ΔR²'
+  if (normalizedHeader === 'r2withinteraction') return 'R² with interaction'
+  if (normalizedHeader === 'r2withoutinteraction') return 'R² without interaction'
+  if (normalizedHeader === 'moderatorlevel') return 'Moderator level'
+  if (normalizedHeader === 'simpleslope') return 'Simple slope'
+  if (normalizedHeader === 'cisupper' || normalizedHeader === 'ciupper') return 'CI upper'
+  if (normalizedHeader === 'cislower' || normalizedHeader === 'cilower') return 'CI lower'
+  if (normalizedHeader === 'bccilower') return 'BC CI lower'
+  if (normalizedHeader === 'bcciupper') return 'BC CI upper'
+  if (normalizedHeader === 'bcacilower') return 'BCa CI lower'
+  if (normalizedHeader === 'bcaciupper') return 'BCa CI upper'
   return String(header ?? '').replace(/_/g, ' ')
 }
 
@@ -1949,9 +2075,12 @@ function SidebarSectionComponent({
 // CANVAS TYPES (match ModelCanvas structure, used for localStorage bridge)
 // ============================================================================
 
+type CanvasConstructShape = 'circle' | 'oval' | 'rectangle' | 'square'
+
 interface CanvasConstruct {
   id: string; name: string; type: 'Reflective' | 'Formative'
   color: string; x: number; y: number; radius: number
+  ovalWidth?: number; ovalHeight?: number; shape?: CanvasConstructShape
   indicators: { name: string; loading: number; ox?: number; oy?: number; labelT?: number }[]
   indicatorDirection?: 'top' | 'right' | 'bottom' | 'left'
   indicatorAlignment?: 'top' | 'right' | 'bottom' | 'left'
@@ -1968,16 +2097,9 @@ const RESULTS_INDICATOR_LABEL_H = 22
 const RESULTS_MIN_INDICATOR_LABEL_W = 44
 const RESULTS_MIN_LABEL_T = 0.12
 const RESULTS_MAX_LABEL_T = 0.88
-
-function estimateBootstrapSeconds(samples: number): number {
-  const safeSamples = Number.isFinite(samples) && samples > 0 ? samples : 500
-  return Math.max(60, Math.round((safeSamples / 1250) * 60))
-}
-
-function formatBootstrapEstimate(seconds: number): string {
-  const minutes = Math.max(1, Math.round(seconds / 60))
-  return minutes === 1 ? 'about 1 minute' : `about ${minutes} minutes`
-}
+const RESULTS_OVAL_RX_SCALE = 1.35
+const RESULTS_OVAL_RY_SCALE = 0.82
+const RESULTS_MIN_OVAL_DIMENSION = 40
 
 function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
@@ -2017,6 +2139,51 @@ function clampResultsLabelT(value: number | undefined): number {
   return Math.max(RESULTS_MIN_LABEL_T, Math.min(RESULTS_MAX_LABEL_T, value as number))
 }
 
+function normalizeResultsConstructShape(shape?: CanvasConstructShape): 'circle' | 'oval' | 'rectangle' {
+  return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function getResultsDefaultOvalDimensions(radius: number): { width: number; height: number } {
+  return {
+    width: Math.round(radius * RESULTS_OVAL_RX_SCALE * 2),
+    height: Math.round(radius * RESULTS_OVAL_RY_SCALE * 2),
+  }
+}
+
+function getResultsConstructRadii(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { rx: number; ry: number } {
+  if (normalizeResultsConstructShape(construct.shape) !== 'circle') {
+    const defaults = getResultsDefaultOvalDimensions(construct.radius)
+    return {
+      rx: Math.max(RESULTS_MIN_OVAL_DIMENSION, construct.ovalWidth ?? defaults.width) / 2,
+      ry: Math.max(RESULTS_MIN_OVAL_DIMENSION, construct.ovalHeight ?? defaults.height) / 2,
+    }
+  }
+  return { rx: construct.radius, ry: construct.radius }
+}
+
+function getResultsConstructEdgeOffset(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, ux: number, uy: number): number {
+  const { rx, ry } = getResultsConstructRadii(construct)
+  if (normalizeResultsConstructShape(construct.shape) === 'rectangle') {
+    const tx = Math.abs(ux) > 0.0001 ? rx / Math.abs(ux) : Number.POSITIVE_INFINITY
+    const ty = Math.abs(uy) > 0.0001 ? ry / Math.abs(uy) : Number.POSITIVE_INFINITY
+    return Math.min(tx, ty)
+  }
+  return 1 / Math.sqrt((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry))
+}
+
+function getResultsConstructEdgePoint(construct: CanvasConstruct, x: number, y: number): { x: number; y: number } {
+  const dx = x - construct.x
+  const dy = y - construct.y
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1
+  const ux = dx / dist
+  const uy = dy / dist
+  const offset = getResultsConstructEdgeOffset(construct, ux, uy)
+  return {
+    x: construct.x + ux * offset,
+    y: construct.y + uy * offset,
+  }
+}
+
 function getResultsIndicatorDimensions(indicator: { name: string }): { labelW: number; labelH: number } {
   return {
     labelW: Math.max(RESULTS_MIN_INDICATOR_LABEL_W, indicator.name.length * 7 + 16),
@@ -2027,8 +2194,10 @@ function getResultsIndicatorDimensions(indicator: { name: string }): { labelW: n
 function getResultsIndicatorLayout(construct: CanvasConstruct, indicator: { name: string; ox?: number; oy?: number }, index: number, includeOffsets = true) {
   const dir = construct.indicatorAlignment || construct.indicatorDirection || 'bottom'
   const { labelW, labelH } = getResultsIndicatorDimensions(indicator)
+  const { rx, ry } = getResultsConstructRadii(construct)
+  const edgeRadius = dir === 'left' || dir === 'right' ? rx : ry
   const offset = (index - (construct.indicators.length - 1) / 2) * RESULTS_INDICATOR_STEP
-  const centerGap = construct.radius + RESULTS_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
+  const centerGap = edgeRadius + RESULTS_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
 
   let ix = construct.x
   let iy = construct.y
@@ -2583,14 +2752,38 @@ function DiagramCanvas({
 
         if (interaction.type === 'pathLabel') {
           const path = (canvasPaths ?? []).find((item) => item.id === interaction.pathId)
-          const from = (canvasConstructs ?? []).find((item) => item.id === path?.from)
-          const to = (canvasConstructs ?? []).find((item) => item.id === path?.to)
-          if (!path || !from || !to) return
-          const dx = to.x - from.x
-          const dy = to.y - from.y
+          if (!path) return
+
+          const from = (canvasConstructs ?? []).find((item) => item.id === path.from)
+          let startX = from?.x ?? 0
+          let startY = from?.y ?? 0
+          let endX = 0
+          let endY = 0
+
+          if (path.kind === 'moderation') {
+            const targetPath = (canvasPaths ?? []).find((item) => item.id === path.targetPathId && item.kind !== 'moderation')
+            const targetFrom = (canvasConstructs ?? []).find((item) => item.id === targetPath?.from)
+            const targetTo = (canvasConstructs ?? []).find((item) => item.id === targetPath?.to)
+            if (!from || !targetPath || !targetFrom || !targetTo) return
+            endX = (targetFrom.x + targetTo.x) / 2
+            endY = (targetFrom.y + targetTo.y) / 2
+            const ux = endX - from.x
+            const uy = endY - from.y
+            const dist = Math.sqrt(ux * ux + uy * uy) || 1
+            startX = from.x + (ux / dist) * from.radius
+            startY = from.y + (uy / dist) * from.radius
+          } else {
+            const to = (canvasConstructs ?? []).find((item) => item.id === path.to)
+            if (!from || !to) return
+            endX = to.x
+            endY = to.y
+          }
+
+          const dx = endX - startX
+          const dy = endY - startY
           const lengthSq = dx * dx + dy * dy
           const nextT = lengthSq > 0
-            ? clampResultsLabelT(((point.x - from.x) * dx + (point.y - from.y) * dy) / lengthSq)
+            ? clampResultsLabelT(((point.x - startX) * dx + (point.y - startY) * dy) / lengthSq)
             : 0.5
           commitModelChange(
             (constructs) => constructs,
@@ -2926,26 +3119,44 @@ function PathCoefficientTable({ rows, view }: { rows: PathRow[]; view: ResultsTa
   )
 }
 
-function RSquareTable({ rows }: { rows: RSquareRow[] }) {
+function RSquareTable({ rows, moderationRows = [] }: { rows: RSquareRow[]; moderationRows?: Array<Record<string, unknown>> }) {
   if (!rows.length) return <EmptyTableState />
+  const moderationByDv = new Map(moderationRows.map((row) => [String(row.DV ?? ''), row]))
+  const showModerationColumns = moderationRows.length > 0
   return (
     <table className="w-full text-xs">
       <thead>
         <tr className="bg-primary/20">
-          {['Construct','R²','R² Adjusted','Assessment'].map(h => (
+          {[
+            'Construct',
+            'R²',
+            'R² Adjusted',
+            ...(showModerationColumns ? ['ΔR²', 'f² interaction', 'Effect size'] : []),
+            'Assessment',
+          ].map(h => (
             <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">{h}</th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {rows.map((row, idx) => (
-          <tr key={idx} style={resultsTableRowStyle(idx)}>
-            <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40">{row.construct}</td>
-            <td className={`px-4 py-2 border-b border-border/40 tabular-nums ${getStatusColor(row.status)}`}>{fmtNum(row.r2)}</td>
-            <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{fmtNum(row.r2Adjusted)}</td>
-            <td className="px-4 py-2 text-text-secondary border-b border-border/40">{row.assessment}</td>
-          </tr>
-        ))}
+        {rows.map((row, idx) => {
+          const moderation = moderationByDv.get(row.construct)
+          return (
+            <tr key={idx} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40">{row.construct}</td>
+              <td className={`px-4 py-2 border-b border-border/40 tabular-nums ${getStatusColor(row.status)}`}>{fmtNum(row.r2)}</td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{fmtNum(row.r2Adjusted)}</td>
+              {showModerationColumns && (
+                <>
+                  <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{moderation ? fmtNum(moderation.delta_r2) : '—'}</td>
+                  <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{moderation ? fmtNum(moderation.f2_interaction) : '—'}</td>
+                  <td className="px-4 py-2 text-text-secondary border-b border-border/40">{moderation ? String(moderation.effect_size ?? '—') : '—'}</td>
+                </>
+              )}
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40">{row.assessment}</td>
+            </tr>
+          )
+        })}
       </tbody>
     </table>
   )
@@ -3740,10 +3951,22 @@ function GenericDataTable({
                     ? { rowLabel: row.row, indirectEffectPairs, totalEffectPairs }
                     : undefined
                   const value = formatDisplayValue(row[header], header, selectedPanel, cellContext)
+                  const isModerationInteractionCell = selectedPanel?.startsWith('moderation') && normalizeMetricKey(header) === 'interaction'
                   
                   return (
                     <td key={`${rowIndex}-${header}`} className={`px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words ${significanceColorClass || rowClass}`}>
-                      {isAdvancedTable ? renderAdvancedResultCell({ header, rawValue: row[header], displayValue: value, isLastColumn: headerIndex === headers.length - 1 }) : value}
+                      {isAdvancedTable
+                        ? renderAdvancedResultCell({ header, rawValue: row[header], displayValue: value, isLastColumn: headerIndex === headers.length - 1 })
+                        : isModerationInteractionCell
+                          ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span>{value}</span>
+                              <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">
+                                Interaction
+                              </span>
+                            </span>
+                          )
+                          : value}
                     </td>
                   )
                 })}
@@ -3756,13 +3979,44 @@ function GenericDataTable({
   )
 }
 
+function ModerationSlopeChartPanel({
+  savedModel,
+  analysisResults,
+  rows,
+  label,
+}: {
+  savedModel: any
+  analysisResults: any
+  rows: Array<Record<string, unknown>>
+  label?: string
+}) {
+  const chartSvg = buildModerationSlopeChartSvg(savedModel, analysisResults)
+  if (!chartSvg || !rows.length) return <EmptyTableState label={label} />
+
+  return (
+    <div className="space-y-3">
+      <div
+        className="overflow-hidden rounded-lg border border-border/50 bg-white p-3"
+        dangerouslySetInnerHTML={{ __html: chartSvg }}
+      />
+      <GenericDataTable
+        data={rows}
+        selectedPanel="moderation-slopes"
+        emptyLabel={label}
+        savedModel={savedModel}
+        analysisResults={analysisResults}
+      />
+    </div>
+  )
+}
+
 // ============================================================================
 // TABLE PANEL
 // ============================================================================
 
 type AdvancedPanelViewMode = 'table' | 'chart'
 
-const SUPPORTED_PANELS = ['path-coef','r-square','reliability','outer-loadings','outer-weights','cross-loadings','vif','discriminant','model-fit','q2-predict','pls-lm-comparison','execution-log']
+const SUPPORTED_PANELS = ['path-coef','r-square','reliability','outer-loadings','outer-weights','cross-loadings','vif','discriminant','model-fit','q2-predict','pls-lm-comparison','execution-log','moderation-slope-chart']
 const ADVANCED_INLINE_CHART_PANELS = new Set([
   'path-coef',
   'priority-map',
@@ -3863,6 +4117,9 @@ function TablePanel({
   // Derive real data from analysisResults
   const pathRows      = parsePathCoefficients(analysisResults)
   const rSquareRows   = parseRSquare(analysisResults)
+  const moderationR2Rows = analysisMode === 'pls-sem'
+    ? deriveModerationR2ChangeRows(savedModel, analysisResults)
+    : []
   const reliRows      = parseReliability(analysisResults)
   const loadingRows   = parseOuterLoadings(analysisResults)
   const weightRows    = parseOuterWeights(analysisResults)
@@ -3910,6 +4167,7 @@ function TablePanel({
     ? deriveSpecificIndirectRows(savedModel, analysisResults)
     : []
   const panelRows = rowsFromData(panelData)
+  const modelHasInteractions = hasModerationInteractions(savedModel, analysisResults)
   const cvpatPlaceholderRows = rowsContainOnlyMessage(panelRows)
   const cvpatRequested = readPlsPredictSettingsFromResults(analysisResults).cvpatEnabled
   const cvpatStatus = String((analysisResults as any)?.meta?.cvpat_status ?? '').trim().toLowerCase()
@@ -3926,6 +4184,7 @@ function TablePanel({
     panelId: selectedPanel,
     hasRows: panelRows.length > 0 && !cvpatPlaceholderRows,
     hasMediationPaths: modelHasMediationPaths(savedModel),
+    hasInteractions: modelHasInteractions,
     hasFormativeWeights: Array.isArray(savedModel?.constructs)
       ? savedModel.constructs.some((construct: any) => String(construct?.type || '').toLowerCase() === 'formative')
       : undefined,
@@ -4252,7 +4511,7 @@ function TablePanel({
                 ? <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
                 : <PathCoefficientTable rows={pathRows} view={tableView} />
             )}
-            {selectedPanel === 'r-square'       && <RSquareTable rows={rSquareRows} />}
+            {selectedPanel === 'r-square'       && <RSquareTable rows={rSquareRows} moderationRows={moderationR2Rows} />}
             {selectedPanel === 'reliability'    && <ReliabilityTable rows={reliRows} />}
             {analysisMode === 'bootstrap' ? (
               <>
@@ -4290,6 +4549,14 @@ function TablePanel({
             {selectedPanel === 'discriminant'   && <DiscriminantValidityPanel ar={analysisResults} />}
             {selectedPanel === 'model-fit'      && <ModelFitTable rows={modelFitRows} label={emptyStateLabel} />}
             {selectedPanel === 'execution-log'  && <ExecutionLogPanel log={execLog} />}
+            {selectedPanel === 'moderation-slope-chart' && (
+              <ModerationSlopeChartPanel
+                savedModel={savedModel}
+                analysisResults={analysisResults}
+                rows={panelRows}
+                label={emptyStateLabel}
+              />
+            )}
             {analysisMode === 'bootstrap' && ['total-indirect', 'specific-indirect', 'total-effects'].includes(selectedPanel) && (
               <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
             )}
@@ -4447,7 +4714,11 @@ export default function ResultsView() {
     }
   }, [savedModel])
 
-  const sidebarData = useMemo(() => buildSidebarSections(analysisMode), [analysisMode])
+  const moderationAvailable = useMemo(
+    () => hasModerationInteractions(savedModel, analysisResults),
+    [savedModel, analysisResults],
+  )
+  const sidebarData = useMemo(() => buildSidebarSections(analysisMode, moderationAvailable), [analysisMode, moderationAvailable])
 
   useEffect(() => {
     const availablePanels = sidebarData.flatMap((section) => section.items.map((item) => item.id))
@@ -4460,7 +4731,8 @@ export default function ResultsView() {
     setTableViewPreferences({})
   }, [analysisMode, analysisResults])
 
-  const panelData = getPanelDataFromResults(analysisMode, selectedPanel, analysisResults)
+  const derivedModerationPanelData = getDerivedModerationPanelData(analysisMode, selectedPanel, savedModel, analysisResults)
+  const panelData = derivedModerationPanelData ?? getPanelDataFromResults(analysisMode, selectedPanel, analysisResults)
   const tableViewKey = `${analysisMode}:${selectedPanel}`
   const tableViewOptions = getPanelTableViews(selectedPanel, analysisMode)
   const tableView = tableViewOptions.length
@@ -4619,6 +4891,7 @@ export default function ResultsView() {
       datasetPath,
       constructs,
       paths,
+      interactions: payloadParts.interactions,
       algorithm: algorithm === 'consistent' ? 'consistent' : 'standard',
     }
   }, [analysisResults, modelId, resolveWorkspaceContext, savedModel])
@@ -4630,7 +4903,6 @@ export default function ResultsView() {
     title: string,
     phases: CalcPhase[],
     subLabel?: string,
-    estimatedSeconds?: number,
   ) => {
     calcDispatch({
       type: 'start',
@@ -4640,7 +4912,6 @@ export default function ResultsView() {
         progressMode: 'indeterminate',
         phases,
         subLabel,
-        estimatedSeconds,
       },
     })
   }, [calcDispatch])
@@ -4654,7 +4925,6 @@ export default function ResultsView() {
     setBootstrapOpen(false)
     setAnalysisBusy(true)
     const nboot = Number(settings?.subsamples) || 500
-    const estimatedSeconds = estimateBootstrapSeconds(nboot)
     startResultsCalculation(
       'bootstrap',
       `Bootstrapping ${nboot.toLocaleString()} samples`,
@@ -4663,8 +4933,7 @@ export default function ResultsView() {
         { id: 'resample', label: 'Resampling', status: 'pending' },
         { id: 'final', label: 'Finalizing results', status: 'pending' },
       ],
-      `${nboot.toLocaleString()} bootstrap samples - estimated ${formatBootstrapEstimate(estimatedSeconds)}`,
-      estimatedSeconds,
+      `${nboot.toLocaleString()} bootstrap samples`,
     )
     try {
       calcDispatch({ type: 'setPhase', phaseId: 'resample' })
@@ -5012,7 +5281,8 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           return `<section id="sec-${item.id}" class="result-section"><div class="section-head"><h2>${escapeHtml(item.label)}</h2></div>${pathDiagramHtml}</section>`
         }
 
-        const data = getPanelDataFromResults(analysisMode, item.id, analysisResults)
+        const derivedModerationRows = getDerivedModerationPanelData(analysisMode, item.id, savedModel, analysisResults)
+        const data = derivedModerationRows ?? getPanelDataFromResults(analysisMode, item.id, analysisResults)
         const rows = rowsFromData(data)
         const derivedRows = analysisMode === 'pls-sem' && item.id === 'specific-indirect' && !rows.length
           ? deriveSpecificIndirectRows(savedModel, analysisResults)
@@ -5022,6 +5292,12 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           : derivedRows.length
             ? derivedRows
             : rows
+        const moderationR2Rows = analysisMode === 'pls-sem'
+          ? deriveModerationR2ChangeRows(savedModel, analysisResults)
+          : []
+        const exportDisplayRows = item.id === 'r-square'
+          ? mergeRSquareRowsWithModeration(displayRows, moderationR2Rows)
+          : displayRows
         const indirectEffectPairs = item.id === 'total-indirect'
           ? buildIndirectEffectPairLookup(savedModel)
           : null
@@ -5030,7 +5306,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           : null
         const exportTableView = tableViewPreferences[`${analysisMode}:${item.id}`] ?? getDefaultPanelTableView(item.id)
         let tableHtml = buildExportTableHtml(
-          displayRows,
+          exportDisplayRows,
           item.id,
           indirectEffectPairs || totalEffectPairs
             ? (row) => ({ rowLabel: row.row, indirectEffectPairs, totalEffectPairs })
@@ -5041,6 +5317,10 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
               : '',
           }
         )
+        if (item.id === 'moderation-slope-chart') {
+          const chartSvg = buildModerationSlopeChartSvg(savedModel, analysisResults)
+          tableHtml = `${chartSvg ? `<div class="chart-wrap">${chartSvg}</div>` : ''}${tableHtml}`
+        }
 
         if (item.id === 'path-coef') {
           const exportPathRows = parsePathCoefficients(analysisResults)

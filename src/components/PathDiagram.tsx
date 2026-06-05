@@ -35,7 +35,7 @@ interface CanvasIndicator {
   labelT?: number
 }
 
-type CanvasConstructShape = 'circle' | 'oval' | 'square'
+type CanvasConstructShape = 'circle' | 'oval' | 'rectangle' | 'square'
 
 export interface CanvasConstruct {
   id: string
@@ -58,6 +58,8 @@ export interface CanvasPath {
   id: string
   from: string
   to: string
+  kind?: 'direct' | 'moderation'
+  targetPathId?: string
   style?: 'straight' | 'curved' | 'rightangle'
   curvature?: number
   joints?: { x: number; y: number }[]
@@ -125,8 +127,8 @@ const OVAL_RX_SCALE = 1.35
 const OVAL_RY_SCALE = 0.82
 const STRUCTURAL_PATH_NEUTRAL = 'rgb(var(--color-text-secondary-rgb) / 0.74)'
 
-function normalizeConstructShape(shape?: CanvasConstructShape): 'circle' | 'oval' {
-  return shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+function normalizeConstructShape(shape?: CanvasConstructShape): 'circle' | 'oval' | 'rectangle' {
+  return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
 }
 
 function getDefaultOvalDimensions(radius: number): { width: number; height: number } {
@@ -137,7 +139,7 @@ function getDefaultOvalDimensions(radius: number): { width: number; height: numb
 }
 
 function getCanvasConstructRadii(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { rx: number; ry: number } {
-  if (normalizeConstructShape(construct.shape) === 'oval') {
+  if (normalizeConstructShape(construct.shape) !== 'circle') {
     const defaults = getDefaultOvalDimensions(construct.radius)
     return {
       rx: Math.max(40, construct.ovalWidth ?? defaults.width) / 2,
@@ -150,6 +152,11 @@ function getCanvasConstructRadii(construct: Pick<CanvasConstruct, 'radius' | 'sh
 
 function getCanvasConstructEdgeOffset(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, ux: number, uy: number): number {
   const { rx, ry } = getCanvasConstructRadii(construct)
+  if (normalizeConstructShape(construct.shape) === 'rectangle') {
+    const tx = Math.abs(ux) > 0.0001 ? rx / Math.abs(ux) : Number.POSITIVE_INFINITY
+    const ty = Math.abs(uy) > 0.0001 ? ry / Math.abs(uy) : Number.POSITIVE_INFINITY
+    return Math.min(tx, ty)
+  }
   return 1 / Math.sqrt((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry))
 }
 
@@ -474,6 +481,7 @@ export default function PathDiagram({
 
   const byId = Object.fromEntries(cs.map(c => [c.id, c]))
   const byName = Object.fromEntries(cs.map(c => [c.name, c]))
+  const pathById = Object.fromEntries(ps.map(p => [p.id, p]))
 
   const showStruct  = structuralMode  !== 'Blank'
   const showMeasure = measurementMode !== 'Blank'
@@ -529,6 +537,32 @@ export default function PathDiagram({
     )
   }
 
+  const getModerationAnchor = (path: CanvasPath): { x: number; y: number; iv: CanvasConstruct; moderator: CanvasConstruct; dv: CanvasConstruct } | null => {
+    if (!path.targetPathId) return null
+    const targetPath = pathById[path.targetPathId]
+    if (!targetPath || targetPath.kind === 'moderation') return null
+
+    const iv = byId[targetPath.from]
+    const moderator = byId[path.from]
+    const dv = byId[targetPath.to]
+    if (!iv || !moderator || !dv) return null
+
+    return { x: (iv.x + dv.x) / 2, y: (iv.y + dv.y) / 2, iv, moderator, dv }
+  }
+
+  const lookupModerationPathResult = (path: CanvasPath): PathResult | undefined => {
+    const anchor = getModerationAnchor(path)
+    if (!anchor) return undefined
+    const interactionName = `${anchor.iv.name}*${anchor.moderator.name}`
+    const interactionId = `${anchor.iv.id}*${anchor.moderator.id}`
+    return (
+      res.pathResults?.[`${interactionName}-${anchor.dv.name}`] ??
+      res.pathResults?.[`${interactionId}-${anchor.dv.id}`] ??
+      res.pathResults?.[`${interactionName}-${anchor.dv.id}`] ??
+      res.pathResults?.[`${interactionId}-${anchor.dv.name}`]
+    )
+  }
+
   const lookupConstructScores = (constructId: string): ConstructScores => {
     const byIdScores = res.constructScores?.[constructId]
     if (byIdScores) return byIdScores
@@ -537,7 +571,7 @@ export default function PathDiagram({
     return res.constructScores?.[c.name] ?? {}
   }
 
-  const hasIncomingPath = (constructId: string): boolean => ps.some((path) => path.to === constructId)
+  const hasIncomingPath = (constructId: string): boolean => ps.some((path) => path.kind !== 'moderation' && path.to === constructId)
 
   // ── Dynamic viewBox from bounding box of all elements ──────────────────────
   const PAD = 80
@@ -674,6 +708,77 @@ export default function PathDiagram({
 
       {/* ── Structural paths ── */}
       {ps.map(p => {
+        if (p.kind === 'moderation') {
+          const targetPathId = p.targetPathId
+          const anchor = targetPathId ? getModerationAnchor(p) : null
+          if (!anchor) return null
+
+          const dx = anchor.x - anchor.moderator.x
+          const dy = anchor.y - anchor.moderator.y
+          const dist = Math.sqrt(dx * dx + dy * dy)
+          if (dist < 1) return null
+
+          const start = getCanvasConstructEdgePoint(anchor.moderator, dx / dist, dy / dist)
+          const split = splitLineAtT(start.x, start.y, anchor.x, anchor.y, clampLabelT(p.labelT), 34)
+          const pResult = lookupModerationPathResult(p)
+          const pathVal = showStruct ? (pResult ? getPathValue(pResult, structuralMode) : undefined) : undefined
+          const useColor = structuralMode === 'Path coefficients'
+          const lineColor = useColor ? pValueColor(pResult?.pValue) : STRUCTURAL_PATH_NEUTRAL
+          const markerId = useColor ? pValueMarkerId(pResult?.pValue) : 'pd-arr-dim'
+
+          if (pathVal === undefined) {
+            return (
+              <g key={`sp-${p.id}`}>
+                <path
+                  d={`M${start.x},${start.y} L${anchor.x},${anchor.y}`}
+                  fill="none"
+                  stroke={lineColor}
+                  strokeWidth={1.5}
+                  strokeDasharray="5 4"
+                  markerEnd={`url(#${markerId})`}
+                />
+                <circle cx={anchor.x} cy={anchor.y} r={3} fill={lineColor} opacity={0.9} />
+              </g>
+            )
+          }
+
+          return (
+            <g key={`sp-${p.id}`}>
+              <path
+                d={split.path1}
+                fill="none"
+                stroke={lineColor}
+                strokeWidth={1.5}
+                strokeDasharray="5 4"
+              />
+              <path
+                d={split.path2}
+                fill="none"
+                stroke={lineColor}
+                strokeWidth={1.5}
+                strokeDasharray="5 4"
+                markerEnd={`url(#${markerId})`}
+              />
+              <circle cx={anchor.x} cy={anchor.y} r={3} fill={lineColor} opacity={0.9} />
+              <g
+                onMouseDown={interactive && onPathLabelMouseDown ? (event) => onPathLabelMouseDown(p.id, event) : undefined}
+                style={{ cursor: interactive ? 'grab' : 'default' }}
+              >
+                <text
+                  x={split.x} y={split.y}
+                  fill={useColor ? lineColor : 'var(--color-text-secondary)'}
+                  fontSize={9} fontWeight="700"
+                  fontFamily="Inter, system-ui, sans-serif"
+                  textAnchor="middle" dominantBaseline="middle"
+                  style={{ userSelect: 'none' }}
+                >
+                  {pathVal.toFixed(getDecimals())}
+                </text>
+              </g>
+            </g>
+          )
+        }
+
         const from = byId[p.from]
         const to   = byId[p.to]
         if (!from || !to) return null
@@ -798,7 +903,9 @@ export default function PathDiagram({
         const hasScore = scoreVal !== undefined && Number.isFinite(scoreVal)
         const r        = c.radius
         const { rx, ry } = getCanvasConstructRadii(c)
-        const isOval = normalizeConstructShape(c.shape) === 'oval'
+        const normalizedShape = normalizeConstructShape(c.shape)
+        const isOval = normalizedShape === 'oval'
+        const isRectangle = normalizedShape === 'rectangle'
         const isSelected = selectedConstructIds.includes(c.id)
         const tooltipItems: Array<{ label: string; value?: number }> = [
           { label: 'R-Square', value: incoming ? scores.r2 : undefined },
@@ -822,7 +929,10 @@ export default function PathDiagram({
             style={{ cursor: interactive ? 'grab' : 'default' }}
           >
             {/* Outer glow ring */}
-            {isOval ? (
+            {isRectangle ? (
+              <rect x={c.x - rx - 5} y={c.y - ry - 5} width={(rx + 5) * 2} height={(ry + 5) * 2} rx={9}
+                fill="none" stroke={c.color} strokeWidth={1} opacity={0.12} />
+            ) : isOval ? (
               <ellipse cx={c.x} cy={c.y} rx={rx + 5} ry={ry + 5}
                 fill="none" stroke={c.color} strokeWidth={1} opacity={0.12} />
             ) : (
@@ -830,7 +940,10 @@ export default function PathDiagram({
                 fill="none" stroke={c.color} strokeWidth={1} opacity={0.12} />
             )}
             {/* Main filled shape */}
-            {isOval ? (
+            {isRectangle ? (
+              <rect x={c.x - rx} y={c.y - ry} width={rx * 2} height={ry * 2} rx={8}
+                fill={c.color + '20'} stroke={c.color} strokeWidth={isSelected ? 3 : 2} />
+            ) : isOval ? (
               <ellipse cx={c.x} cy={c.y} rx={rx} ry={ry}
                 fill={c.color + '20'} stroke={c.color} strokeWidth={isSelected ? 3 : 2} />
             ) : (

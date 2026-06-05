@@ -195,6 +195,24 @@ assert.match(
 
 assert.match(
   pathDiagramSource,
+  /type CanvasConstructShape = 'circle' \| 'oval' \| 'rectangle' \| 'square'/,
+  'Result diagrams should preserve rectangle construct shape metadata.'
+)
+
+assert.match(
+  pathDiagramSource,
+  /normalizeConstructShape\(shape\?: CanvasConstructShape\): 'circle' \| 'oval' \| 'rectangle'[\s\S]*shape === 'rectangle' \? 'rectangle'/,
+  'Result diagrams should keep rectangle constructs distinct from ovals.'
+)
+
+assert.match(
+  pathDiagramSource,
+  /isRectangle[\s\S]*<rect[\s\S]*x=\{c\.x - rx\}[\s\S]*width=\{rx \* 2\}[\s\S]*height=\{ry \* 2\}/,
+  'Result diagrams should render rectangle constructs as rectangles.'
+)
+
+assert.match(
+  pathDiagramSource,
   /interface CanvasIndicator[\s\S]*labelT\?: number/,
   'Path diagrams should mirror persisted indicator score-label positions.'
 )

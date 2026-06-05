@@ -83,8 +83,10 @@ export function buildPlsModelPayloadParts(
     .filter((path) => !!path.from && !!path.to && path.from !== path.to)
 
   const interactionRows: RunPlsInteraction[] = []
+  const moderationMainEffectPaths: RunPlsPath[] = []
   const interactionStructuralPaths: RunPlsPath[] = []
   const seenInteractions = new Set<string>()
+  const seenStructuralPaths = new Set(mappedDirectPaths.map((path) => `${path.from}|${path.to}`))
 
   paths
     .filter((path) => path.kind === 'moderation' && path.targetPathId)
@@ -103,7 +105,19 @@ export function buildPlsModelPayloadParts(
       seenInteractions.add(key)
 
       interactionRows.push({ iv, moderator, outcome })
-      interactionStructuralPaths.push({ from: `${iv}*${moderator}`, to: outcome })
+
+      const moderatorPathKey = `${moderator}|${outcome}`
+      if (!seenStructuralPaths.has(moderatorPathKey)) {
+        moderationMainEffectPaths.push({ from: moderator, to: outcome })
+        seenStructuralPaths.add(moderatorPathKey)
+      }
+
+      const interactionPath = { from: `${iv}*${moderator}`, to: outcome }
+      const interactionPathKey = `${interactionPath.from}|${interactionPath.to}`
+      if (!seenStructuralPaths.has(interactionPathKey)) {
+        interactionStructuralPaths.push(interactionPath)
+        seenStructuralPaths.add(interactionPathKey)
+      }
     })
 
   const payloadConstructs = constructs
@@ -130,7 +144,7 @@ export function buildPlsModelPayloadParts(
 
   return {
     constructs: payloadConstructs,
-    paths: [...mappedDirectPaths, ...interactionStructuralPaths],
+    paths: [...mappedDirectPaths, ...moderationMainEffectPaths, ...interactionStructuralPaths],
     interactions: interactionRows,
     directPathCount: mappedDirectPaths.length,
     hocDimensionsById,
