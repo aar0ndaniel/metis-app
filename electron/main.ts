@@ -3367,7 +3367,7 @@ function writeDatasetBufferIntoWorkspace(
         { datasetId: safeDatasetId, base64Data, originalName, internalName },
       ],
     }
-    fs.writeFileSync(workspacePath, JSON.stringify(updated, null, 2), 'utf-8')
+    writeAtomicSync(workspacePath, JSON.stringify(updated, null, 2))
     const tempPath = extractEmbeddedDataset(wsData.id, safeDatasetId, base64Data, originalName)
     return { success: true, internalName, path: tempPath, datasetTempPath: tempPath }
   }
@@ -3381,7 +3381,7 @@ function writeDatasetBufferIntoWorkspace(
     fs.mkdirSync(datasetsDir, { recursive: true })
   }
   const internalPath = resolveLegacyDatasetInternalPath(workspacePath, safeDatasetId, originalName)
-  fs.writeFileSync(internalPath, fileBuffer)
+  writeAtomicSync(internalPath, fileBuffer)
   return { success: true, internalName: path.basename(internalPath), path: internalPath, datasetTempPath: internalPath }
 }
 
@@ -3645,7 +3645,7 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
       ...hydrateWorkspaceManifest(wsData),
       embeddedDatasets: [],
     }
-    fs.writeFileSync(adaFilePath, JSON.stringify(fileData, null, 2), 'utf-8')
+    writeAtomicSync(adaFilePath, JSON.stringify(fileData, null, 2))
     console.log('[main] Workspace .metisws file created')
     return { success: true, path: adaFilePath }
   } catch (err: any) {
@@ -3699,7 +3699,7 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
     if (!fs.existsSync(path.dirname(adaFilePath))) {
       fs.mkdirSync(path.dirname(adaFilePath), { recursive: true })
     }
-    fs.writeFileSync(adaFilePath, JSON.stringify(fileData, null, 2), 'utf-8')
+    writeAtomicSync(adaFilePath, JSON.stringify(fileData, null, 2))
     rememberApprovedWorkspacePath(adaFilePath)
     console.log('[main] Workspace saved to:', adaFilePath)
     return { success: true, path: adaFilePath }
