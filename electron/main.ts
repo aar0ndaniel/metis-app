@@ -3423,9 +3423,64 @@ function writeAtomicSync(targetPath: string, content: string | Buffer): void {
   }
 }
 
-/** Parses a workspace file and (if it contains a dataset) extracts to temp. */
-function readAdaFile(adaFilePath: string): (WorkspaceManifest & { path: string; _format: 'v2' | 'v3' }) | null {
+function isZipFile(filePath: string): boolean {
   try {
+    const fd = fs.openSync(filePath, 'r')
+    const buffer = Buffer.alloc(4)
+    fs.readSync(fd, buffer, 0, 4, 0)
+    fs.closeSync(fd)
+    return buffer.toString('hex') === '504b0304'
+  } catch {
+    return false
+  }
+}
+
+/** Parses a workspace file and (if it contains a dataset) extracts to temp. */
+async function readAdaFile(adaFilePath: string, extract = true): Promise<(WorkspaceManifest & { path: string; _format: 'v2' | 'v3' | 'zip' }) | null> {
+  try {
+    if (isZipFile(adaFilePath)) {
+      const fileBuffer = fs.readFileSync(adaFilePath)
+      const zip = await JSZip.loadAsync(fileBuffer)
+      const wsJsonFile = zip.file('workspace.json')
+      if (!wsJsonFile) return null
+      
+      const wsJsonText = await wsJsonFile.async('text')
+      const data = JSON.parse(wsJsonText) as WorkspaceManifest
+      if (!data.id) return null
+      
+      const datasetTempPaths = new Map<string, string>()
+      if (extract) {
+        const datasetChildren = getManifestDatasetChildren(data)
+        for (const dataset of datasetChildren) {
+          const zipPath = `datasets/${dataset.filePath}`
+          const zipEntry = zip.file(zipPath)
+          if (zipEntry) {
+            try {
+              const buffer = await zipEntry.async('nodebuffer')
+              const dir = getTempDatasetsDir()
+              fs.mkdirSync(dir, { recursive: true })
+              const safeName = path.basename(dataset.filePath || `${dataset.id}.csv`)
+              const tempPath = path.join(dir, `${data.id}__${dataset.id}${path.extname(safeName) || '.csv'}`)
+              if (!isPathWithinRoot(tempPath, dir)) {
+                throw new Error('Security Error: Directory traversal detected in extraction target path.')
+              }
+              fs.writeFileSync(tempPath, buffer)
+              datasetTempPaths.set(dataset.id, tempPath)
+            } catch (err: any) {
+              console.warn('[main] Failed to extract zip dataset:', dataset.id, err.message)
+            }
+          }
+        }
+      }
+      
+      const hydrated = hydrateWorkspaceManifest(data, datasetTempPaths)
+      return {
+        ...hydrated,
+        path: adaFilePath,
+        _format: 'zip',
+      }
+    }
+
     const raw = fs.readFileSync(adaFilePath, 'utf-8')
     const data = JSON.parse(raw) as AdaWorkspaceFile
     const isRecognizedWorkspaceFile = (data as any)?._metis === true || data._version === '2.0' || data._version === '3.0'
@@ -3434,14 +3489,16 @@ function readAdaFile(adaFilePath: string): (WorkspaceManifest & { path: string; 
 
     const embeddedDatasets = normalizeEmbeddedDatasets(data)
     const datasetTempPaths = new Map<string, string>()
-    for (const dataset of embeddedDatasets) {
-      try {
-        datasetTempPaths.set(
-          dataset.datasetId,
-          extractEmbeddedDataset(data.id, dataset.datasetId, dataset.base64Data, dataset.originalName)
-        )
-      } catch (e: any) {
-        console.warn('[main] Failed to extract embedded dataset:', e.message)
+    if (extract) {
+      for (const dataset of embeddedDatasets) {
+        try {
+          datasetTempPaths.set(
+            dataset.datasetId,
+            extractEmbeddedDataset(data.id, dataset.datasetId, dataset.base64Data, dataset.originalName)
+          )
+        } catch (e: any) {
+          console.warn('[main] Failed to extract embedded dataset:', e.message)
+        }
       }
     }
 
