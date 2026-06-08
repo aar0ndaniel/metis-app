@@ -59,6 +59,7 @@ const LEGACY_WORKSPACE_FILE_EXTENSION = '.ada'
 const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FILE_EXTENSION]
 const sampleDatasetFileName = 'sample dataset.csv'
 const missingValueTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
+const sessionTempDirName = `session-${randomBytes(8).toString('hex')}`
 
 type NativeMenuViewState = {
   showVars: boolean
@@ -2771,6 +2772,7 @@ function launchWindows() {
 }
 
 app.whenReady().then(() => {
+  cleanLegacyTempDatasetDirectories()
   const preloadPath = resolvePreloadPath()
   console.log('[main] Preload path:', preloadPath)
   console.log('[main] Preload exists:', fs.existsSync(preloadPath))
@@ -2873,6 +2875,14 @@ app.on('before-quit', (event) => {
 
 app.on('will-quit', () => {
   stopPlumberServer()
+  try {
+    const sessionDir = getTempDatasetsDir()
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true })
+    }
+  } catch (err: any) {
+    console.error('[main] Failed to purge temp dataset directory on quit:', err.message)
+  }
 })
 
 ipcMain.handle('quit-confirmed', () => {
@@ -3205,7 +3215,27 @@ function getWorkspaceFilePath(name: string): string {
 
 /** Returns the temp directory used for extracted datasets. */
 function getTempDatasetsDir(): string {
-  return path.join(app.getPath('userData'), 'temp-datasets')
+  return path.join(app.getPath('userData'), 'temp-datasets', sessionTempDirName)
+}
+
+function cleanLegacyTempDatasetDirectories(): void {
+  try {
+    const baseTempDir = path.join(app.getPath('userData'), 'temp-datasets')
+    if (fs.existsSync(baseTempDir)) {
+      const entries = fs.readdirSync(baseTempDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith('session-')) {
+          try {
+            fs.rmSync(path.join(baseTempDir, entry.name), { recursive: true, force: true })
+          } catch (err: any) {
+            console.warn('[main] Failed to clean legacy temp directory entry:', entry.name, err.message)
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[main] Failed to clean legacy temp directories:', err.message)
+  }
 }
 
 /**
