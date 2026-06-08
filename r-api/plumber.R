@@ -1364,19 +1364,30 @@ build_measurement <- function(constructs_payload, algorithm = "standard", intera
     }
   })
 
-  interaction_defs <- lapply(interactions_payload %||% list(), function(interaction) {
+  # The same IV x moderator can moderate several outcomes; the frontend sends one
+  # interaction entry per outcome (same iv*moderator, different outcome). Each
+  # interaction term must be created only ONCE — defining the same iv*moderator term
+  # twice makes seminr throw "subscript out of bounds". The structural paths reference
+  # the single interaction construct by name for each outcome.
+  # Collect the UNIQUE pairs as plain data here, then build the terms with lapply:
+  # seminr::interaction_term() returns a closure that captures iv/moderator, and a
+  # for-loop would make every closure share the last iteration's values
+  # ("missing value where TRUE/FALSE needed"). lapply gives each its own frame.
+  seen_interaction_keys <- character(0)
+  unique_interactions <- list()
+  for (interaction in interactions_payload %||% list()) {
     iv <- as.character(interaction$iv %||% interaction$from %||% "")
     moderator <- as.character(interaction$moderator %||% "")
-    if (!nzchar(iv) || !nzchar(moderator)) return(NULL)
-
-    seminr::interaction_term(
-      iv = iv,
-      moderator = moderator,
-      method = seminr::two_stage
-    )
+    if (!nzchar(iv) || !nzchar(moderator)) next
+    key <- paste0(iv, "*", moderator)
+    if (key %in% seen_interaction_keys) next
+    seen_interaction_keys <- c(seen_interaction_keys, key)
+    unique_interactions[[length(unique_interactions) + 1L]] <- list(iv = iv, moderator = moderator)
+  }
+  interaction_defs <- lapply(unique_interactions, function(pair) {
+    seminr::interaction_term(iv = pair$iv, moderator = pair$moderator, method = seminr::two_stage)
   })
 
-  interaction_defs <- Filter(Negate(is.null), interaction_defs)
   all_defs <- c(defs, interaction_defs)
   do.call(seminr::constructs, all_defs)
 }
@@ -1688,6 +1699,32 @@ run_pls_core <- function(payload, data, for_prediction = FALSE) {
 
   summary_obj <- summary(model)
   list(model = model, summary = summary_obj)
+}
+
+# seminrExtras IPMA/cIPMA (compute_ipma_performance) recurse infinitely when a
+# single-item construct's name equals its indicator column name: the indicator is
+# mistaken for a lower-order construct and the function calls itself forever
+# ("node stack overflow"). Metis names single-item moderators identically to their
+# column (e.g. "Gender transform"), which triggers it. For advanced analysis we point
+# any such construct at a renamed copy of its column so IPMA/cIPMA can run; the
+# construct name (and therefore all IPMA/NCA output labels) is left unchanged.
+rename_colliding_single_item_indicators <- function(payload, data) {
+  constructs <- payload$constructs %||% list()
+  for (i in seq_along(constructs)) {
+    con <- constructs[[i]]
+    if (isTRUE(con$is_higher_order)) next
+    con_name <- as.character(con$name)
+    inds <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
+    inds <- inds[!is.na(inds) & nzchar(inds)]
+    if (length(inds) == 1L && identical(inds[[1]], con_name) && con_name %in% names(data)) {
+      alias <- paste0(con_name, " (indicator)")
+      while (alias %in% names(data)) alias <- paste0(alias, "_")
+      data[[alias]] <- data[[con_name]]
+      constructs[[i]]$indicators <- list(alias)
+    }
+  }
+  payload$constructs <- constructs
+  list(payload = payload, data = data)
 }
 
 extract_specific_indirect_effects <- function(payload, boot_model, alpha = 0.05) {
@@ -4073,6 +4110,11 @@ pr$handle("POST", "/run-advanced-analysis", function(req, res) {
       prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
       payload <- prepared$payload
       data <- prepared$data
+      # Avoid the seminrExtras IPMA/cIPMA infinite-recursion that occurs when a
+      # single-item construct's name equals its indicator column name.
+      adv_inputs <- rename_colliding_single_item_indicators(payload, data)
+      payload <- adv_inputs$payload
+      data <- adv_inputs$data
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
 
       results <- time_phase(timings, "run advanced response sections", run_advanced_sections(payload, data, core, timings = timings))
