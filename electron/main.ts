@@ -3237,14 +3237,6 @@ function cleanLegacyTempDatasetDirectories(): void {
     console.warn('[main] Failed to clean legacy temp directories:', err.message)
   }
 }
-function validateExtractionPath(tempPath: string, rootDir: string): void {
-  const resolvedPath = path.resolve(tempPath)
-  const resolvedDir = path.resolve(rootDir)
-  if (!resolvedPath.startsWith(resolvedDir)) {
-    throw new Error('Security Error: Directory traversal detected in extraction target path.')
-  }
-}
-
 /**
  * Writes the embedded base64 dataset to a temp file and returns its path.
  * The temp file is re-created on every app startup so it stays current.
@@ -3257,7 +3249,9 @@ function extractEmbeddedDataset(wsId: string, datasetId: string, base64Data: str
   const safeWorkspaceId = sanitizePathComponent(wsId, 'workspace')
   const safeDatasetId = sanitizePathComponent(datasetId, 'dataset')
   const tempPath = path.join(dir, `${safeWorkspaceId}__${safeDatasetId}${ext}`)
-  validateExtractionPath(tempPath, dir)
+  if (!isPathWithinRoot(tempPath, dir)) {
+    throw new Error('Security Error: Directory traversal detected in extraction target path.')
+  }
   fs.writeFileSync(tempPath, Buffer.from(base64Data, 'base64'))
   return tempPath
 }
