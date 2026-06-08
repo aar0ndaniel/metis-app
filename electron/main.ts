@@ -3398,7 +3398,12 @@ function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: strin
 
 function writeAtomicSync(targetPath: string, content: string | Buffer): void {
   const tmpPath = `${targetPath}.tmp`
-  fs.writeFileSync(tmpPath, content)
+  try {
+    fs.writeFileSync(tmpPath, content)
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath) } catch {}
+    throw err
+  }
   
   let retries = 3
   const delay = 50
@@ -3409,11 +3414,9 @@ function writeAtomicSync(targetPath: string, content: string | Buffer): void {
     } catch (err: any) {
       retries--
       if (retries === 0) {
-        // Clean up temp file on absolute failure
         try { fs.unlinkSync(tmpPath) } catch {}
         throw err
       }
-      // Synchronous sleep/delay for retrying rename
       const start = Date.now()
       while (Date.now() - start < delay) {}
     }
