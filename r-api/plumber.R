@@ -43,6 +43,20 @@ if (is.na(max_predict_repetitions) || max_predict_repetitions < 1L) max_predict_
 if (is.na(max_cvpat_bootstrap_samples) || max_cvpat_bootstrap_samples < 50L) max_cvpat_bootstrap_samples <- 500L
 if (is.na(max_cached_pls_cores) || max_cached_pls_cores < 0L) max_cached_pls_cores <- 8L
 
+# Redefine fSquared in the seminr namespace safely to avoid subscript out of bounds errors
+# during summary calculation for models with interaction terms when main effects are missing/removed.
+if (requireNamespace("seminr", quietly = TRUE)) {
+  orig_fSquared <- seminr::fSquared
+  safe_fSquared <- function(seminr_model, iv, dv) {
+    tryCatch({
+      orig_fSquared(seminr_model, iv, dv)
+    }, error = function(e) {
+      NA_real_
+    })
+  }
+  utils::assignInNamespace("fSquared", safe_fSquared, "seminr")
+}
+
 pr <- plumber$new()
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
@@ -231,9 +245,33 @@ normalize_local_path <- function(file_path) {
   normalizePath(path.expand(as.character(file_path %||% "")), winslash = "/", mustWork = FALSE)
 }
 
+# Safe default dataset roots used when METIS_ALLOWED_DATA_ROOTS is not configured
+# (e.g. a standalone / dev Plumber server started outside the Electron host).
+# These cover every legitimate dataset location (user home + system temp) while still
+# rejecting arbitrary system paths, so the gate degrades to "scoped" rather than "off".
+default_dataset_roots <- function() {
+  candidates <- c(
+    Sys.getenv("USERPROFILE"),
+    {
+      hd <- Sys.getenv("HOMEDRIVE"); hp <- Sys.getenv("HOMEPATH")
+      if (nzchar(hd) && nzchar(hp)) file.path(hd, hp) else ""
+    },
+    Sys.getenv("HOME"),
+    tryCatch(path.expand("~"), error = function(e) ""),
+    tempdir(),
+    Sys.getenv("TMPDIR"),
+    Sys.getenv("TEMP"),
+    Sys.getenv("TMP")
+  )
+  candidates <- trimws(candidates)
+  candidates <- candidates[nzchar(candidates)]
+  if (!length(candidates)) return(character(0))
+  unique(vapply(candidates, normalize_local_path, character(1), USE.NAMES = FALSE))
+}
+
 trusted_metis_dataset_roots <- {
   if (!nzchar(trimws(trusted_metis_dataset_roots_raw))) {
-    character(0)
+    default_dataset_roots()
   } else {
     roots <- unlist(strsplit(trusted_metis_dataset_roots_raw, .Platform$path.sep, fixed = TRUE), use.names = FALSE)
     roots <- trimws(roots)
@@ -1233,10 +1271,37 @@ read_dataset <- function(file_path) {
   data
 }
 
-build_measurement <- function(constructs_payload, algorithm = "standard", interactions_payload = list()) {
+# Collect the leaf (manifest) indicators for a construct, recursing through the
+# dimensions of higher-order constructs. Used to build a repeated-indicators
+# representation of a HOC for PLSpredict (seminr cannot predict two-stage HOCs).
+# The `seen` guard prevents infinite recursion on malformed/cyclic dimensions.
+gather_leaf_indicators <- function(name, by_name, seen = character(0)) {
+  name <- as.character(name)
+  if (!nzchar(name) || name %in% seen) return(character(0))
+  seen <- c(seen, name)
+  con <- by_name[[name]]
+  if (is.null(con)) return(character(0))
+  if (isTRUE(con$is_higher_order)) {
+    dims <- unlist(con$dimensions)
+    dims <- dims[!is.na(dims) & nzchar(dims)]
+    items <- unlist(lapply(dims, function(d) gather_leaf_indicators(d, by_name, seen)), use.names = FALSE)
+  } else {
+    items <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
+  }
+  items <- items[!is.na(items) & nzchar(items)]
+  unique(items)
+}
+
+build_measurement <- function(constructs_payload, algorithm = "standard", interactions_payload = list(), for_prediction = FALSE) {
   algorithm <- tolower(as.character(algorithm))
   if (!(algorithm %in% c("standard", "consistent"))) {
     algorithm <- "standard"
+  }
+
+  by_name <- list()
+  for (con in constructs_payload) {
+    con_name <- as.character(con$name)
+    if (nzchar(con_name)) by_name[[con_name]] <- con
   }
 
   defs <- lapply(constructs_payload, function(con) {
@@ -1252,12 +1317,23 @@ build_measurement <- function(constructs_payload, algorithm = "standard", intera
       hoc_type <- tolower(as.character(con$higher_order_type %||% "reflective"))
       hoc_weights <- if (hoc_type == "formative") seminr::mode_B else seminr::mode_A
 
-      seminr::higher_composite(
-        con_name,
-        dimensions = dimensions,
-        method = seminr::two_stage,
-        weights = hoc_weights
-      )
+      if (isTRUE(for_prediction)) {
+        # seminr's predict_pls() has no published solution for two-stage higher-order
+        # models, so for prediction we represent each HOC with the repeated-indicators
+        # approach: a composite over the leaf indicators of all its dimensions.
+        leaf_items <- gather_leaf_indicators(con_name, by_name)
+        if (!length(leaf_items)) {
+          stop(sprintf("Higher-order construct '%s' has no indicators to predict.", con_name))
+        }
+        seminr::composite(con_name, leaf_items, weights = hoc_weights)
+      } else {
+        seminr::higher_composite(
+          con_name,
+          dimensions = dimensions,
+          method = seminr::two_stage,
+          weights = hoc_weights
+        )
+      }
     } else {
       con_type <- tolower(as.character(con$type))
       items <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
@@ -1267,7 +1343,16 @@ build_measurement <- function(constructs_payload, algorithm = "standard", intera
         stop(sprintf("Construct '%s' has no indicators.", con_name))
       }
 
-      if (con_type == "formative") {
+      if (length(items) == 1L) {
+        single_item_spec <- seminr::single_item(items[[1]])
+        if (con_type == "formative") {
+          seminr::composite(con_name, single_item_spec, weights = seminr::mode_B)
+        } else if (algorithm == "consistent") {
+          seminr::reflective(con_name, single_item_spec)
+        } else {
+          seminr::composite(con_name, single_item_spec, weights = seminr::mode_A)
+        }
+      } else if (con_type == "formative") {
         seminr::composite(con_name, items)
       } else {
         if (algorithm == "consistent") {
@@ -1557,14 +1642,43 @@ get_cached_pls_core <- function(payload, data) {
   core
 }
 
-run_pls_core <- function(payload, data) {
+ensure_moderator_main_effects <- function(paths_payload, interactions_payload) {
+  if (!length(interactions_payload)) return(paths_payload)
+  existing_keys <- vapply(paths_payload, function(p) {
+    paste0(as.character(p$from %||% ""), "|", as.character(p$to %||% ""))
+  }, character(1))
+  extra <- list()
+  for (interaction in interactions_payload) {
+    moderator <- as.character(interaction$moderator %||% "")
+    outcome   <- as.character(interaction$outcome   %||% "")
+    if (!nzchar(moderator) || !nzchar(outcome)) next
+    key <- paste0(moderator, "|", outcome)
+    if (!(key %in% existing_keys)) {
+      extra <- c(extra, list(list(from = moderator, to = outcome)))
+      existing_keys <- c(existing_keys, key)
+    }
+  }
+  c(paths_payload, extra)
+}
+
+has_higher_order_construct <- function(payload) {
+  constructs <- payload$constructs %||% list()
+  any(vapply(constructs, function(con) isTRUE(con$is_higher_order), logical(1)))
+}
+
+run_pls_core <- function(payload, data, for_prediction = FALSE) {
   algorithm <- if (!is.null(payload$algorithm)) as.character(payload$algorithm) else "standard"
   measurement_model <- build_measurement(
     payload$constructs,
     algorithm = algorithm,
-    interactions_payload = payload$interactions %||% list()
+    interactions_payload = payload$interactions %||% list(),
+    for_prediction = for_prediction
   )
-  structural_model <- build_structural(payload$paths)
+  # two_stage interactions require the moderator to have a direct structural path to the
+  # outcome. The frontend always includes it, but this guard prevents "subscript out of
+  # bounds" from seminr if the path is ever absent.
+  safe_paths <- ensure_moderator_main_effects(payload$paths, payload$interactions %||% list())
+  structural_model <- build_structural(safe_paths)
 
   model <- seminr::estimate_pls(
     data = data,
@@ -2848,48 +2962,63 @@ run_advanced_sections <- function(payload, data, core, timings = NULL) {
   nca_summary <- NULL
   cipma_summary <- NULL
 
+  # Each sub-analysis runs in its own tryCatch so a failure in one (including a
+  # `node stack overflow` from seminrExtras on a pathological model) degrades to a
+  # clear note and partial results instead of failing the whole request with a 500.
   if (isTRUE(analyses$ipma)) {
-    ipma_result <- timed_or_direct(timings, "advanced assess_ipma", seminrExtras::assess_ipma(
-      seminr_model = core$model,
-      target = target_construct,
-      scale_min = 1,
-      scale_max = 7,
-      seed = 123
-    ))
-    ipma_summary <- timed_or_direct(timings, "advanced summary ipma", summary(ipma_result))
-    append_log(sprintf("IPMA completed for target '%s'.", target_construct))
+    tryCatch({
+      ipma_result <- timed_or_direct(timings, "advanced assess_ipma", seminrExtras::assess_ipma(
+        seminr_model = core$model,
+        target = target_construct,
+        scale_min = 1,
+        scale_max = 7,
+        seed = 123
+      ))
+      ipma_summary <- timed_or_direct(timings, "advanced summary ipma", summary(ipma_result))
+      append_log(sprintf("IPMA completed for target '%s'.", target_construct))
+    }, error = function(err) {
+      append_log(sprintf("IPMA could not be computed for target '%s': %s", target_construct, conditionMessage(err)))
+    })
   }
 
   if (isTRUE(analyses$nca) && !isTRUE(analyses$cipma)) {
-    nca_result <- timed_or_direct(timings, "advanced assess_nca", seminrExtras::assess_nca(
-      seminr_model = core$model,
-      target = target_construct,
-      predictors = predecessor_names,
-      test.rep = run_depth,
-      steps = bottleneck_step,
-      seed = 123
-    ), details = list(replications = run_depth))
-    nca_summary <- timed_or_direct(timings, "advanced summary nca", summary(nca_result))
-    append_log(sprintf("NCA completed for target '%s' with %s replications.", target_construct, run_depth))
+    tryCatch({
+      nca_result <- timed_or_direct(timings, "advanced assess_nca", seminrExtras::assess_nca(
+        seminr_model = core$model,
+        target = target_construct,
+        predictors = predecessor_names,
+        test.rep = run_depth,
+        steps = bottleneck_step,
+        seed = 123
+      ), details = list(replications = run_depth))
+      nca_summary <- timed_or_direct(timings, "advanced summary nca", summary(nca_result))
+      append_log(sprintf("NCA completed for target '%s' with %s replications.", target_construct, run_depth))
+    }, error = function(err) {
+      append_log(sprintf("NCA could not be computed for target '%s': %s", target_construct, conditionMessage(err)))
+    })
   }
 
   if (isTRUE(analyses$cipma)) {
-    cipma_result <- timed_or_direct(timings, "advanced assess_cipma", seminrExtras::assess_cipma(
-      seminr_model = core$model,
-      target = target_construct,
-      scale_min = 1,
-      scale_max = 7,
-      nca = isTRUE(analyses$nca),
-      nca_ceilings = c("ce_fdh", "cr_fdh"),
-      nca_test.rep = run_depth,
-      nca_steps = bottleneck_step,
-      seed = 123
-    ), details = list(nca = isTRUE(analyses$nca), nca_replications = run_depth))
-    cipma_summary <- timed_or_direct(timings, "advanced summary cipma", summary(cipma_result))
-    append_log(sprintf("cIPMA completed for target '%s'.", target_construct))
-    if (isTRUE(analyses$nca)) {
-      append_log(sprintf("NCA tables reused cIPMA's integrated NCA run for target '%s'.", target_construct))
-    }
+    tryCatch({
+      cipma_result <- timed_or_direct(timings, "advanced assess_cipma", seminrExtras::assess_cipma(
+        seminr_model = core$model,
+        target = target_construct,
+        scale_min = 1,
+        scale_max = 7,
+        nca = isTRUE(analyses$nca),
+        nca_ceilings = c("ce_fdh", "cr_fdh"),
+        nca_test.rep = run_depth,
+        nca_steps = bottleneck_step,
+        seed = 123
+      ), details = list(nca = isTRUE(analyses$nca), nca_replications = run_depth))
+      cipma_summary <- timed_or_direct(timings, "advanced summary cipma", summary(cipma_result))
+      append_log(sprintf("cIPMA completed for target '%s'.", target_construct))
+      if (isTRUE(analyses$nca)) {
+        append_log(sprintf("NCA tables reused cIPMA's integrated NCA run for target '%s'.", target_construct))
+      }
+    }, error = function(err) {
+      append_log(sprintf("cIPMA could not be computed for target '%s': %s", target_construct, conditionMessage(err)))
+    })
   }
 
   priority_map <- if (!is.null(ipma_summary)) {
@@ -3858,6 +3987,26 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
       data <- prepared$data
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
 
+      # seminr::predict_pls() has no published solution for two-stage higher-order
+      # models and returns NULL for them. When the model has a HOC, build a
+      # prediction-only core that represents each HOC with the repeated-indicators
+      # approach so out-of-sample prediction can actually run.
+      uses_hoc <- has_higher_order_construct(payload)
+      predict_core <- core
+      predict_note <- NULL
+      if (uses_hoc) {
+        predict_core <- time_phase(timings, "build prediction (repeated-indicators) model",
+          run_pls_core(payload, data, for_prediction = TRUE))
+        hoc_names <- vapply(
+          Filter(function(con) isTRUE(con$is_higher_order), payload$constructs %||% list()),
+          function(con) as.character(con$name), character(1), USE.NAMES = FALSE
+        )
+        predict_note <- sprintf(
+          "PLSpredict used the repeated-indicators representation of higher-order construct(s) %s because seminr has no published method for predicting two-stage higher-order models.",
+          paste(hoc_names, collapse = ", ")
+        )
+      }
+
       # Use defaults if not provided by the frontend
       folds <- if (!is.null(payload$folds)) as.integer(payload$folds) else 5
       reps <- if (!is.null(payload$repetitions)) as.integer(payload$repetitions) else 3
@@ -3868,19 +4017,46 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
 
       # Execute ACTUAL k-fold out-of-sample prediction
       predict_model <- time_phase(timings, "seminr predict_pls", seminr::predict_pls(
-        model = core$model,
+        model = predict_core$model,
         technique = seminr::predict_DA,
         noFolds = folds,
         reps = reps
       ), details = list(folds = folds, repetitions = reps))
 
-      # Note: We are passing predict_model instead of pred_summary now!
-      results <- time_phase(
-        timings,
-        "extract plspredict response sections",
-        extract_plspredict_sections(payload, data, core, predict_model, folds, reps, timings = timings)
-      )
-      attach_timing_metadata(list(success = TRUE, results = results), timings)
+      if (is.null(predict_model)) {
+        # predict_pls returns NULL for model shapes it cannot handle. Surface a clear
+        # message instead of letting extract_plspredict_sections crash on the NULL.
+        unavailable_note <- "PLSpredict could not be computed for this model. seminr returned no prediction (this can happen for model shapes it does not support)."
+        results <- list(
+          final_results = list(
+            plspredict_mv_summary = list(),
+            plspredict_lv_summary = list(),
+            cvpat_lv_summary = list(),
+            mv_predictions_and_errors = list(),
+            lv_predictions_and_errors = list()
+          ),
+          algorithm = list(
+            settings = list(method = "PLSpredict (k-fold cross-validation)", mode = "PLS-SEM"),
+            execution_log = list(list(message = unavailable_note))
+          ),
+          meta = list(mode = "plspredict", engine = "seminr", rows = nrow(data), columns = ncol(data))
+        )
+        attach_timing_metadata(list(success = TRUE, results = results), timings)
+      } else {
+        # Note: We are passing predict_model instead of pred_summary now!
+        results <- time_phase(
+          timings,
+          "extract plspredict response sections",
+          extract_plspredict_sections(payload, data, predict_core, predict_model, folds, reps, timings = timings)
+        )
+        if (!is.null(predict_note)) {
+          results$algorithm$execution_log <- c(
+            list(list(message = predict_note)),
+            results$algorithm$execution_log %||% list()
+          )
+        }
+        attach_timing_metadata(list(success = TRUE, results = results), timings)
+      }
     }, plspredict_timeout_seconds)
   }, error = function(err) {
     res$status <- 500

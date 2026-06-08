@@ -62,6 +62,7 @@ jobs:
           DOWNLOAD_STATIC_LIBV8: "1"
         run: |
           conda create -y -p "$PWD/R-Bundled" -c conda-forge \
+            "libblas=*=*_newaccelerate" \
             r-base r-jsonlite r-matrix r-readxl r-remotes conda-pack \
             c-compiler cxx-compiler fortran-compiler make pkg-config \
             abseil-cpp udunits2 libuv libsodium zlib libxml2

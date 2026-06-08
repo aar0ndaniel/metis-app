@@ -5,7 +5,7 @@ import {
   writeDatasetViewCache,
 } from './datasetViewCache'
 
-export interface DatasetFileBridge {
+interface DatasetFileBridge {
   readFile?: (filePath: string) => Promise<any>
   extractDataset?: (payload: string | { adaFilePath: string; datasetId?: string }) => Promise<any>
 }

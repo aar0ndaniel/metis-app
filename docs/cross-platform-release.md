@@ -17,6 +17,8 @@ Bundle builds are blocked unless the correct runtime archive exists in `r-api/`.
 
 macOS and Linux archives must also include `R-Bundled/bin/conda-unpack`. They are conda-packed tarballs so Unix executable bits and symlinks survive extraction.
 
+macOS Bundle runtime builds pin conda-forge `libblas=*=*_newaccelerate` so bundled R routes BLAS/LAPACK through Apple's Accelerate framework on both Apple Silicon and Intel macOS runners. Because conda-forge newaccelerate targets macOS 13.3+, the Bundle DMG/zip also declares macOS 13.3 as its minimum system version. Windows Bundle uses the bundled `Rblas.dll` implementation inside `R-Portable.zip`.
+
 Validate an archive before packaging:
 
 ```powershell

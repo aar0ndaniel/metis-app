@@ -100,6 +100,40 @@ assert.deepEqual(moderationResult.interactions, [
 ])
 assert.equal(moderationResult.directPathCount, 1)
 
+const mixedModeratorConstructs = [
+  { id: 'att', name: 'Attitude', type: 'Reflective', indicators: [{ name: 'ATT1' }, { name: 'ATT2' }] },
+  { id: 'gender', name: 'GenderCode', type: 'Reflective', indicators: [{ name: 'GenderCode' }] },
+  { id: 'age', name: 'AgeCategory', type: 'Reflective', indicators: [{ name: 'AGE1' }, { name: 'AGE2' }] },
+  { id: 'use', name: 'USE', type: 'Reflective', indicators: [{ name: 'USE1' }, { name: 'USE2' }] },
+]
+
+const mixedModeratorPaths = [
+  { id: 'att-use', from: 'att', to: 'use', kind: 'direct' },
+  { id: 'gender-moderates-att-use', from: 'gender', to: 'use', kind: 'moderation', targetPathId: 'att-use' },
+  { id: 'age-moderates-att-use', from: 'age', to: 'use', kind: 'moderation', targetPathId: 'att-use' },
+]
+
+const mixedModeratorResult = buildPlsModelPayloadParts(mixedModeratorConstructs, mixedModeratorPaths)
+assert.deepEqual(mixedModeratorResult.paths, [
+  { from: 'Attitude', to: 'USE' },
+  { from: 'GenderCode', to: 'USE' },
+  { from: 'AgeCategory', to: 'USE' },
+  { from: 'Attitude*GenderCode', to: 'USE' },
+  { from: 'Attitude*AgeCategory', to: 'USE' },
+])
+assert.deepEqual(mixedModeratorResult.interactions, [
+  { iv: 'Attitude', moderator: 'GenderCode', outcome: 'USE' },
+  { iv: 'Attitude', moderator: 'AgeCategory', outcome: 'USE' },
+])
+assert.deepEqual(
+  mixedModeratorResult.constructs.find((construct) => construct.name === 'GenderCode'),
+  { name: 'GenderCode', type: 'Reflective', indicators: ['GenderCode'] },
+)
+assert.deepEqual(
+  mixedModeratorResult.constructs.find((construct) => construct.name === 'AgeCategory'),
+  { name: 'AgeCategory', type: 'Reflective', indicators: ['AGE1', 'AGE2'] },
+)
+
 const modelCanvasSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
 const resultsViewSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
 

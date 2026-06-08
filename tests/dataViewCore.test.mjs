@@ -170,17 +170,85 @@ await runTest('data view compute helper inserts numeric derived columns after th
   )
 })
 
+await runTest('data view transform helper maps unique column terms into typed replacement values', async () => {
+  const bundled = await bundleModule('src/utils/dataViewTransform.ts', 'dataViewTransform.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/utils/dataViewTransform.ts to exist and compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const {
+    applyColumnTransforms,
+    getUniqueColumnTerms,
+    suggestTransformMeasurementType,
+    TRANSFORM_MEASUREMENT_TYPES,
+  } = bundled.module ?? {}
+
+  assert.equal(typeof applyColumnTransforms, 'function', 'applyColumnTransforms should be exported')
+  assert.equal(typeof getUniqueColumnTerms, 'function', 'getUniqueColumnTerms should be exported')
+  assert.equal(typeof suggestTransformMeasurementType, 'function', 'suggestTransformMeasurementType should be exported')
+  assert.deepEqual(
+    TRANSFORM_MEASUREMENT_TYPES.map((option) => option.value),
+    ['nominal', 'ordinal', 'interval', 'ratio'],
+  )
+
+  const rows = [
+    ['Male', '18-24'],
+    ['Female', '25-34'],
+    ['Male', '35-44'],
+    ['', '25-34'],
+  ]
+
+  assert.deepEqual(getUniqueColumnTerms(rows, 0), ['Male', 'Female'])
+  assert.equal(suggestTransformMeasurementType('1'), 'ratio')
+  assert.equal(suggestTransformMeasurementType('Female'), 'nominal')
+
+  const result = applyColumnTransforms(rows, 0, [
+    { from: 'Male', to: '1', measurementType: 'ratio' },
+    { from: 'Female', to: '0', measurementType: 'ratio' },
+  ])
+
+  assert.equal(result.matchedCells, 3)
+  assert.equal(result.changedCells, 3)
+  assert.deepEqual(result.rows, [
+    ['1', '18-24'],
+    ['0', '25-34'],
+    ['1', '35-44'],
+    ['', '25-34'],
+  ])
+
+  assert.throws(
+    () => applyColumnTransforms(rows, 0, [
+      { from: 'Male', to: '1', measurementType: 'ratio' },
+      { from: 'Male', to: '2', measurementType: 'ratio' },
+    ]),
+    /mapped more than once/i,
+  )
+
+  assert.throws(
+    () => applyColumnTransforms(rows, 0, [
+      { from: 'Male', to: 'one', measurementType: 'ratio' },
+    ]),
+    /must be numeric/i,
+  )
+})
+
 await runTest('dataset column helpers normalize locale decimals and duplicate headers for persistence', async () => {
   const bundled = await bundleModule('src/utils/datasetColumns.ts', 'datasetColumns.test.bundle.mjs')
   assert.ok(!bundled.error, `Expected src/utils/datasetColumns.ts to exist and compile, got: ${bundled.error?.message ?? 'unknown error'}`)
 
   const {
+    getUniqueHeaderName,
     parseDatasetNumber,
     prepareDatasetForPersistence,
   } = bundled.module ?? {}
 
+  assert.equal(typeof getUniqueHeaderName, 'function', 'getUniqueHeaderName should be exported')
   assert.equal(typeof parseDatasetNumber, 'function', 'parseDatasetNumber should be exported')
   assert.equal(typeof prepareDatasetForPersistence, 'function', 'prepareDatasetForPersistence should be exported')
+
+  assert.equal(
+    getUniqueHeaderName(['Gender', 'Gender copy'], 'Gender copy'),
+    'Gender copy (2)',
+    'Repeated duplicate-column actions should keep generating unique headers.',
+  )
 
   assert.deepEqual(parseDatasetNumber('1,25'), {
     kind: 'number',

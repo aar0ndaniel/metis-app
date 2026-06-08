@@ -20,7 +20,7 @@ function clampNumber(value: number, min?: number, max?: number): number {
   return next
 }
 
-export function resolveDraftNumber(
+function resolveDraftNumber(
   draft: string,
   currentValue: number,
   options: { min?: number; max?: number; fallback?: number } = {},

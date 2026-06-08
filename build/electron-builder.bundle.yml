@@ -48,6 +48,7 @@ mac:
     - dmg
     - zip
   category: public.app-category.education
+  minimumSystemVersion: '13.3.0'
   icon: build/icon.icns
   artifactName: metis ${version} Bundle macOS ${arch}.${ext}
   extraResources:

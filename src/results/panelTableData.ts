@@ -567,16 +567,23 @@ function expandPlsPredictSummaryRows(rows: Array<Record<string, unknown>>): Arra
   })
 }
 
-export function extractQ2PredictRows(rows: Array<Record<string, unknown>>): Array<{ label: string; q2Predict: number }> {
-  const byLabel = new Map<string, number>()
+export function extractQ2PredictRows(rows: Array<Record<string, unknown>>): Array<{ label: string; q2Predict: number | null }> {
+  const byLabel = new Map<string, number | null>()
   expandPlsPredictSummaryRows(rows).forEach((row) => {
     const summaryRow = unwrapSummaryRow(row)
     const label = getSummaryLabel(summaryRow)
+    if (!label) return
     const q2Predict = readNumericMetric(row, Q2_PREDICT_KEYS)
       ?? readNumericMetric(summaryRow, Q2_PREDICT_KEYS)
       ?? readLongMetricValue(summaryRow, Q2_PREDICT_KEYS)
-    if (label && q2Predict != null && !byLabel.has(label)) {
-      byLabel.set(label, q2Predict)
+    // Include the row as long as it has a label AND at least one metric present
+    const hasAnyMetric = q2Predict != null
+      || readNumericMetric(row, PLS_RMSE_KEYS) != null
+      || readNumericMetric(summaryRow, PLS_RMSE_KEYS) != null
+      || readNumericMetric(row, PLS_MAE_KEYS) != null
+      || readNumericMetric(summaryRow, PLS_MAE_KEYS) != null
+    if (hasAnyMetric && !byLabel.has(label)) {
+      byLabel.set(label, q2Predict ?? null)
     }
   })
   return Array.from(byLabel.entries()).map(([label, q2Predict]) => ({ label, q2Predict }))

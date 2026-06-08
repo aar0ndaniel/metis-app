@@ -39,7 +39,8 @@ import {
   CornersOut,
   BezierCurve,
   ArrowElbowRight,
-  TreeStructure
+  TreeStructure,
+  Hand
 } from '@phosphor-icons/react'
 import BootstrapModal from '../components/BootstrapModal'
 import DraftNumberInput from '../components/DraftNumberInput'
@@ -954,7 +955,7 @@ export default function ModelCanvas({
   const [showExitModal, setShowExitModal] = useState(false)
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
-  const [activeTool, setActiveTool] = useState<'select' | 'construct' | 'connect' | 'delete'>('select')
+  const [activeTool, setActiveTool] = useState<'select' | 'construct' | 'connect' | 'pan' | 'delete'>('select')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [isModalShaking, setIsModalShaking] = useState(false)
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true)
@@ -2910,6 +2911,7 @@ export default function ModelCanvas({
           case 'l': e.preventDefault(); setActiveTool('construct'); return
           case 'c': e.preventDefault(); setActiveTool('connect'); return
           case 'v': e.preventDefault(); setActiveTool('select'); return
+          case 'h': e.preventDefault(); setActiveTool('pan'); return
           case 'arrowup':    e.preventDefault(); nudge(0, -10); return
           case 'arrowdown':  e.preventDefault(); nudge(0,  10); return
           case 'arrowleft':  e.preventDefault(); nudge(-10, 0); return
@@ -3217,6 +3219,7 @@ export default function ModelCanvas({
 
   const onConstructMouseDown = (e: React.MouseEvent, id: string) => {
     if (e.button === 2) return // Ignore right-click for dragging
+    if (activeTool === 'pan') return // Let pan events bubble up to canvas handler
     e.stopPropagation()
     if (activeTool === 'delete') {
       const newC = constructs.filter(c => c.id !== id)
@@ -3310,7 +3313,7 @@ export default function ModelCanvas({
   }
 
   const onSvgMouseDown = (e: React.MouseEvent) => {
-    if (isSpaceDown || e.button === 1) {
+    if (isSpaceDown || e.button === 1 || activeTool === 'pan') {
       setIsPanning(true)
       panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY }
       return
@@ -4235,7 +4238,7 @@ export default function ModelCanvas({
           ref={canvasRef}
           style={{ 
             flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: canvasBg,
-            cursor: isPanning ? 'grabbing' : isSpaceDown ? 'grab' : 'default'
+            cursor: isPanning ? 'grabbing' : (isSpaceDown || activeTool === 'pan') ? 'grab' : 'default'
           }}
         >
           {showGrid && (
@@ -5506,6 +5509,9 @@ export default function ModelCanvas({
       >
         <TBtn id="tour-select" onClick={() => setActiveTool('select')} active={activeTool === 'select'} activeTone={activeTool === 'select' ? 'yellow' : undefined} activeLabel="Select" title="Move / Select (V)">
           <Cursor size={18} color={activeTool === 'select' ? C.textOnAccent : C.textSec} weight={activeTool === 'select' ? 'bold' : 'regular'} />
+        </TBtn>
+        <TBtn onClick={() => setActiveTool('pan')} active={activeTool === 'pan'} activeTone={activeTool === 'pan' ? 'yellow' : undefined} activeLabel="Pan" title="Pan Canvas (H)">
+          <Hand size={18} color={activeTool === 'pan' ? C.textOnAccent : C.textSec} weight={activeTool === 'pan' ? 'fill' : 'regular'} />
         </TBtn>
         <TBtn id="tour-connect" onClick={() => setActiveTool('connect')} active={activeTool === 'connect'} activeTone={activeTool === 'connect' ? 'yellow' : undefined} activeLabel="Connect" title="Connect (C)">
           <ArrowRight size={18} color={activeTool === 'connect' ? C.textOnAccent : C.textSec} weight={activeTool === 'connect' ? 'bold' : 'regular'} />

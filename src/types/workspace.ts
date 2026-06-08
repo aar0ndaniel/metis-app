@@ -1,6 +1,6 @@
 export type VariableKind = 'MET' | 'CAT'
 
-export interface WorkspaceChildBase {
+interface WorkspaceChildBase {
   id: string
   name: string
   type: 'model' | 'dataset' | 'result'

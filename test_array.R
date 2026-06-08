@@ -1,0 +1,5 @@
+arr <- array(1:8, dim=c(2,2,2), dimnames=list(c("A", "B"), c("C", "D"), NULL))
+print("Indexing existing:")
+print(arr["A", "C", 1])
+print("Indexing non-existing:")
+print(arr["X", "C", 1])

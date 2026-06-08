@@ -2,7 +2,7 @@ import type { MeasurementType, RunPlsConstruct, RunPlsInteraction, RunPlsPath } 
 
 export type HocPathRole = 'measurement' | 'structural'
 
-export interface PlsCanvasIndicatorLike {
+interface PlsCanvasIndicatorLike {
   name: string
 }
 

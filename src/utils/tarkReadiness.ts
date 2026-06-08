@@ -1,5 +1,5 @@
-export type CoreRequiredMode = 'pls-sem' | 'bootstrap' | 'plspredict'
-export type AdvancedRequiredMode = 'advanced'
+type CoreRequiredMode = 'pls-sem' | 'bootstrap' | 'plspredict'
+type AdvancedRequiredMode = 'advanced'
 export type RequiredMode = CoreRequiredMode | AdvancedRequiredMode
 
 export interface ModelReadiness {
@@ -23,13 +23,13 @@ interface WorkspaceResultLike {
   }
 }
 
-export const REQUIRED_RESULTS: Array<{ mode: CoreRequiredMode; label: string }> = [
+const REQUIRED_RESULTS: Array<{ mode: CoreRequiredMode; label: string }> = [
   { mode: 'pls-sem', label: 'PLS-SEM' },
   { mode: 'bootstrap', label: 'Bootstrap' },
   { mode: 'plspredict', label: 'PLSpredict' },
 ]
 
-export const ADVANCED_ANALYSIS_RESULT: { mode: AdvancedRequiredMode; label: string } = {
+const ADVANCED_ANALYSIS_RESULT: { mode: AdvancedRequiredMode; label: string } = {
   mode: 'advanced',
   label: 'Advanced analysis',
 }
@@ -50,7 +50,7 @@ export function normalizeResultMode(value: unknown): RequiredMode | null {
   return null
 }
 
-export function getResultMode(result: WorkspaceResultLike): RequiredMode | null {
+function getResultMode(result: WorkspaceResultLike): RequiredMode | null {
   return (
     normalizeResultMode(result.state?.analysis?.mode)
     ?? normalizeResultMode(result.meta)

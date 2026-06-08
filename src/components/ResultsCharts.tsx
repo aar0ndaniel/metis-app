@@ -15,13 +15,13 @@ import {
   normalizeBottleneckRowsForDisplay,
 } from '../results/panelTableData'
 import type { AnalysisMode } from '../results/panelCatalog'
+export { CHART_SUPPORTED_PANELS, getChartConfig, shouldExportChart } from '../results/chartRegistry'
 import {
   CHART_SUPPORTED_PANELS,
   getChartConfig,
   shouldExportChart,
 } from '../results/chartRegistry'
 
-export { CHART_SUPPORTED_PANELS, getChartConfig, shouldExportChart } from '../results/chartRegistry'
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  COLORS
@@ -233,7 +233,7 @@ export interface HBarItem {
   tooltipLines?: string[]
 }
 
-export function HBarChart({
+function HBarChart({
   items,
   refLines = [],
   domain,
@@ -360,7 +360,7 @@ export interface ForestItem {
   tooltipLines?: string[]
 }
 
-export function ForestPlot({ items }: { items: ForestItem[] }) {
+function ForestPlot({ items }: { items: ForestItem[] }) {
   const [hover, setHover] = useState<number | null>(null)
 
   if (!items.length) return null
@@ -446,7 +446,7 @@ export interface GroupedBarGroup {
   bars: { value: number; color: string; legendLabel: string }[]
 }
 
-export function GroupedBarChart({
+function GroupedBarChart({
   groups,
   domain,
   refLines = [],
@@ -682,7 +682,7 @@ export function buildForestItems(rows: any[]): ForestItem[] {
 }
 
 /** R-square rows → HBarItems (paired R² + R²adj) */
-export function buildRSquareItems(rows: any[]): HBarItem[] {
+function buildRSquareItems(rows: any[]): HBarItem[] {
   return rows.map(r => ({
     label: String(r.construct ?? ''),
     value: Number(r.r2),
@@ -699,7 +699,7 @@ export function buildRSquareItems(rows: any[]): HBarItem[] {
 }
 
 /** Reliability rows → GroupedBarGroups */
-export function buildReliabilityGroups(rows: any[]): GroupedBarGroup[] {
+function buildReliabilityGroups(rows: any[]): GroupedBarGroup[] {
   return rows.map(r => {
     const α    = parseFloat(r.cronbach)
     const rhoA = parseFloat(r.rhoA)
@@ -718,7 +718,7 @@ export function buildReliabilityGroups(rows: any[]): GroupedBarGroup[] {
 }
 
 /** Outer loading rows → HBarItems */
-export function buildOuterLoadingItems(rows: any[]): HBarItem[] {
+function buildOuterLoadingItems(rows: any[]): HBarItem[] {
   // Assign a unique color per construct
   const constructs = Array.from(new Set(rows.map(r => String(r.construct ?? ''))))
   const colorMap = new Map(constructs.map((c, i) => [c, PALETTE[i % PALETTE.length]]))
@@ -737,7 +737,7 @@ export function buildOuterLoadingItems(rows: any[]): HBarItem[] {
 }
 
 /** VIF sections → HBarItems (inner + outer merged) */
-export function buildVIFItems(sections: { inner: any[]; outer: any[] }): HBarItem[] {
+function buildVIFItems(sections: { inner: any[]; outer: any[] }): HBarItem[] {
   const all = [
     ...sections.inner.map(r => ({ ...r, _type: 'Inner' })),
     ...sections.outer.map(r => ({ ...r, _type: 'Outer' })),
@@ -773,7 +773,7 @@ function normalizePlsPredictMetric(metric: string): string {
 }
 
 /** PLSpredict MV or LV summary → GroupedBarGroups (metric × construct) */
-export function buildPlsPredictSummaryItems(
+function buildPlsPredictSummaryItems(
   mvRows: any[],
   lvRows: any[],
   isMV: boolean,
@@ -837,7 +837,7 @@ export function buildPlsPredictSummaryItems(
 }
 
 /** Prediction error rows → HBarItems (error per indicator/construct) */
-export function buildPredictionErrorItems(rows: any[]): HBarItem[] {
+function buildPredictionErrorItems(rows: any[]): HBarItem[] {
   return rows.map((r: any, i: number) => {
     const label = String(r.Indicator ?? r.indicator ?? r.Construct ?? r.construct ?? r.row ?? r.row_name ?? `Item ${i + 1}`)
     const value = Number(r.Error ?? r.error ?? r.MAE ?? r.mae ?? r.RMSE ?? r.rmse ?? NaN)
@@ -851,7 +851,7 @@ export function buildPredictionErrorItems(rows: any[]): HBarItem[] {
 }
 
 /** Generic rows → HBarItems for f-square, model-selection, etc. */
-export function buildGenericBarItems(rawRows: any[]): HBarItem[] {
+function buildGenericBarItems(rawRows: any[]): HBarItem[] {
   if (!rawRows?.length) return []
 
   // Find the first numeric column as the value
@@ -1416,16 +1416,18 @@ function getChartTitle(selectedPanel: string): string {
 }
 
 function buildDotPlotItems(rows: Array<Record<string, unknown>>): DotPlotItem[] {
-  return extractQ2PredictRows(rows).map((row) => ({
-    label: row.label,
-    value: row.q2Predict,
-    color: row.q2Predict >= 0 ? C_PASS : C_FAIL,
-    tooltipLines: [
-      row.label,
-      `Q²predict: ${row.q2Predict.toFixed(3)}`,
-      row.q2Predict >= 0 ? 'Predictive relevance above zero' : 'Predictive relevance below zero',
-    ],
-  }))
+  return extractQ2PredictRows(rows)
+    .filter((row): row is { label: string; q2Predict: number } => row.q2Predict != null)
+    .map((row) => ({
+      label: row.label,
+      value: row.q2Predict,
+      color: row.q2Predict >= 0 ? C_PASS : C_FAIL,
+      tooltipLines: [
+        row.label,
+        `Q²predict: ${row.q2Predict.toFixed(3)}`,
+        row.q2Predict >= 0 ? 'Predictive relevance above zero' : 'Predictive relevance below zero',
+      ],
+    }))
 }
 
 function buildHistogramValues(rows: Array<Record<string, unknown>>): number[] {

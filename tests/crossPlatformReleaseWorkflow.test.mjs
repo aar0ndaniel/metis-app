@@ -17,6 +17,7 @@ assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY:\s*"false"/, 'Initial macOS 
 assert.match(workflow, /Run release guard tests[\s\S]*npm run typecheck[\s\S]*crossPlatformRuntimeStatic\.test\.mjs[\s\S]*productionReleaseStatic\.test\.mjs[\s\S]*crossPlatformReleaseWorkflow\.test\.mjs[\s\S]*installerSetupTheme\.test\.mjs/, 'Workflow should run release guard tests before building artifacts.')
 assert.match(workflow, /conda-incubator\/setup-miniconda@v3/, 'Workflow should set up Miniforge to build the macOS R runtime in Actions.')
 assert.match(workflow, /conda create[\s\S]*r-base[\s\S]*r-jsonlite[\s\S]*r-matrix[\s\S]*r-readxl[\s\S]*r-remotes[\s\S]*conda-pack/, 'Workflow should create the bundled R environment with required package tooling.')
+assert.match(workflow, /conda create[\s\S]*"libblas=\*=\*_newaccelerate"[\s\S]*r-base/, 'Workflow should build macOS bundled R against conda-forge newaccelerate so Bundle uses Apple Accelerate BLAS/LAPACK.')
 assert.match(workflow, /conda activate "\$PWD\/R-Bundled"/, 'Workflow should activate the bundled R environment before compiling CRAN packages.')
 assert.match(workflow, /conda create[\s\S]*c-compiler[\s\S]*cxx-compiler[\s\S]*fortran-compiler[\s\S]*make[\s\S]*pkg-config/, 'Workflow should include compilers and build tools for CRAN source packages.')
 assert.match(workflow, /conda create[\s\S]*abseil-cpp[\s\S]*udunits2[\s\S]*libuv[\s\S]*libsodium[\s\S]*zlib[\s\S]*libxml2/, 'Workflow should include native libraries needed by CRAN packages that compile against Abseil, UDUNITS, libuv, libsodium, zlib, and libxml2.')

@@ -42,18 +42,14 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
-    "concurrently": "^8.2.2",
-    "electron": "40.10.2",
     "electron-builder": "^26.8.1",
-    "esbuild": "^0.27.4",
-    "png-to-ico": "^3.0.1",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7",
     "typescript": "^5.5.4",
     "vite": "^7.0.0",
     "vite-plugin-electron": "^0.28.7",
     "vite-plugin-electron-renderer": "^0.14.5",
-    "wait-on": "^7.2.0"
+    "electron": "40.10.2"
   },
   "build": {
     "appId": "com.metis.app",

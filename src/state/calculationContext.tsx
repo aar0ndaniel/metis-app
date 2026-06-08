@@ -9,7 +9,7 @@ import {
 } from 'react'
 import CalcCancelDialog from '@/components/CalcCancelDialog'
 
-export type CalcType = 'pls' | 'bootstrap' | 'plspredict' | 'advanced'
+type CalcType = 'pls' | 'bootstrap' | 'plspredict' | 'advanced'
 
 export type CalcPhase = {
   id: string
@@ -17,9 +17,9 @@ export type CalcPhase = {
   status: 'pending' | 'active' | 'done'
 }
 
-export type ProgressMode = 'real' | 'phase' | 'indeterminate'
+type ProgressMode = 'real' | 'phase' | 'indeterminate'
 
-export type ActiveCalc = {
+type ActiveCalc = {
   type: CalcType
   title: string
   phases: CalcPhase[]
@@ -33,21 +33,21 @@ export type ActiveCalc = {
   cancelRequested: boolean
 }
 
-export type CompletedCalc = {
+type CompletedCalc = {
   type: CalcType
   completedAt: number
   resultsRoute: string         // e.g. "/results/abc?view=bootstrap"
   navigationState?: Record<string, unknown>
 }
 
-export type CalculationState = {
+type CalculationState = {
   active: ActiveCalc | null
   lastCompletedByType: Partial<Record<CalcType, CompletedCalc>>
   mostRecent: CompletedCalc | null
   lastTransientDone: { type: CalcType; resultsRoute: string; navigationState?: Record<string, unknown>; createdAt: number } | null
 }
 
-export type CalculationAction =
+type CalculationAction =
   | { type: 'start'; payload: Omit<ActiveCalc, 'view' | 'status' | 'startedAt' | 'cancelRequested' | 'progressPct'> & { progressPct?: number } }
   | { type: 'setPhase'; phaseId: string }
   | { type: 'setProgress'; pct: number; subLabel?: string }

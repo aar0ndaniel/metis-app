@@ -112,7 +112,7 @@ export function getUniqueHeaderName(headers: string[], proposedValue: string, cu
   return makeUniqueAgainstExisting(otherHeaders, base)
 }
 
-export function ensureUniqueHeaders(headers: string[]): string[] {
+function ensureUniqueHeaders(headers: string[]): string[] {
   return headers.reduce<string[]>((accumulator, header, index) => {
     accumulator.push(makeUniqueAgainstExisting(accumulator, normalizeHeaderBase(header, index)))
     return accumulator

@@ -143,6 +143,7 @@ await runTest('derived moderation rows expose interaction summaries, simple slop
     {
       IV: 'IV',
       Moderator: 'MOD',
+      moderator_measurement: 'Not available',
       DV: 'DV',
       Interaction: 'IV*MOD',
       beta_interaction: -0.071,
@@ -223,6 +224,7 @@ await runTest('derived moderation bootstrap rows filter the interaction signific
     {
       IV: 'IV',
       Moderator: 'MOD',
+      moderator_measurement: 'Not available',
       DV: 'DV',
       Path: 'IV*MOD -> DV',
       beta_interaction: -0.071,
@@ -234,6 +236,143 @@ await runTest('derived moderation bootstrap rows filter the interaction signific
       bc_ci_upper: -0.012,
       decision: 'Significant',
     },
+  ])
+})
+
+await runTest('derived moderation rows distinguish single-item and multi-indicator moderators', async () => {
+  const bundled = await bundleModule('src/results/panelDerivedData.ts', 'resultsModeratorMeasurementData.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/results/panelDerivedData.ts to compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const { deriveModerationSummaryRows } = bundled.module ?? {}
+  const savedModel = {
+    constructs: [
+      { id: 'iv', name: 'Attitude', indicators: [{ name: 'ATT1' }, { name: 'ATT2' }] },
+      { id: 'gender', name: 'GenderCode', indicators: [{ name: 'GenderCode' }] },
+      { id: 'age', name: 'Age Category', indicators: [{ name: 'Age1' }, { name: '' }, { name: 'Age2' }] },
+      { id: 'dv', name: 'Use', indicators: [{ name: 'USE1' }, { name: 'USE2' }] },
+    ],
+    paths: [
+      { id: 'att-use', from: 'iv', to: 'dv', kind: 'direct' },
+      { id: 'gender-moderates-att-use', from: 'gender', to: 'dv', kind: 'moderation', targetPathId: 'att-use' },
+      { id: 'age-moderates-att-use', from: 'age', to: 'dv', kind: 'moderation', targetPathId: 'att-use' },
+    ],
+  }
+  const analysisResults = {
+    final_results: {
+      path_coefficients: [
+        { row_name: 'Attitude*GenderCode -> Use', coefficient: 0.12 },
+        { row_name: 'Attitude*Age Category -> Use', coefficient: -0.04 },
+      ],
+    },
+  }
+
+  assert.deepEqual(
+    deriveModerationSummaryRows(savedModel, analysisResults).map((row) => [row.Moderator, row.moderator_measurement]),
+    [
+      ['GenderCode', 'Single item'],
+      ['Age Category', '2 indicators'],
+    ],
+  )
+})
+
+await runTest('derived moderation slopes support coded single-item moderators and interaction label variants', async () => {
+  const bundled = await bundleModule('src/results/panelDerivedData.ts', 'resultsCodedModeratorSlopes.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/results/panelDerivedData.ts to compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const {
+    buildModerationSlopeChartSvg,
+    deriveModerationSlopeRows,
+    deriveModerationSummaryRows,
+  } = bundled.module ?? {}
+
+  const savedModel = {
+    constructs: [
+      { id: 'iv', name: 'Attitude', indicators: [{ name: 'ATT1' }, { name: 'ATT2' }] },
+      { id: 'gender', name: 'GenderCode', indicators: [{ name: 'GenderCode' }] },
+      { id: 'dv', name: 'Use', indicators: [{ name: 'USE1' }, { name: 'USE2' }] },
+    ],
+    paths: [
+      { id: 'att-use', from: 'iv', to: 'dv', kind: 'direct' },
+      { id: 'gender-moderates-att-use', from: 'gender', to: 'dv', kind: 'moderation', targetPathId: 'att-use' },
+    ],
+  }
+
+  const analysisResults = {
+    final_results: {
+      path_coefficients: [
+        { row_name: 'Attitude -> Use', coefficient: 0.4 },
+        { row_name: 'Attitude x GenderCode -> Use', coefficient: 0.2, 'T Stat.': 3.1, 'P Value': 0.002 },
+      ],
+    },
+    model_and_data: {
+      indicator_data_original: [
+        { GenderCode: '0' },
+        { GenderCode: '1' },
+        { GenderCode: '1' },
+      ],
+    },
+  }
+
+  assert.deepEqual(deriveModerationSummaryRows(savedModel, analysisResults), [
+    {
+      IV: 'Attitude',
+      Moderator: 'GenderCode',
+      moderator_measurement: 'Single item',
+      DV: 'Use',
+      Interaction: 'Attitude*GenderCode',
+      beta_interaction: 0.2,
+      t_stat: 3.1,
+      p_value: 0.002,
+      f2: null,
+      direction: 'Strengthens Attitude -> Use as GenderCode increases',
+      decision: 'Significant',
+    },
+  ])
+  assert.deepEqual(deriveModerationSlopeRows(savedModel, analysisResults), [
+    { Interaction: 'Attitude*GenderCode', DV: 'Use', Moderator_level: 'GenderCode = 0', simple_slope: 0.4, interpretation: '0.4 + (0.2 x 0)' },
+    { Interaction: 'Attitude*GenderCode', DV: 'Use', Moderator_level: 'GenderCode = 1', simple_slope: 0.6, interpretation: '0.4 + (0.2 x 1)' },
+  ])
+  assert.match(buildModerationSlopeChartSvg(savedModel, analysisResults), /<svg[\s\S]*GenderCode = 0[\s\S]*GenderCode = 1/)
+})
+
+await runTest('derived moderation slopes keep standard levels for multi-indicator moderators', async () => {
+  const bundled = await bundleModule('src/results/panelDerivedData.ts', 'resultsMultiIndicatorModeratorSlopes.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/results/panelDerivedData.ts to compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const { deriveModerationSlopeRows } = bundled.module ?? {}
+
+  const savedModel = {
+    constructs: [
+      { id: 'iv', name: 'Attitude', indicators: [{ name: 'ATT1' }, { name: 'ATT2' }] },
+      { id: 'age', name: 'Age Category', indicators: [{ name: 'Age1' }, { name: 'Age2' }] },
+      { id: 'dv', name: 'Use', indicators: [{ name: 'USE1' }, { name: 'USE2' }] },
+    ],
+    paths: [
+      { id: 'att-use', from: 'iv', to: 'dv', kind: 'direct' },
+      { id: 'age-moderates-att-use', from: 'age', to: 'dv', kind: 'moderation', targetPathId: 'att-use' },
+    ],
+  }
+
+  const analysisResults = {
+    final_results: {
+      path_coefficients: [
+        { row_name: 'Attitude -> Use', coefficient: 0.4 },
+        { row_name: 'Attitude*Age Category -> Use', coefficient: 0.1 },
+      ],
+    },
+    model_and_data: {
+      indicator_data_original: [
+        { Age1: '1', Age2: '2' },
+        { Age1: '3', Age2: '4' },
+        { Age1: '5', Age2: '5' },
+      ],
+    },
+  }
+
+  assert.deepEqual(deriveModerationSlopeRows(savedModel, analysisResults), [
+    { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'Low (-1 SD)', simple_slope: 0.3, interpretation: '0.4 - (0.1)' },
+    { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'Mean (0)', simple_slope: 0.4, interpretation: '0.4' },
+    { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'High (+1 SD)', simple_slope: 0.5, interpretation: '0.4 + (0.1)' },
   ])
 })
 

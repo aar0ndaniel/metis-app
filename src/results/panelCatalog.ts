@@ -8,7 +8,7 @@ export type PanelIconKey =
   | 'info'
   | 'folders'
 
-export interface PanelDefinition {
+interface PanelDefinition {
   id: string
   label: string
   iconKey: PanelIconKey
@@ -254,7 +254,7 @@ export function getPanelSectionsForMode(mode: AnalysisMode, options: PanelCatalo
   return sections
 }
 
-export function getPanelDefinition(mode: AnalysisMode, panelId: string, options: PanelCatalogOptions = {}): PanelDefinition | null {
+function getPanelDefinition(mode: AnalysisMode, panelId: string, options: PanelCatalogOptions = {}): PanelDefinition | null {
   for (const section of getPanelSectionsForMode(mode, options)) {
     const match = section.items.find((item) => item.id === panelId)
     if (match) return { ...match }

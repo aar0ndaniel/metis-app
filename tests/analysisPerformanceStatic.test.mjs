@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = path.resolve(__dirname, '..')
 const packageSource = await fs.readFile(path.join(workspaceRoot, 'package.json'), 'utf8')
+const mainSource = await fs.readFile(path.join(workspaceRoot, 'electron/main.ts'), 'utf8')
 const plumberSource = await fs.readFile(path.join(workspaceRoot, 'r-api/plumber.R'), 'utf8')
 const bootstrapModalSource = await fs.readFile(path.join(workspaceRoot, 'src/components/BootstrapModal.tsx'), 'utf8')
 const advancedModalSource = await fs.readFile(path.join(workspaceRoot, 'src/components/AdvancedAnalysisModal.tsx'), 'utf8')
@@ -116,6 +117,18 @@ assert.match(
   plumberSource,
   /timing_execution_log\s*<-\s*function\s*\(timings\)[\s\S]*Timing:/,
   'Timing phases should continue to be formatted into execution log entries.'
+)
+
+assert.match(
+  mainSource,
+  /const BLAS_THREAD_ENV_DEFAULTS[\s\S]*OPENBLAS_NUM_THREADS:\s*'1'[\s\S]*OMP_NUM_THREADS:\s*'1'[\s\S]*VECLIB_MAXIMUM_THREADS:\s*'1'/,
+  'Plumber should default BLAS engines to one thread so optimized BLAS does not oversubscribe bootstrap workers.'
+)
+
+assert.match(
+  mainSource,
+  /for \(const \[name, value\] of Object\.entries\(BLAS_THREAD_ENV_DEFAULTS\)\)[\s\S]*if \(!env\[name\]\) env\[name\] = value/,
+  'Plumber BLAS thread defaults should preserve explicit user environment overrides.'
 )
 
 assert.match(

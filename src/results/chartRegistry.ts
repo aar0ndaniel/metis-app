@@ -91,7 +91,7 @@ export function getChartConfig(mode: AnalysisMode, panelId: string): ChartConfig
   return config ? { ...config } : null
 }
 
-export function supportsChart(mode: AnalysisMode, panelId: string): boolean {
+function supportsChart(mode: AnalysisMode, panelId: string): boolean {
   return getChartConfig(mode, panelId) !== null
 }
 

@@ -178,6 +178,7 @@ assert.doesNotMatch(bundleMacSection, /R-Portable\.zip/, 'macOS Bundle resources
 assert.doesNotMatch(bundleBuildSource, /R-linux\.tar\.gz|\nlinux:\r?\n/, 'Bundle build should exclude Linux targets and archives for now.')
 assert.doesNotMatch(bundleBuildSource, /\bBeta\b/, 'Bundle build artifact names should not include beta labeling.')
 assert.match(bundleBuildSource, /artifactName: metis \$\{version\} Bundle macOS \$\{arch\}\.\$\{ext\}/, 'Bundle macOS artifact names should include the architecture to avoid ARM and Intel output collisions.')
+assert.match(bundleBuildSource, /mac:[\s\S]*minimumSystemVersion:\s*'13\.3\.0'/, 'Bundle macOS builds should require macOS 13.3+ for the bundled newaccelerate R runtime.')
 assert.match(bundleBuildSource, /fileAssociations:\s*\r?\n\s*-\s*ext:\s*metisws/, 'Bundle build should register .metisws files.')
 assert.match(bundleBuildSource, /mac:[\s\S]*target:[\s\S]*dmg[\s\S]*zip/, 'Bundle build should define macOS DMG and zip targets.')
 assert.match(bundleBuildSource, /mac:[\s\S]*icon: build\/icon\.icns/, 'Bundle macOS builds should use an ICNS icon.')

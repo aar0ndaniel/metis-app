@@ -5,11 +5,11 @@ export const DEFAULT_DARK_ON_ACCENT = '#181818'
 export const DEFAULT_LIGHT_ACCENT_COLOR = '#87976B'
 export const DEFAULT_LIGHT_ACCENT_RGB = '135 151 107'
 export const DEFAULT_LIGHT_ON_ACCENT = '#10150B'
-export const DEFAULT_ACCENT_COLOR = DEFAULT_DARK_ACCENT_COLOR
+const DEFAULT_ACCENT_COLOR = DEFAULT_DARK_ACCENT_COLOR
 export const METIS_PREF_ACCENT_COLOR_KEY = 'metis:prefs:accentColor'
 export const LEGACY_PREF_ACCENT_COLOR_KEY = 'pls:prefs:accentColour'
 
-export const LEGACY_DEFAULT_ACCENT_COLORS = [DEFAULT_DARK_ACCENT_COLOR, DEFAULT_LIGHT_ACCENT_COLOR] as const
+const LEGACY_DEFAULT_ACCENT_COLORS = [DEFAULT_DARK_ACCENT_COLOR, DEFAULT_LIGHT_ACCENT_COLOR] as const
 
 export interface AccentOption {
   label: string
@@ -27,7 +27,7 @@ const DEFAULT_ACCENT_OPTION: AccentOption = {
   onAccent: DEFAULT_DARK_ON_ACCENT,
 }
 
-export const APP_ACCENT_OPTIONS: Record<string, AccentOption> = {
+const APP_ACCENT_OPTIONS: Record<string, AccentOption> = {
   '#2F8FB3': { label: 'Sea blue', value: '#2F8FB3', color: '#2F8FB3', rgb: '47 143 179', onAccent: '#FFFFFF' },
   '#7C5CFF': { label: 'Violet', value: '#7C5CFF', color: '#7C5CFF', rgb: '124 92 255', onAccent: '#FFFFFF' },
   '#E46F61': { label: 'Coral', value: '#E46F61', color: '#E46F61', rgb: '228 111 97', onAccent: '#181818' },

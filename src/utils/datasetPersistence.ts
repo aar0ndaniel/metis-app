@@ -22,13 +22,13 @@ function escapeCsvCell(value: string): string {
   return safeValue
 }
 
-export function buildCsvText(headers: string[], allRows: string[][]): string {
+function buildCsvText(headers: string[], allRows: string[][]): string {
   const headerLine = headers.map((header) => escapeCsvCell(header)).join(',')
   const dataLines = allRows.map((row) => row.map((cell) => escapeCsvCell(cell)).join(','))
   return [headerLine, ...dataLines].join('\n')
 }
 
-export function encodeBase64(text: string): string {
+function encodeBase64(text: string): string {
   return btoa(unescape(encodeURIComponent(text)))
 }
 

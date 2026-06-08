@@ -72,6 +72,7 @@ import {
   deriveModerationBootstrapRows,
   deriveSpecificIndirectRows,
   hasModerationInteractions,
+  hasModerationSlopeCoefficients,
 } from '../results/panelDerivedData'
 import {
   buildConstructIndicatorLookup,
@@ -4185,6 +4186,10 @@ function TablePanel({
     hasRows: panelRows.length > 0 && !cvpatPlaceholderRows,
     hasMediationPaths: modelHasMediationPaths(savedModel),
     hasInteractions: modelHasInteractions,
+    hasInteractionCoefficients:
+      (selectedPanel === 'moderation-slopes' || selectedPanel === 'moderation-slope-chart') && modelHasInteractions
+        ? hasModerationSlopeCoefficients(savedModel, analysisResults)
+        : undefined,
     hasFormativeWeights: Array.isArray(savedModel?.constructs)
       ? savedModel.constructs.some((construct: any) => String(construct?.type || '').toLowerCase() === 'formative')
       : undefined,

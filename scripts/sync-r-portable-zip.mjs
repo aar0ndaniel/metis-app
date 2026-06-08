@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -10,8 +11,16 @@ const workspaceRoot = path.resolve(__dirname, '..')
 
 export const REQUIRED_R_PACKAGES = ['jsonlite', 'Matrix', 'plumber', 'readxl', 'seminr', 'seminrExtras', 'semPower']
 export const REQUIRED_R_PACKAGE_VERSIONS = {
+  seminr: '2.5.0',
   seminrExtras: '1.0.0',
 }
+export const REQUIRED_R_RUNTIME_FILES = [
+  {
+    label: 'Rblas.dll',
+    sourcePath: 'App/R-Portable/bin/x64/Rblas.dll',
+    zipPath: 'R-Portable/App/R-Portable/bin/x64/Rblas.dll',
+  },
+]
 
 function readArg(name, fallback) {
   const index = process.argv.indexOf(name)
@@ -25,6 +34,14 @@ async function pathExists(target) {
   } catch {
     return false
   }
+}
+
+function digestBuffer(buffer) {
+  return createHash('sha256').update(buffer).digest('hex')
+}
+
+async function digestFile(filePath) {
+  return digestBuffer(await fs.readFile(filePath))
 }
 
 function zipEntryForPackage(packageName) {
@@ -79,6 +96,37 @@ async function packagesNeedingZipSync(zipPath) {
       missing.push(`${packageName} ${expectedVersion} (found ${actualVersion ?? 'unknown'})`)
     }
   }
+  return missing
+}
+
+async function runtimeFilesNeedingZipSync(sourceDir, zipPath) {
+  if (!(await pathExists(zipPath))) {
+    return REQUIRED_R_RUNTIME_FILES.map((entry) => entry.label)
+  }
+
+  const zip = await JSZip.loadAsync(await fs.readFile(zipPath))
+  const missing = []
+
+  for (const entry of REQUIRED_R_RUNTIME_FILES) {
+    const sourcePath = path.join(sourceDir, entry.sourcePath)
+    if (!(await pathExists(sourcePath))) {
+      missing.push(`${entry.label} (missing source)`)
+      continue
+    }
+
+    const zipEntry = zip.file(entry.zipPath)
+    if (!zipEntry) {
+      missing.push(`${entry.label} (missing zip entry)`)
+      continue
+    }
+
+    const sourceDigest = await digestFile(sourcePath)
+    const zipDigest = digestBuffer(await zipEntry.async('nodebuffer'))
+    if (sourceDigest !== zipDigest) {
+      missing.push(`${entry.label} (source differs from zip)`)
+    }
+  }
+
   return missing
 }
 
@@ -141,14 +189,23 @@ export async function syncRPortableZip({
   }
 
   let zipPackagesNeedingSync = await packagesNeedingZipSync(resolvedZipPath)
-  if (zipPackagesNeedingSync.length) {
-    console.log(`R-Portable.zip needs ${zipPackagesNeedingSync.join(', ')}; rebuilding it from ${resolvedSourceDir}.`)
+  let runtimeFilesNeedingSync = await runtimeFilesNeedingZipSync(resolvedSourceDir, resolvedZipPath)
+  if (zipPackagesNeedingSync.length || runtimeFilesNeedingSync.length) {
+    const reasons = [
+      ...zipPackagesNeedingSync,
+      ...runtimeFilesNeedingSync,
+    ]
+    console.log(`R-Portable.zip needs ${reasons.join(', ')}; rebuilding it from ${resolvedSourceDir}.`)
     await rebuildZip(resolvedSourceDir, resolvedZipPath)
     zipPackagesNeedingSync = await packagesNeedingZipSync(resolvedZipPath)
+    runtimeFilesNeedingSync = await runtimeFilesNeedingZipSync(resolvedSourceDir, resolvedZipPath)
   }
 
   if (zipPackagesNeedingSync.length) {
     throw new Error(`R-Portable.zip still has unsatisfied package requirements after rebuild: ${zipPackagesNeedingSync.join(', ')}`)
+  }
+  if (runtimeFilesNeedingSync.length) {
+    throw new Error(`R-Portable.zip still has unsatisfied runtime files after rebuild: ${runtimeFilesNeedingSync.join(', ')}`)
   }
 
   if (!skipRuntimeCheck) {

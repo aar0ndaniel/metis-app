@@ -16,6 +16,8 @@ type ModerationInteraction = {
   moderator: string
   dv: string
   interaction: string
+  moderatorMeasurement: string
+  moderatorIndicators: string[]
 }
 
 const ROUND_DIGITS = 5
@@ -25,6 +27,10 @@ function normalizeMetricKey(key: string): string {
     .toLowerCase()
     .replace(/[²^]/g, '2')
     .replace(/[^a-z0-9]/g, '')
+}
+
+function normalizedMetricMatches(left: string, right: string): boolean {
+  return normalizeMetricKey(left) === normalizeMetricKey(right)
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -115,18 +121,56 @@ function getPathCoefficientRows(analysisResults: any): Array<Record<string, unkn
   return Array.isArray(rows) ? rows : []
 }
 
+// Build a fallback coefficient map from inner_model (matrix-as-rows format).
+// The R API serializes model$path_coef as rows where row_name = endogenous variable
+// and each column key = predictor. Use this when path_coefficients is missing or has
+// null coefficients (e.g., jsonlite drops NULL values from named lists).
+function buildInnerModelCoefficientFallback(analysisResults: any): Map<string, number> {
+  const fallback = new Map<string, number>()
+  const innerModel = analysisResults?.model_and_data?.inner_model
+  if (!Array.isArray(innerModel)) return fallback
+
+  const ROW_NAME_KEYS = new Set(['row_name', 'row', 'construct', 'Row', 'ROW', '_row'])
+
+  innerModel.forEach((row: Record<string, unknown>) => {
+    // Find the endogenous (to) variable name
+    let to: string | null = null
+    for (const key of ROW_NAME_KEYS) {
+      if (typeof row[key] === 'string' && row[key] !== '') {
+        to = row[key] as string
+        break
+      }
+    }
+    if (!to) return
+
+    // Each non-row-name column is a predictor (from) variable
+    Object.entries(row).forEach(([key, value]) => {
+      if (ROW_NAME_KEYS.has(key)) return
+      const coef = toFiniteNumber(value)
+      if (coef == null || coef === 0) return
+      fallback.set(`${key}:::${to}`, coef)
+    })
+  })
+
+  return fallback
+}
+
 function buildPathStatsLookup(analysisResults: any): Map<string, PathStats> {
   const lookup = new Map<string, PathStats>()
+  const innerModelFallback = buildInnerModelCoefficientFallback(analysisResults)
+
   getPathCoefficientRows(analysisResults).forEach((row: Record<string, unknown>) => {
     const parsed = parsePathFromRow(row)
     if (!parsed) return
 
+    const pathKey = `${parsed.from}:::${parsed.to}`
     const pathLabel = `${parsed.from} -> ${parsed.to}`
-    lookup.set(`${parsed.from}:::${parsed.to}`, {
+    const coefficient = parseCoefficient(row) ?? innerModelFallback.get(pathKey) ?? null
+    lookup.set(pathKey, {
       from: parsed.from,
       to: parsed.to,
       path: parsed.label || pathLabel,
-      coefficient: parseCoefficient(row),
+      coefficient,
       tStat: parseTStat(row),
       pValue: parsePValue(row),
       ciLower: parseCiValue(row, ['2.5% CI', '2.5%', 'CI Lower', 'lower_ci', 'ci_lower']),
@@ -135,7 +179,88 @@ function buildPathStatsLookup(analysisResults: any): Map<string, PathStats> {
       bcCiUpper: parseCiValue(row, ['BC 97.5% CI', 'BCa 97.5% CI', 'BCa 97.5%', 'BCa CI Upper', 'bc_ci_upper', 'bca_ci_upper']),
     })
   })
+
+  // Also add paths from inner_model that are completely absent from path_coefficients
+  innerModelFallback.forEach((coef, key) => {
+    if (lookup.has(key)) return
+    const [from, to] = key.split(':::')
+    if (!from || !to) return
+    lookup.set(key, {
+      from,
+      to,
+      path: `${from} -> ${to}`,
+      coefficient: coef,
+      tStat: null,
+      pValue: null,
+      ciLower: null,
+      ciUpper: null,
+      bcCiLower: null,
+      bcCiUpper: null,
+    })
+  })
+
   return lookup
+}
+
+function parseInteractionSource(source: string): { iv: string; moderator: string } | null {
+  const text = String(source ?? '').trim()
+  if (!text) return null
+
+  const splitters = [/\*/, /×/, /\s+x\s+/i, /\s+by\s+/i, /:/]
+  for (const splitter of splitters) {
+    const parts = text.split(splitter).map((part) => part.trim()).filter(Boolean)
+    if (parts.length === 2) {
+      return { iv: parts[0], moderator: parts[1] }
+    }
+  }
+
+  return null
+}
+
+function interactionSourceMatches(source: string, iv: string, moderator: string): boolean {
+  const parsed = parseInteractionSource(source)
+  if (parsed) {
+    return normalizedMetricMatches(parsed.iv, iv) && normalizedMetricMatches(parsed.moderator, moderator)
+  }
+
+  const normalizedSource = normalizeMetricKey(source)
+  const normalizedIv = normalizeMetricKey(iv)
+  const normalizedModerator = normalizeMetricKey(moderator)
+  return normalizedSource === `${normalizedIv}${normalizedModerator}`
+    || normalizedSource === `${normalizedIv}x${normalizedModerator}`
+    || normalizedSource === `${normalizedIv}by${normalizedModerator}`
+}
+
+function interactionLabelMatches(candidate: string, interaction: string): boolean {
+  const parsed = parseInteractionSource(interaction)
+  if (!parsed) return normalizedMetricMatches(candidate, interaction)
+  return interactionSourceMatches(candidate, parsed.iv, parsed.moderator)
+}
+
+function findPathStats(statsByPath: Map<string, PathStats>, from: string, to: string): PathStats | null {
+  const direct = statsByPath.get(`${from}:::${to}`)
+  if (direct) return direct
+
+  for (const stats of statsByPath.values()) {
+    if (normalizedMetricMatches(stats.from, from) && normalizedMetricMatches(stats.to, to)) {
+      return stats
+    }
+  }
+
+  return null
+}
+
+function findInteractionPathStats(statsByPath: Map<string, PathStats>, interaction: ModerationInteraction): PathStats | null {
+  const direct = statsByPath.get(`${interaction.interaction}:::${interaction.dv}`)
+  if (direct) return direct
+
+  for (const stats of statsByPath.values()) {
+    if (interactionSourceMatches(stats.from, interaction.iv, interaction.moderator) && normalizedMetricMatches(stats.to, interaction.dv)) {
+      return stats
+    }
+  }
+
+  return null
 }
 
 function buildCoefficientLookup(analysisResults: any): Map<string, number> {
@@ -161,8 +286,44 @@ function getConstructNameById(savedModel: any): Map<string, string> {
   )
 }
 
+function getConstructIndicatorCountById(savedModel: any): Map<string, number> {
+  return new Map(
+    Array.isArray(savedModel?.constructs)
+      ? savedModel.constructs
+        .filter((construct: any) => Array.isArray(construct?.indicators))
+        .map((construct: any) => [
+          String(construct.id),
+          construct.indicators.filter((indicator: any) => String(indicator?.name ?? indicator ?? '').trim().length > 0).length,
+        ])
+      : []
+  )
+}
+
+function getConstructIndicatorsById(savedModel: any): Map<string, string[]> {
+  return new Map(
+    Array.isArray(savedModel?.constructs)
+      ? savedModel.constructs.map((construct: any) => [
+        String(construct.id),
+        Array.isArray(construct?.indicators)
+          ? construct.indicators
+            .map((indicator: any) => String(indicator?.name ?? indicator ?? '').trim())
+            .filter(Boolean)
+          : [],
+      ])
+      : []
+  )
+}
+
+function formatModeratorMeasurement(indicatorCount: number | null | undefined): string {
+  if (indicatorCount === 1) return 'Single item'
+  if (typeof indicatorCount === 'number' && indicatorCount > 1) return `${indicatorCount} indicators`
+  return 'Not available'
+}
+
 function getModerationInteractions(savedModel: any, analysisResults: any): ModerationInteraction[] {
   const constructNameById = getConstructNameById(savedModel)
+  const constructIndicatorCountById = getConstructIndicatorCountById(savedModel)
+  const constructIndicatorsById = getConstructIndicatorsById(savedModel)
   const paths: any[] = Array.isArray(savedModel?.paths) ? savedModel.paths : []
   const pathById = new Map<string, any>(paths.map((path: any) => [String(path.id), path]))
   const interactions: ModerationInteraction[] = []
@@ -182,20 +343,28 @@ function getModerationInteractions(savedModel: any, analysisResults: any): Moder
     const key = `${interaction}:::${dv}`
     if (seen.has(key)) return
     seen.add(key)
-    interactions.push({ iv, moderator, dv, interaction })
+    interactions.push({
+      iv,
+      moderator,
+      dv,
+      interaction,
+      moderatorMeasurement: formatModeratorMeasurement(constructIndicatorCountById.get(String(path.from))),
+      moderatorIndicators: constructIndicatorsById.get(String(path.from)) ?? [],
+    })
   })
 
   if (interactions.length) return interactions
 
   buildPathStatsLookup(analysisResults).forEach((stats) => {
-    if (!stats.from.includes('*') || !stats.to) return
-    const [iv, moderator] = stats.from.split('*').map((part) => part.trim()).filter(Boolean)
+    const parsedInteraction = parseInteractionSource(stats.from)
+    if (!parsedInteraction || !stats.to) return
+    const { iv, moderator } = parsedInteraction
     if (!iv || !moderator) return
     const interaction = `${iv}*${moderator}`
     const key = `${interaction}:::${stats.to}`
     if (seen.has(key)) return
     seen.add(key)
-    interactions.push({ iv, moderator, dv: stats.to, interaction })
+    interactions.push({ iv, moderator, dv: stats.to, interaction, moderatorMeasurement: 'Not available', moderatorIndicators: [] })
   })
 
   return interactions
@@ -205,16 +374,16 @@ function readF2(analysisResults: any, dv: string, interaction: string): number |
   const rows = analysisResults?.quality_criteria?.f_square
   if (!Array.isArray(rows)) return null
 
-  const normalizedInteraction = normalizeMetricKey(interaction)
   const normalizedDv = normalizeMetricKey(dv)
   for (const row of rows as Array<Record<string, unknown>>) {
     const rowName = readRowValue(row, ['row_name', 'row', 'from', 'source', 'predictor', 'construct'])
-    const normalizedRowName = rowName == null ? '' : normalizeMetricKey(String(rowName))
+    const rowNameText = rowName == null ? '' : String(rowName)
+    const normalizedRowName = normalizeMetricKey(rowNameText)
 
     for (const [key, value] of Object.entries(row)) {
       const normalizedKey = normalizeMetricKey(key)
-      const isSourceRowShape = normalizedRowName === normalizedInteraction && normalizedKey === normalizedDv
-      const isTargetRowShape = normalizedRowName === normalizedDv && normalizedKey === normalizedInteraction
+      const isSourceRowShape = interactionLabelMatches(rowNameText, interaction) && normalizedKey === normalizedDv
+      const isTargetRowShape = normalizedRowName === normalizedDv && interactionLabelMatches(key, interaction)
       if (!isSourceRowShape && !isTargetRowShape) continue
       const parsed = toFiniteNumber(value)
       if (parsed != null) return parsed
@@ -222,6 +391,47 @@ function readF2(analysisResults: any, dv: string, interaction: string): number |
   }
 
   return null
+}
+
+function getModeratorObservedLevels(analysisResults: any, interaction: ModerationInteraction): number[] {
+  if (interaction.moderatorMeasurement !== 'Single item') return []
+
+  const candidateKeys = new Set(
+    [interaction.moderator, ...interaction.moderatorIndicators]
+      .map((field) => normalizeMetricKey(field))
+      .filter(Boolean)
+  )
+  if (!candidateKeys.size) return []
+
+  const sourceTables = [
+    Array.isArray(analysisResults?.model_and_data?.indicator_data_original)
+      ? analysisResults.model_and_data.indicator_data_original
+      : [],
+    Array.isArray(analysisResults?.final_results?.latent_variables)
+      ? analysisResults.final_results.latent_variables
+      : [],
+  ] as Array<Array<Record<string, unknown>>>
+
+  for (const rows of sourceTables) {
+    if (!rows.length) continue
+
+    const levels = new Set<number>()
+    for (const row of rows) {
+      for (const [key, value] of Object.entries(row)) {
+        if (!candidateKeys.has(normalizeMetricKey(key))) continue
+        const numericValue = toFiniteNumber(value)
+        if (numericValue == null) continue
+        levels.add(numericValue)
+      }
+    }
+
+    const sorted = [...levels].sort((left, right) => left - right)
+    if (sorted.length >= 2 && sorted.length <= 5 && sorted.every((value) => Number.isInteger(value))) {
+      return sorted
+    }
+  }
+
+  return []
 }
 
 function readR2(analysisResults: any, dv: string): number | null {
@@ -320,10 +530,17 @@ export function hasModerationInteractions(savedModel: any, analysisResults: any)
   return getModerationInteractions(savedModel, analysisResults).length > 0
 }
 
+export function hasModerationSlopeCoefficients(savedModel: any, analysisResults: any): boolean {
+  const statsByPath = buildPathStatsLookup(analysisResults)
+  return getModerationInteractions(savedModel, analysisResults).some(
+    (interaction) => findInteractionPathStats(statsByPath, interaction)?.coefficient != null,
+  )
+}
+
 export function deriveModerationSummaryRows(savedModel: any, analysisResults: any): Array<Record<string, unknown>> {
   const statsByPath = buildPathStatsLookup(analysisResults)
   return getModerationInteractions(savedModel, analysisResults).map((interaction) => {
-    const stats = statsByPath.get(`${interaction.interaction}:::${interaction.dv}`)
+    const stats = findInteractionPathStats(statsByPath, interaction)
     const beta = stats?.coefficient ?? null
     const pValue = stats?.pValue ?? null
     const f2 = readF2(analysisResults, interaction.dv, interaction.interaction)
@@ -331,6 +548,7 @@ export function deriveModerationSummaryRows(savedModel: any, analysisResults: an
     return {
       IV: interaction.iv,
       Moderator: interaction.moderator,
+      moderator_measurement: interaction.moderatorMeasurement,
       DV: interaction.dv,
       Interaction: interaction.interaction,
       beta_interaction: beta == null ? null : roundMetric(beta),
@@ -348,12 +566,26 @@ export function deriveModerationSlopeRows(savedModel: any, analysisResults: any)
   const rows: Array<Record<string, unknown>> = []
 
   getModerationInteractions(savedModel, analysisResults).forEach((interaction) => {
-    const base = statsByPath.get(`${interaction.iv}:::${interaction.dv}`)?.coefficient
-    const betaInteraction = statsByPath.get(`${interaction.interaction}:::${interaction.dv}`)?.coefficient
+    const base = findPathStats(statsByPath, interaction.iv, interaction.dv)?.coefficient
+    const betaInteraction = findInteractionPathStats(statsByPath, interaction)?.coefficient
     if (base == null || betaInteraction == null) return
 
     const baseLabel = formatFormulaNumber(base)
     const interactionLabel = formatFormulaNumber(betaInteraction)
+    const observedLevels = getModeratorObservedLevels(analysisResults, interaction)
+    if (observedLevels.length) {
+      observedLevels.forEach((level) => {
+        rows.push({
+          Interaction: interaction.interaction,
+          DV: interaction.dv,
+          Moderator_level: `${interaction.moderator} = ${formatFormulaNumber(level)}`,
+          simple_slope: roundMetric(base + (betaInteraction * level)),
+          interpretation: `${baseLabel} + (${interactionLabel} x ${formatFormulaNumber(level)})`,
+        })
+      })
+      return
+    }
+
     rows.push(
       {
         Interaction: interaction.interaction,
@@ -407,11 +639,12 @@ export function deriveModerationBootstrapRows(savedModel: any, analysisResults: 
   const statsByPath = buildPathStatsLookup(analysisResults)
   return getModerationInteractions(savedModel, analysisResults)
     .map((interaction) => {
-      const stats = statsByPath.get(`${interaction.interaction}:::${interaction.dv}`)
+      const stats = findInteractionPathStats(statsByPath, interaction)
       if (!stats) return null
       return {
         IV: interaction.iv,
         Moderator: interaction.moderator,
+        moderator_measurement: interaction.moderatorMeasurement,
         DV: interaction.dv,
         Path: stats.path,
         beta_interaction: stats.coefficient == null ? null : roundMetric(stats.coefficient),
@@ -439,14 +672,14 @@ export function buildModerationSlopeChartSvg(savedModel: any, analysisResults: a
   })
 
   const firstGroup = Array.from(grouped.values())[0] ?? []
-  const low = Number(firstGroup.find((row) => row.Moderator_level === 'Low (-1 SD)')?.simple_slope)
-  const mean = Number(firstGroup.find((row) => row.Moderator_level === 'Mean (0)')?.simple_slope)
-  const high = Number(firstGroup.find((row) => row.Moderator_level === 'High (+1 SD)')?.simple_slope)
-  const slopes = [
-    { label: 'Low (-1 SD)', slope: low, color: '#2563eb' },
-    { label: 'Mean (0)', slope: mean, color: '#111827' },
-    { label: 'High (+1 SD)', slope: high, color: '#dc2626' },
-  ].filter((line) => Number.isFinite(line.slope))
+  const palette = ['#2563eb', '#111827', '#dc2626', '#047857', '#7c3aed']
+  const slopes = firstGroup
+    .map((row, index) => ({
+      label: String(row.Moderator_level ?? `Level ${index + 1}`),
+      slope: Number(row.simple_slope),
+      color: palette[index % palette.length],
+    }))
+    .filter((line) => Number.isFinite(line.slope))
 
   if (!slopes.length) return ''
 

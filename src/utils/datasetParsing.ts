@@ -7,9 +7,9 @@ export interface ParseResult {
   delimiter: string
 }
 
-export const HEAD_ROWS = 5
+const HEAD_ROWS = 5
 
-export function detectDelimiter(firstLine: string): string {
+function detectDelimiter(firstLine: string): string {
   const candidates = [',', ';', '\t', '|']
   let best = ','
   let bestCount = 0
@@ -54,7 +54,7 @@ function stringifyExcelCellValue(value: any): string {
   return String(value)
 }
 
-export function parseCSVText(text: string, delimiter: string): ParseResult {
+function parseCSVText(text: string, delimiter: string): ParseResult {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter((line) => line.trim())
 
   function splitLine(line: string): string[] {

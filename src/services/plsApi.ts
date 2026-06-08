@@ -36,13 +36,13 @@ export interface RunPlsRequest {
   }
 }
 
-export interface RunPlsPathResult {
+interface RunPlsPathResult {
   from: string
   to: string
   coefficient: number
 }
 
-export interface RunPlsR2Result {
+interface RunPlsR2Result {
   construct: string
   r2: number | null
 }

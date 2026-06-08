@@ -78,7 +78,7 @@ const BOOTSTRAP_BASE_MODEL_REFERENCE_PANELS = new Set([
   'vif',
 ])
 
-export function getPanelDataPath(mode: AnalysisMode, panelId: string): string | undefined {
+function getPanelDataPath(mode: AnalysisMode, panelId: string): string | undefined {
   return PANEL_DATA_PATHS[mode]?.[panelId]
 }
 

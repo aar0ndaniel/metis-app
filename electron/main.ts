@@ -39,6 +39,13 @@ let splashShownAt = 0
 let splashCloseRequested = false
 let pendingOpenFilePath: string | null = null
 const plumberAuthToken = randomBytes(32).toString('hex')
+const BLAS_THREAD_ENV_DEFAULTS: Record<string, string> = {
+  OPENBLAS_NUM_THREADS: '1',
+  OMP_NUM_THREADS: '1',
+  MKL_NUM_THREADS: '1',
+  BLIS_NUM_THREADS: '1',
+  VECLIB_MAXIMUM_THREADS: '1',
+}
 const approvedRendererReadPaths = new Set<string>()
 const approvedRendererWritePaths = new Set<string>()
 const approvedRendererOpenPaths = new Set<string>()
@@ -2466,7 +2473,7 @@ function buildPlumberHeaders(includeContentType = false): Record<string, string>
 }
 
 function buildPlumberEnv(port: number, rscriptPath = ''): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...(rscriptPath ? getBundledRscriptEnv(rscriptPath) ?? {} : {}),
     METIS_PLUMBER_PORT: String(port),
@@ -2474,6 +2481,12 @@ function buildPlumberEnv(port: number, rscriptPath = ''): NodeJS.ProcessEnv {
     METIS_PLUMBER_TOKEN: plumberAuthToken,
     METIS_ALLOWED_DATA_ROOTS: getTrustedDatasetRoots().join(path.delimiter),
   }
+
+  for (const [name, value] of Object.entries(BLAS_THREAD_ENV_DEFAULTS)) {
+    if (!env[name]) env[name] = value
+  }
+
+  return env
 }
 
 function syncProcessSecurityEnv(): void {
