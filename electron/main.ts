@@ -3241,9 +3241,9 @@ function cleanLegacyTempDatasetDirectories(): void {
  * Writes the embedded base64 dataset to a temp file and returns its path.
  * The temp file is re-created on every app startup so it stays current.
  */
-function extractEmbeddedDataset(wsId: string, datasetId: string, base64Data: string, originalName = 'dataset.csv'): string {
+async function extractEmbeddedDataset(wsId: string, datasetId: string, base64Data: string, originalName = 'dataset.csv'): Promise<string> {
   const dir = getTempDatasetsDir()
-  fs.mkdirSync(dir, { recursive: true })
+  await fs.promises.mkdir(dir, { recursive: true })
   const safeOriginalName = path.basename(originalName)
   const ext = path.extname(safeOriginalName) || '.csv'
   const safeWorkspaceId = sanitizePathComponent(wsId, 'workspace')
@@ -3252,7 +3252,7 @@ function extractEmbeddedDataset(wsId: string, datasetId: string, base64Data: str
   if (!isPathWithinRoot(tempPath, dir)) {
     throw new Error('Security Error: Directory traversal detected in extraction target path.')
   }
-  fs.writeFileSync(tempPath, Buffer.from(base64Data, 'base64'))
+  await fs.promises.writeFile(tempPath, Buffer.from(base64Data, 'base64'))
   return tempPath
 }
 
@@ -3339,61 +3339,110 @@ function resolveLegacyDatasetInternalPath(workspacePath: string, datasetId: stri
   return path.join(dir, `${safeDatasetId}${ext}`)
 }
 
-function writeDatasetBufferIntoWorkspace(
+async function writeDatasetBufferIntoWorkspace(
   workspacePath: string,
   datasetId: string,
   fileBuffer: Buffer,
   originalName: string
-): {
+): Promise<{
   success: true
   internalName: string
   path: string
   datasetTempPath?: string
-} {
-  const stat = fs.statSync(workspacePath)
+}> {
+  const stat = fs.existsSync(workspacePath) ? fs.statSync(workspacePath) : null
   const safeDatasetId = ensureSafeDatasetId(datasetId)
   const internalName = `${sanitizePathComponent(safeDatasetId, 'dataset')}${path.extname(originalName) || '.csv'}`
 
-  if (stat.isFile()) {
-    const wsData = JSON.parse(fs.readFileSync(workspacePath, 'utf-8')) as AdaWorkspaceFile
-    const base64Data = fileBuffer.toString('base64')
-    const embeddedDatasets = normalizeEmbeddedDatasets(wsData)
-    const updated: AdaFileV3 = {
-      ...hydrateWorkspaceManifest(wsData),
-      _metis: true,
-      _version: '3.0',
-      embeddedDatasets: [
-        ...embeddedDatasets.filter((entry) => entry.datasetId !== safeDatasetId),
-        { datasetId: safeDatasetId, base64Data, originalName, internalName },
-      ],
+  if (stat && stat.isFile()) {
+    let zip: JSZip
+    let wsData: WorkspaceManifest
+
+    if (await isZipFile(workspacePath)) {
+      const zipData = await fs.promises.readFile(workspacePath)
+      zip = await JSZip.loadAsync(zipData)
+      const wsJsonFile = zip.file('workspace.json')
+      if (wsJsonFile) {
+        const wsJsonText = await wsJsonFile.async('text')
+        wsData = JSON.parse(wsJsonText) as WorkspaceManifest
+      } else {
+        wsData = { id: `ws-${Date.now()}`, name: path.basename(workspacePath, WORKSPACE_FILE_EXTENSION), children: [] }
+      }
+    } else {
+      // Legacy JSON file migration
+      const raw = await fs.promises.readFile(workspacePath, 'utf-8')
+      const legacyData = JSON.parse(raw) as AdaWorkspaceFile
+      wsData = hydrateWorkspaceManifest(legacyData)
+
+      zip = new JSZip()
+      const embeddedDatasets = normalizeEmbeddedDatasets(legacyData)
+      for (const entry of embeddedDatasets) {
+        const base64Buffer = Buffer.from(entry.base64Data, 'base64')
+        const entryInternalName = entry.internalName || `${entry.datasetId}${path.extname(entry.originalName || 'dataset.csv') || '.csv'}`
+        zip.file(`datasets/${entryInternalName}`, base64Buffer)
+      }
     }
-    writeAtomicSync(workspacePath, JSON.stringify(updated, null, 2))
-    const tempPath = extractEmbeddedDataset(wsData.id, safeDatasetId, base64Data, originalName)
+
+    zip.file(`datasets/${internalName}`, fileBuffer)
+
+    if (!wsData.children) wsData.children = []
+    const existingChildIndex = wsData.children.findIndex((c: any) => c.id === safeDatasetId && c.type === 'dataset')
+    
+    const newChild = {
+      id: safeDatasetId,
+      type: 'dataset',
+      name: originalName,
+      filePath: internalName,
+      originalFileName: originalName,
+    }
+
+    if (existingChildIndex >= 0) {
+      wsData.children[existingChildIndex] = {
+        ...wsData.children[existingChildIndex],
+        ...newChild,
+      }
+    } else {
+      wsData.children.push(newChild)
+    }
+
+    zip.file('workspace.json', JSON.stringify(wsData, null, 2))
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    writeAtomicSync(workspacePath, zipBuffer)
+
+    const tempDir = getTempDatasetsDir()
+    await fs.promises.mkdir(tempDir, { recursive: true })
+    const tempPath = path.join(tempDir, `${wsData.id}__${safeDatasetId}${path.extname(internalName) || '.csv'}`)
+    if (!isPathWithinRoot(tempPath, tempDir)) {
+      throw new Error('Security Error: Directory traversal detected in extraction target path.')
+    }
+    await fs.promises.writeFile(tempPath, fileBuffer)
+
     return { success: true, internalName, path: tempPath, datasetTempPath: tempPath }
   }
 
   if (!fs.existsSync(workspacePath)) {
-    fs.mkdirSync(workspacePath, { recursive: true })
+    await fs.promises.mkdir(workspacePath, { recursive: true })
   }
 
   const datasetsDir = path.join(workspacePath, 'datasets')
   if (!fs.existsSync(datasetsDir)) {
-    fs.mkdirSync(datasetsDir, { recursive: true })
+    await fs.promises.mkdir(datasetsDir, { recursive: true })
   }
   const internalPath = resolveLegacyDatasetInternalPath(workspacePath, safeDatasetId, originalName)
   writeAtomicSync(internalPath, fileBuffer)
   return { success: true, internalName: path.basename(internalPath), path: internalPath, datasetTempPath: internalPath }
 }
 
-function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: string, datasetId: string): {
+async function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: string, datasetId: string): Promise<{
   success: true
   internalName: string
   path: string
   datasetTempPath?: string
-} {
-  const fileBuffer = fs.readFileSync(originalFilePath)
+}> {
+  const fileBuffer = await fs.promises.readFile(originalFilePath)
   const originalName = path.basename(originalFilePath)
-  return writeDatasetBufferIntoWorkspace(workspacePath, datasetId, fileBuffer, originalName)
+  return await writeDatasetBufferIntoWorkspace(workspacePath, datasetId, fileBuffer, originalName)
 }
 
 function writeAtomicSync(targetPath: string, content: string | Buffer): void {
@@ -3423,19 +3472,19 @@ function writeAtomicSync(targetPath: string, content: string | Buffer): void {
   }
 }
 
-function isZipFile(filePath: string): boolean {
-  let fd: number | null = null
+async function isZipFile(filePath: string): Promise<boolean> {
+  let fd: fs.promises.FileHandle | null = null
   try {
-    fd = fs.openSync(filePath, 'r')
+    fd = await fs.promises.open(filePath, 'r')
     const buffer = Buffer.alloc(4)
-    const bytesRead = fs.readSync(fd, buffer, 0, 4, 0)
+    const { bytesRead } = await fd.read(buffer, 0, 4, 0)
     return bytesRead === 4 && buffer.toString('hex') === '504b0304'
   } catch {
     return false
   } finally {
     if (fd !== null) {
       try {
-        fs.closeSync(fd)
+        await fd.close()
       } catch {}
     }
   }
@@ -3444,7 +3493,7 @@ function isZipFile(filePath: string): boolean {
 /** Parses a workspace file and (if it contains a dataset) extracts to temp. */
 async function readAdaFile(adaFilePath: string, extract = true): Promise<(WorkspaceManifest & { path: string; _format: 'v2' | 'v3' | 'zip' }) | null> {
   try {
-    if (isZipFile(adaFilePath)) {
+    if (await isZipFile(adaFilePath)) {
       const fileBuffer = await fs.promises.readFile(adaFilePath)
       const zip = await JSZip.loadAsync(fileBuffer)
       const wsJsonFile = zip.file('workspace.json')
@@ -3458,13 +3507,19 @@ async function readAdaFile(adaFilePath: string, extract = true): Promise<(Worksp
       if (extract) {
         const datasetChildren = getManifestDatasetChildren(data)
         for (const dataset of datasetChildren) {
+          const dir = getTempDatasetsDir()
+          if (dataset.filePath) {
+            const unsafePath = path.join(dir, dataset.filePath)
+            if (!isPathWithinRoot(unsafePath, dir)) {
+              throw new Error('Security Error: Directory traversal detected in extraction target path.')
+            }
+          }
           const zipPath = `datasets/${dataset.filePath}`
           const zipEntry = zip.file(zipPath)
           if (zipEntry) {
             try {
               const buffer = await zipEntry.async('nodebuffer')
-              const dir = getTempDatasetsDir()
-              fs.mkdirSync(dir, { recursive: true })
+              await fs.promises.mkdir(dir, { recursive: true })
               const safeName = path.basename(dataset.filePath || `${dataset.id}.csv`)
               const tempPath = path.join(dir, `${data.id}__${dataset.id}${path.extname(safeName) || '.csv'}`)
               if (!isPathWithinRoot(tempPath, dir)) {
@@ -3487,7 +3542,7 @@ async function readAdaFile(adaFilePath: string, extract = true): Promise<(Worksp
       }
     }
 
-    const raw = fs.readFileSync(adaFilePath, 'utf-8')
+    const raw = await fs.promises.readFile(adaFilePath, 'utf-8')
     const data = JSON.parse(raw) as AdaWorkspaceFile
     const isRecognizedWorkspaceFile = (data as any)?._metis === true || data._version === '2.0' || data._version === '3.0'
     if (!isRecognizedWorkspaceFile) return null
@@ -3500,7 +3555,7 @@ async function readAdaFile(adaFilePath: string, extract = true): Promise<(Worksp
         try {
           datasetTempPaths.set(
             dataset.datasetId,
-            extractEmbeddedDataset(data.id, dataset.datasetId, dataset.base64Data, dataset.originalName)
+            await extractEmbeddedDataset(data.id, dataset.datasetId, dataset.base64Data, dataset.originalName)
           )
         } catch (e: any) {
           console.warn('[main] Failed to extract embedded dataset:', e.message)
@@ -3521,7 +3576,10 @@ async function readAdaFile(adaFilePath: string, extract = true): Promise<(Worksp
       path: adaFilePath,
       _format: data._version === '3.0' ? 'v3' : 'v2',
     }
-  } catch {
+  } catch (err: any) {
+    if (err && err.message && err.message.includes('Security Error')) {
+      throw err
+    }
     return null
   }
 }
@@ -3596,7 +3654,7 @@ ipcMain.handle('file:copyToWorkspace', async (_, data) => {
     if (!fs.existsSync(originalFilePath)) {
       throw new Error(`Source file does not exist: ${originalFilePath}`)
     }
-    const result = copyDatasetIntoWorkspace(originalFilePath, workspacePath, datasetId)
+    const result = await copyDatasetIntoWorkspace(originalFilePath, workspacePath, datasetId)
     console.log('[main:file:copyToWorkspace] Dataset persisted:', result.path)
     return result
   } catch (err: any) {
@@ -3618,7 +3676,7 @@ ipcMain.handle('dataset:saveToWorkspace', async (_, data: { workspacePath: strin
       throw new Error('Dataset save blocked: destination must be an approved metis workspace.')
     }
     const buffer = Buffer.from(base64Data, 'base64')
-    return writeDatasetBufferIntoWorkspace(workspacePath, datasetId, buffer, fileName)
+    return await writeDatasetBufferIntoWorkspace(workspacePath, datasetId, buffer, fileName)
   } catch (err: any) {
     console.error('[main:dataset:saveToWorkspace] error:', err.message)
     return { success: false, error: err.message }
@@ -3641,7 +3699,7 @@ ipcMain.handle('dataset:useSample', async (_, data: { workspacePath: string; dat
 
     const samplePath = resolveSampleDatasetPath()
     const summary = summarizeDatasetFile(samplePath)
-    const persisted = writeDatasetBufferIntoWorkspace(
+    const persisted = await writeDatasetBufferIntoWorkspace(
       workspacePath,
       datasetId,
       fs.readFileSync(samplePath),
@@ -3705,13 +3763,15 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
     ensureDataDir()
     const adaFilePath = getWorkspaceFilePath(wsData.name)
     console.log('[main] Creating workspace at:', adaFilePath)
-    const fileData: AdaFileV3 = {
-      _metis: true,
-      _version: '3.0',
-      ...hydrateWorkspaceManifest(wsData),
-      embeddedDatasets: [],
-    }
-    writeAtomicSync(adaFilePath, JSON.stringify(fileData, null, 2))
+
+    const hydrated = hydrateWorkspaceManifest(wsData)
+    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
+
+    const zip = new JSZip()
+    zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    writeAtomicSync(adaFilePath, zipBuffer)
     console.log('[main] Workspace .metisws file created')
     return { success: true, path: adaFilePath }
   } catch (err: any) {
@@ -3744,28 +3804,54 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
       console.warn('[main] workspace:save — legacy folder conflict, writing to:', adaFilePath)
     }
 
-    let existingEmbeddedDatasets: EmbeddedDatasetV3[] = []
-    if (fs.existsSync(adaFilePath) && fs.statSync(adaFilePath).isFile()) {
-      try {
-        const existing = JSON.parse(fs.readFileSync(adaFilePath, 'utf-8')) as AdaWorkspaceFile
-        existingEmbeddedDatasets = normalizeEmbeddedDatasets(existing)
-      } catch { /* ignore */ }
-    }
+    let zip = new JSZip()
+    const isExistingFile = fs.existsSync(adaFilePath) && fs.statSync(adaFilePath).isFile()
 
     const hydrated = hydrateWorkspaceManifest(wsData)
-    const datasetIds = new Set(getManifestDatasetChildren(hydrated).map((child: any) => child.id))
-    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
-    const fileData: AdaFileV3 = {
-      _metis: true,
-      _version: '3.0',
-      ...cleanData,
-      embeddedDatasets: existingEmbeddedDatasets.filter((entry) => datasetIds.has(entry.datasetId)),
+    const datasetChildren = getManifestDatasetChildren(hydrated)
+    const datasetIds = new Set(datasetChildren.map((child: any) => child.id))
+    const datasetFileNames = new Set(datasetChildren.map((child: any) => child.filePath).filter(Boolean))
+
+    if (isExistingFile) {
+      if (await isZipFile(adaFilePath)) {
+        const fileBuffer = await fs.promises.readFile(adaFilePath)
+        zip = await JSZip.loadAsync(fileBuffer)
+
+        // Clean up deleted datasets from datasets/ in the zip
+        zip.folder('datasets')?.forEach((relativePath, file) => {
+          if (!datasetFileNames.has(relativePath)) {
+            zip.remove(`datasets/${relativePath}`)
+          }
+        })
+      } else {
+        // Migrate legacy JSON file to ZIP
+        try {
+          const raw = await fs.promises.readFile(adaFilePath, 'utf-8')
+          const existing = JSON.parse(raw) as AdaWorkspaceFile
+          const existingEmbeddedDatasets = normalizeEmbeddedDatasets(existing)
+          const activeEmbedded = existingEmbeddedDatasets.filter((entry) => datasetIds.has(entry.datasetId))
+
+          for (const entry of activeEmbedded) {
+            const base64Buffer = Buffer.from(entry.base64Data, 'base64')
+            const entryInternalName = entry.internalName || `${entry.datasetId}${path.extname(entry.originalName || 'dataset.csv') || '.csv'}`
+            zip.file(`datasets/${entryInternalName}`, base64Buffer)
+          }
+        } catch (e: any) {
+          console.warn('[main] Failed to parse legacy JSON workspace for migration:', e.message)
+        }
+      }
     }
 
+    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
+    zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
+
     if (!fs.existsSync(path.dirname(adaFilePath))) {
-      fs.mkdirSync(path.dirname(adaFilePath), { recursive: true })
+      await fs.promises.mkdir(path.dirname(adaFilePath), { recursive: true })
     }
-    writeAtomicSync(adaFilePath, JSON.stringify(fileData, null, 2))
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    writeAtomicSync(adaFilePath, zipBuffer)
+
     rememberApprovedWorkspacePath(adaFilePath)
     console.log('[main] Workspace saved to:', adaFilePath)
     return { success: true, path: adaFilePath }
@@ -3844,30 +3930,58 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
     const stat = fs.statSync(wsPath)
 
     if (stat.isFile()) {
-      const wsData = JSON.parse(fs.readFileSync(wsPath, 'utf-8')) as AdaWorkspaceFile
+      let wsData: WorkspaceManifest
+      let zip: JSZip | null = null
+      const isZip = await isZipFile(wsPath)
+      
+      if (isZip) {
+        const fileBuffer = await fs.promises.readFile(wsPath)
+        zip = await JSZip.loadAsync(fileBuffer)
+        const wsJsonFile = zip.file('workspace.json')
+        if (wsJsonFile) {
+          const wsJsonText = await wsJsonFile.async('text')
+          wsData = JSON.parse(wsJsonText) as WorkspaceManifest
+        } else {
+          throw new Error('workspace.json not found in ZIP archive.')
+        }
+      } else {
+        const raw = await fs.promises.readFile(wsPath, 'utf-8')
+        wsData = JSON.parse(raw) as AdaWorkspaceFile
+      }
+
       const children = Array.isArray(wsData.children) ? wsData.children : []
       const child = children.find((e: any) => e?.id === childId)
       if (!child) return { success: true, deleted: false, reason: 'child_not_found' }
       const nextChildren = children.filter((e: any) => e?.id !== childId)
       const childType = String(child?.type ?? '').toLowerCase()
 
-      const nextEmbeddedDatasets = childType === 'dataset'
-        ? normalizeEmbeddedDatasets(wsData).filter((entry) => entry.datasetId !== childId)
-        : normalizeEmbeddedDatasets(wsData)
-
       const nextManifest = hydrateWorkspaceManifest({
         ...wsData,
         children: nextChildren,
       })
+      const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = nextManifest as any
 
-      const updated: AdaFileV3 = {
-        ...(nextManifest as any),
-        _metis: true,
-        _version: '3.0',
-        embeddedDatasets: nextEmbeddedDatasets,
+      if (isZip && zip) {
+        if (childType === 'dataset' && child.filePath) {
+          zip.remove(`datasets/${child.filePath}`)
+        }
+        zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
+        const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+        writeAtomicSync(wsPath, zipBuffer)
+      } else {
+        const nextEmbeddedDatasets = childType === 'dataset'
+          ? normalizeEmbeddedDatasets(wsData as AdaWorkspaceFile).filter((entry) => entry.datasetId !== childId)
+          : normalizeEmbeddedDatasets(wsData as AdaWorkspaceFile)
+
+        const updated: AdaFileV3 = {
+          ...cleanData,
+          _metis: true,
+          _version: '3.0',
+          embeddedDatasets: nextEmbeddedDatasets,
+        }
+        writeAtomicSync(wsPath, JSON.stringify(updated, null, 2))
       }
 
-      fs.writeFileSync(wsPath, JSON.stringify(updated, null, 2), 'utf-8')
       return { success: true, deleted: true, childId, childType, deletedFiles: [] }
     }
 
@@ -3933,7 +4047,7 @@ ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFile
       if (existingPath) return { success: true, datasetTempPath: existingPath }
       return { success: false, error: 'Dataset file not found in legacy workspace.' }
     }
-    if (isZipFile(adaFilePath)) {
+    if (await isZipFile(adaFilePath)) {
       const ws = await readAdaFile(adaFilePath, true)
       if (!ws) throw new Error('Could not read ZIP workspace.')
       const datasetChildren = getManifestDatasetChildren(ws)
@@ -3945,13 +4059,14 @@ ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFile
       }
       return { success: true, datasetTempPath: targetDataset.datasetTempPath }
     }
-    const wsData = JSON.parse(fs.readFileSync(adaFilePath, 'utf-8')) as AdaWorkspaceFile
+    const wsDataText = await fs.promises.readFile(adaFilePath, 'utf-8')
+    const wsData = JSON.parse(wsDataText) as AdaWorkspaceFile
     const embeddedDatasets = normalizeEmbeddedDatasets(wsData)
     const targetDataset = datasetId
       ? embeddedDatasets.find((entry) => entry.datasetId === datasetId)
       : embeddedDatasets[0]
     if (!targetDataset) return { success: false, error: 'No embedded dataset in this workspace.' }
-    const tempPath = extractEmbeddedDataset(wsData.id, targetDataset.datasetId, targetDataset.base64Data, targetDataset.originalName)
+    const tempPath = await extractEmbeddedDataset(wsData.id, targetDataset.datasetId, targetDataset.base64Data, targetDataset.originalName)
     return { success: true, datasetTempPath: tempPath }
   } catch (err: any) {
     console.error('[main] workspace:extractDataset error:', err.message)
