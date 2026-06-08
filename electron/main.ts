@@ -3396,6 +3396,30 @@ function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: strin
   return writeDatasetBufferIntoWorkspace(workspacePath, datasetId, fileBuffer, originalName)
 }
 
+function writeAtomicSync(targetPath: string, content: string | Buffer): void {
+  const tmpPath = `${targetPath}.tmp`
+  fs.writeFileSync(tmpPath, content)
+  
+  let retries = 3
+  const delay = 50
+  while (retries > 0) {
+    try {
+      fs.renameSync(tmpPath, targetPath)
+      return
+    } catch (err: any) {
+      retries--
+      if (retries === 0) {
+        // Clean up temp file on absolute failure
+        try { fs.unlinkSync(tmpPath) } catch {}
+        throw err
+      }
+      // Synchronous sleep/delay for retrying rename
+      const start = Date.now()
+      while (Date.now() - start < delay) {}
+    }
+  }
+}
+
 /** Parses a workspace file and (if it contains a dataset) extracts to temp. */
 function readAdaFile(adaFilePath: string): (WorkspaceManifest & { path: string; _format: 'v2' | 'v3' }) | null {
   try {
