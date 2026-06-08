@@ -3224,7 +3224,7 @@ function cleanLegacyTempDatasetDirectories(): void {
     if (fs.existsSync(baseTempDir)) {
       const entries = fs.readdirSync(baseTempDir, { withFileTypes: true })
       for (const entry of entries) {
-        if (entry.isDirectory() && entry.name.startsWith('session-')) {
+        if (entry.isDirectory() && entry.name.startsWith('session-') && entry.name !== sessionTempDirName) {
           try {
             fs.rmSync(path.join(baseTempDir, entry.name), { recursive: true, force: true })
           } catch (err: any) {
