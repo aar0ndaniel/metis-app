@@ -3560,6 +3560,7 @@ ipcMain.handle('workspace:openFile', async (_, workspaceFilePath: string) => {
     const resolvedPath = validateWorkspaceFilePath(workspaceFilePath)
     if (!fs.existsSync(resolvedPath)) throw new Error('Workspace file not found.')
 
+    const stat = fs.statSync(resolvedPath)
     const workspace = stat.isDirectory()
       ? readLegacyWorkspaceFolder(resolvedPath)
       : await readAdaFile(resolvedPath)
