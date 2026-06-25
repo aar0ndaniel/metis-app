@@ -10,16 +10,20 @@ function read(relPath) {
   return fs.readFileSync(path.join(workspaceRoot, relPath), 'utf8')
 }
 
+const expectedAppVersion = '0.2.1'
 const pkg = JSON.parse(read('package.json'))
+const packageLock = JSON.parse(read('package-lock.json'))
 const OLD_BRAND_PATTERN = new RegExp([['WYT', 'HAM'].join(''), ['Wyt', 'ham'].join(''), ['wyt', 'ham'].join('')].join('|'))
 
 assert.equal(pkg.name, 'metis')
-assert.equal(pkg.version, '0.0.1')
+assert.equal(pkg.version, expectedAppVersion)
 assert.equal(pkg.description, 'metis')
 assert.equal(pkg.author, 'metis team')
 assert.equal(pkg.build.appId, 'com.metis.app')
 assert.equal(pkg.build.productName, 'metis')
 assert.equal(pkg.build.fileAssociations[0].name, 'metis Workspace')
+assert.equal(packageLock.version, expectedAppVersion)
+assert.equal(packageLock.packages[''].version, expectedAppVersion)
 
 const viteConfig = read('vite.config.ts')
 assert.match(viteConfig, /__METIS_APP_NAME__:\s*JSON\.stringify\('metis'\)/)
@@ -38,8 +42,12 @@ assert.match(electronMain, /path\.join\(app\.getPath\('downloads'\), 'metis'\)/)
 assert.match(electronMain, /src\/assets\/logo-primary\.svg/)
 assert.doesNotMatch(electronMain, /src\/assets\/logo-dark-bg\.png/)
 assert.match(electronMain, /gap: 8px;/)
+assert.match(electronMain, /app\.getVersion\(\) \|\| '0\.2\.1'/)
 assert.doesNotMatch(electronMain, /Public Beta v1/)
 assert.doesNotMatch(electronMain, OLD_BRAND_PATTERN)
+
+const mockElectron = read('tests/mockElectron.js')
+assert.match(mockElectron, /getVersion\(\)\s*{\s*return '0\.2\.1'\s*}/)
 
 const preferences = read('src/components/PreferencesModal.tsx')
 assert.doesNotMatch(preferences, /Public Beta v1/)

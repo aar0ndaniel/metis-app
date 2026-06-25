@@ -130,6 +130,19 @@ function normalizeWorkspacePayload(detail: unknown): Workspace[] | null {
   return normalized
 }
 
+function resolveWorkspaceForAction(workspaces: Workspace[], requestedId?: string | null): Workspace | null {
+  const safeId = typeof requestedId === 'string' ? requestedId.trim() : ''
+  if (!safeId) return null
+
+  const directWorkspace = workspaces.find((workspace) => workspace.id === safeId)
+  if (directWorkspace) return migrateWorkspace(directWorkspace)
+
+  const owningWorkspace = workspaces.find((workspace) =>
+    workspace.children.some((child) => child.id === safeId)
+  )
+  return owningWorkspace ? migrateWorkspace(owningWorkspace) : null
+}
+
 type DatasetImportedPayload = {
   datasetId?: string
   fileName: string
@@ -460,6 +473,14 @@ function AppShell() {
     navigate('/')
   }, [currentCanvasModelId, navigate, openModelTabs, workspaces])
 
+  const returnToWorkspaceHome = useCallback((preferredWorkspaceId?: string | null) => {
+    const targetWorkspace = resolveWorkspaceForAction(workspaces, preferredWorkspaceId || currentCanvasModelId || activeWorkspaceId)
+    if (targetWorkspace) {
+      setActiveWorkspaceId(targetWorkspace.id)
+    }
+    navigate('/')
+  }, [activeWorkspaceId, currentCanvasModelId, navigate, workspaces])
+
   const openWorkspaceFromFilePath = useCallback(async (filePath: string) => {
     const api = (window as any).electronAPI
     if (!filePath || !api) return
@@ -747,11 +768,9 @@ function AppShell() {
     if (!fileName) return
 
     setWorkspaces((prev) => {
-      const targetWs = prev.find((workspace) =>
-        workspace.id === workspaceId
-        || workspace.name === workspaceName
-        || workspace.id === activeWorkspaceId
-      )
+      const targetWs = resolveWorkspaceForAction(prev, workspaceId)
+        ?? (workspaceName ? prev.find((workspace) => workspace.name === workspaceName) ?? null : null)
+        ?? resolveWorkspaceForAction(prev, activeWorkspaceId)
       if (!targetWs) {
         console.warn('[App] Could not find target workspace for dataset import', { workspaceId, workspaceName, activeWorkspaceId })
         addDiagnostic({
@@ -901,7 +920,7 @@ function AppShell() {
       }
 
       if (action === 'import-dataset') {
-        const activeWs = workspaces.find(w => w.id === activeWorkspaceId)
+        const activeWs = resolveWorkspaceForAction(workspaces, activeWorkspaceId)
         const hasDataset = activeWs?.children.some(c => c.type === 'dataset') ?? false
 
         if (hasDataset) {
@@ -933,7 +952,8 @@ function AppShell() {
       }
 
       if (action === 'open-import-picker') {
-        const activeWs = workspaces.find(w => w.id === activeWorkspaceId)
+        const requestedWorkspaceId = e.detail?.workspaceId
+        const activeWs = resolveWorkspaceForAction(workspaces, requestedWorkspaceId || activeWorkspaceId)
         const requestedReturnTo = e.detail?.returnTo as string | undefined
         await openDatasetFilePicker({
           workspaceName: activeWs?.name ?? '',
@@ -980,7 +1000,8 @@ function AppShell() {
   // ── WorkspaceHome dataset choice: after user picks "replace", open file picker
   useEffect(() => {
     const handler = async (e: any) => {
-      const activeWs = workspaces.find(w => w.id === activeWorkspaceId)
+      const requestedWorkspaceId = e.detail?.workspaceId
+      const activeWs = resolveWorkspaceForAction(workspaces, requestedWorkspaceId || activeWorkspaceId)
       const requestedReturnTo = e.detail?.returnTo as string | undefined
       await openDatasetFilePicker({
         workspaceName: activeWs?.name ?? '',
@@ -999,7 +1020,7 @@ function AppShell() {
 
   useEffect(() => {
     const handler = async () => {
-      const activeWs = workspaces.find((workspace) => workspace.id === activeWorkspaceId)
+      const activeWs = resolveWorkspaceForAction(workspaces, activeWorkspaceId)
       const api = (window as any).electronAPI
 
       if (!activeWs?.path || !api?.useSampleDataset) {
@@ -1165,6 +1186,7 @@ function AppShell() {
                 onOpenModel={openModelInCanvas}
                 onCloseModelTab={closeModelTab}
                 onReorderModelTabs={reorderModelTabs}
+                onReturnHome={returnToWorkspaceHome}
               />
             }
           />

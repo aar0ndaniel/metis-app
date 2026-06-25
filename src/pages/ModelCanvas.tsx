@@ -52,8 +52,9 @@ import { useCalculation, useCalculationDispatch, useIsCalculating, type CalcPhas
 import { addRecentModel } from '../utils/recentModels'
 import { stripModelDisplayName, stripWorkspaceDisplayName } from '../utils/displayNames'
 import { readDatasetViewCache } from '../utils/datasetViewCache'
-import { resolveDatasetFilePathFromRequest } from '../utils/datasetLoading'
+import { loadDatasetSnapshot, resolveDatasetFilePathFromRequest } from '../utils/datasetLoading'
 import { getLinkedDatasetForModel, migrateWorkspace } from '../utils/datasetWorkspace'
+import { getModelCanvasDatasetHeaders, getModelCanvasVariableTypes } from '../utils/modelCanvasDataset'
 import { writeWorkspaceClientCache } from '../utils/workspaceClientCache'
 import { getOuterLoadingColor } from '../utils/analysisPalette'
 import { inspectAnalysisInputs } from '../utils/analysisPrecheck'
@@ -637,6 +638,7 @@ interface ModelCanvasProps {
   onOpenModel: (modelId: string, workspaceId?: string) => void
   onCloseModelTab: (modelId: string) => void
   onReorderModelTabs: (draggedModelId: string, targetModelId: string) => void
+  onReturnHome: (workspaceId?: string | null) => void
 }
 
 export default function ModelCanvas({
@@ -647,6 +649,7 @@ export default function ModelCanvas({
   onOpenModel,
   onCloseModelTab,
   onReorderModelTabs,
+  onReturnHome,
 }: ModelCanvasProps) {
   const navigate = useNavigate()
   const { modelId } = useParams()
@@ -658,6 +661,9 @@ export default function ModelCanvas({
   const currentModel = activeWs?.children?.find((c: any) => c.id === modelId && c.type === 'model') as any
   const linkedDataset = activeWs ? getLinkedDatasetForModel(activeWs as any, modelId) : undefined
   const electronAPI = (window as any).electronAPI
+  const returnToWorkspaceHome = useCallback(() => {
+    onReturnHome(activeWs?.id ?? null)
+  }, [activeWs?.id, onReturnHome])
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [dirtyModels, setDirtyModels] = useState<Record<string, boolean>>({})
   const modelDraftsRef = useRef<Record<string, ModelDraftState>>({})
@@ -743,12 +749,93 @@ export default function ModelCanvas({
     return ''
   }
 
+  const linkedDatasetCache = readDatasetViewCache((linkedDataset as any)?.id)
+  const effectiveDatasetHeaders = getModelCanvasDatasetHeaders(linkedDataset as any, linkedDatasetCache)
+  const effectiveVariableTypes = getModelCanvasVariableTypes(linkedDataset as any, linkedDatasetCache, effectiveDatasetHeaders)
+
+  useEffect(() => {
+    if (!activeWs || !linkedDataset?.id || effectiveDatasetHeaders.length > 0) return
+
+    let cancelled = false
+    const datasetId = linkedDataset.id
+    const workspaceId = activeWs.id
+
+    loadDatasetSnapshot({
+      datasetId,
+      fileName: linkedDataset.originalFileName || linkedDataset.filePath || linkedDataset.name,
+      filePath: linkedDataset.filePath || '',
+      datasetTempPath: linkedDataset.datasetTempPath || (activeWs as any)?.datasetTempPath || '',
+      workspaceId,
+      workspaceName: activeWs.name,
+      workspacePath: activeWs.path || '',
+    }).then((snapshot) => {
+      if (cancelled || !snapshot?.headers?.length) return
+
+      const variableTypes = getModelCanvasVariableTypes(linkedDataset as any, snapshot, snapshot.headers)
+      const meta = `${snapshot.totalRows ?? '?'} cases · ${snapshot.headers.length} variables${(snapshot.missing ?? 0) > 0 ? ` · ${snapshot.missing} missing` : ''}`
+      let workspaceToPersist: any = null
+
+      setWorkspaces((prev: any[]) => prev.map((workspace) => {
+        if (workspace.id !== workspaceId) return workspace
+
+        const migratedWorkspace = migrateWorkspace(workspace as any) as any
+        const nextWorkspace = migrateWorkspace({
+          ...migratedWorkspace,
+          children: migratedWorkspace.children.map((child: any) => (
+            child.type === 'dataset' && child.id === datasetId
+              ? {
+                  ...child,
+                  headers: snapshot.headers,
+                  variableTypes,
+                  totalRows: snapshot.totalRows,
+                  missing: snapshot.missing,
+                  meta,
+                  datasetTempPath: snapshot.datasetTempPath || child.datasetTempPath,
+                  filePath: child.filePath || snapshot.filePath,
+                  originalFileName: child.originalFileName || snapshot.fileName,
+                }
+              : child
+          )),
+        } as any)
+        workspaceToPersist = nextWorkspace
+        return nextWorkspace
+      }))
+
+      if (workspaceToPersist && electronAPI?.saveWorkspace) {
+        electronAPI.saveWorkspace(workspaceToPersist)
+          .catch((err: any) => console.warn('[ModelCanvas] Failed to persist hydrated dataset headers:', err))
+      }
+    }).catch((err) => {
+      if (!cancelled) {
+        recordDiagnostic('dataset', 'warn', 'Model Canvas could not hydrate dataset headers for the indicator panel.', err)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeWs?.id,
+    activeWs?.name,
+    activeWs?.path,
+    (activeWs as any)?.datasetTempPath,
+    linkedDataset?.id,
+    linkedDataset?.name,
+    linkedDataset?.filePath,
+    linkedDataset?.datasetTempPath,
+    linkedDataset?.originalFileName,
+    effectiveDatasetHeaders.length,
+    electronAPI,
+    recordDiagnostic,
+    setWorkspaces,
+  ])
+
   // Derive variables from dataset
-  const dynamicVars = (linkedDataset?.headers || []).map((h: string, i: number) => ({
+  const dynamicVars = effectiveDatasetHeaders.map((h: string, i: number) => ({
     idx: i + 1,
     name: h,
-    type: linkedDataset?.variableTypes?.[h] ?? 'MET',
-    color: (linkedDataset?.variableTypes?.[h] ?? 'MET') === 'MET' ? 'rgb(var(--color-accent-rgb) / 0.28)' : 'var(--color-text-dim)',
+    type: effectiveVariableTypes[h] ?? 'MET',
+    color: (effectiveVariableTypes[h] ?? 'MET') === 'MET' ? 'rgb(var(--color-accent-rgb) / 0.28)' : 'var(--color-text-dim)',
   }))
 
   // ── Canvas state ─────────────────────────────────────────────────────────────
@@ -1579,7 +1666,7 @@ export default function ModelCanvas({
       throw new Error('No valid structural paths found after mapping constructs.')
     }
 
-    const datasetHeaders = linkedDataset?.headers || []
+    const datasetHeaders = effectiveDatasetHeaders
     const precheck = inspectAnalysisInputs(datasetHeaders, payloadConstructs, mappedPaths, interactions)
 
     recordDiagnostic('calculation', 'info', `${getAnalysisLabel(analysisKind)} calculation started.`, {
@@ -2411,13 +2498,13 @@ export default function ModelCanvas({
             setPendingCloseTabId(null)
             setShowExitModal(true)
           }
-          else navigate('/')
+          else returnToWorkspaceHome()
           break
       }
     }
     window.addEventListener('pls:action', handler)
     return () => window.removeEventListener('pls:action', handler)
-  }, [canRunAdvancedAnalysis, deleteSelected, cutSelected, copySelected, fitCanvasToScreen, handleSave, isDirty, navigate, pasteClipboard, redo, selectAll, undo])
+  }, [canRunAdvancedAnalysis, deleteSelected, cutSelected, copySelected, fitCanvasToScreen, handleSave, isDirty, navigate, pasteClipboard, redo, returnToWorkspaceHome, selectAll, undo])
 
   // ── Selected construct ────────────────────────────────────────────────────────
   const selectedConstruct = selected.length === 1 ? constructs.find(c => c.id === selected[0]) ?? null : null
@@ -5332,7 +5419,7 @@ export default function ModelCanvas({
                     return
                   }
 
-                  navigate('/')
+                  returnToWorkspaceHome()
                 }}
                 style={{
                   padding: '10px 20px', borderRadius: 10, border: 'none', backgroundColor: 'var(--color-danger)',
@@ -5354,7 +5441,7 @@ export default function ModelCanvas({
                     return
                   }
 
-                  navigate('/')
+                  returnToWorkspaceHome()
                 }}
                 style={{
                   padding: '10px 24px', borderRadius: 10, border: '1px solid rgba(135,151,107,0.36)', backgroundColor: 'rgba(135,151,107,0.16)',

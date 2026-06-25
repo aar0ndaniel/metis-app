@@ -378,10 +378,10 @@ export default function DatasetManagerModal({
           style={{ padding: '14px 16px', borderTop: '1px solid var(--color-border)' }}
         >
           <div className="flex items-center" style={{ gap: 8 }}>
-            {selectedIds.length >= 2 && (
+            {selectedIds.length >= 1 && (
               <button
                 onClick={() => void deleteDatasetIds(selectedIds)}
-                title={`Delete ${selectedIds.length} selected datasets`}
+                title={selectedIds.length === 1 ? 'Delete selected dataset' : `Delete ${selectedIds.length} selected datasets`}
                 style={{
                   width: 30,
                   height: 30,

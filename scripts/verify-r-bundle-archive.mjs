@@ -17,7 +17,7 @@ const archiveByPlatform = {
 }
 
 const rscriptEntryByPlatform = {
-  win32: 'R-Portable/App/R-Portable/bin/Rscript.exe',
+  win32: 'R-Portable/App/R-Portable/bin/x64/Rscript.exe',
   darwin: 'R-Bundled/bin/Rscript',
   linux: 'R-Bundled/bin/Rscript',
 }

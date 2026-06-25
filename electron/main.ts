@@ -308,7 +308,7 @@ async function notifyCrashReport(kind: string, summary: string, reportPath: stri
 
 function buildSplashHtml(): string {
   const splashTheme = readStoredThemePreference()
-  const splashVersionLabel = app.getVersion() || '0.0.1'
+  const splashVersionLabel = app.getVersion() || '0.2.1'
   const isLightSplash = splashTheme === 'light'
   const logoAssetPath = isLightSplash ? 'src/assets/logo-black.svg' : 'src/assets/logo-primary.svg'
   const splashColors = isLightSplash
@@ -1876,7 +1876,7 @@ function getBundledPortableRuntimePaths(): { extractedRscriptPath: string; archi
     : path.join(extractionRoot, 'R-Bundled')
 
   const extractedRscriptPath = process.platform === 'win32'
-    ? path.join(runtimeDir, 'App', 'R-Portable', 'bin', 'Rscript.exe')
+    ? path.join(runtimeDir, 'App', 'R-Portable', 'bin', 'x64', 'Rscript.exe')
     : path.join(runtimeDir, 'bin', 'Rscript')
 
   const archivePath = path.join(rApiResourcesDir, archiveName)

@@ -970,7 +970,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
     if (datasetId) {
       const resolved = resolveDatasetContext(datasetId)
       if (!resolved) return
-      setActiveId(datasetId)
+      setActiveId(resolved.workspace.id)
     }
     setShowDatasetChoice(true)
   }, [resolveDatasetContext, setActiveId])
@@ -1919,6 +1919,9 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
               setShowDatasetChoice(false)
               window.dispatchEvent(new CustomEvent('pls:open-import-picker', {
                 detail: {
+                  workspaceId: activeWorkspace.id,
+                  workspaceName: activeWorkspace.name,
+                  workspacePath: activeWorkspace.path,
                   returnTo: '/',
                   source: 'workspace-home',
                   saveMode: 'save-as-new',
