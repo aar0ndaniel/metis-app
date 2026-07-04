@@ -2,7 +2,7 @@ export type AnalysisTone = 'pass' | 'neutral' | 'fail'
 
 export const ANALYSIS_TONE_HEX: Record<AnalysisTone, string> = {
   pass: '#87976B',
-  neutral: '#B7923F',
+  neutral: '#DC6973',
   fail: '#D96B4D',
 }
 

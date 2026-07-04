@@ -9,15 +9,17 @@
   "scripts": {
     "dev": "vite",
     "build:icons": "python scripts/gen_icon.py",
-    "build": "npm run build:icons && tsc && vite build && node scripts/sync-r-portable-zip.mjs && electron-builder && node scripts/clean-release-debug.mjs",
+    "build": "npm run build:icons && tsc && vite build && node scripts/sync-r-portable-zip.mjs && electron-builder --publish never && node scripts/clean-release-debug.mjs",
     "build:bundle": "npm run build:bundle:win",
-    "build:bundle:win": "npm run build:icons && tsc && vite build && node scripts/sync-r-portable-zip.mjs && electron-builder --config build/electron-builder.bundle.yml --win && node scripts/clean-release-debug.mjs",
-    "build:bundle:mac": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs darwin && node scripts/smoke-r-bundle-runtime.mjs darwin && electron-builder --config build/electron-builder.bundle.yml --mac && node scripts/clean-release-debug.mjs",
-    "build:bundle:linux": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs linux && node scripts/smoke-r-bundle-runtime.mjs linux && electron-builder --config build/electron-builder.bundle.yml --linux && node scripts/clean-release-debug.mjs",
-    "build:lite": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml && node scripts/clean-release-debug.mjs",
-    "build:lite:win": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --win && node scripts/clean-release-debug.mjs",
-    "build:lite:mac": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --mac && node scripts/clean-release-debug.mjs",
-    "build:lite:linux": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --linux && node scripts/clean-release-debug.mjs",
+    "build:bundle:win": "npm run build:icons && tsc && vite build && node scripts/sync-r-portable-zip.mjs && electron-builder --config build/electron-builder.bundle.yml --win --publish never && node scripts/clean-release-debug.mjs",
+    "build:bundle:mac": "npm run build:bundle:mac:arm64 && npm run build:bundle:mac:x64",
+    "build:bundle:mac:arm64": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs darwin arm64 && node scripts/smoke-r-bundle-runtime.mjs darwin arm64 && electron-builder --config build/electron-builder.bundle.yml --mac --arm64 --publish never && node scripts/clean-release-debug.mjs",
+    "build:bundle:mac:x64": "npm run build:icons && tsc && vite build && node scripts/verify-r-bundle-archive.mjs darwin x64 && node scripts/smoke-r-bundle-runtime.mjs darwin x64 && electron-builder --config build/electron-builder.bundle.yml --mac --x64 --publish never && node scripts/clean-release-debug.mjs",
+    "build:lite": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --publish never && node scripts/clean-release-debug.mjs",
+    "build:lite:win": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --win --publish never && node scripts/clean-release-debug.mjs",
+    "build:lite:mac": "npm run build:lite:mac:arm64 && npm run build:lite:mac:x64",
+    "build:lite:mac:arm64": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --mac --arm64 --publish never && node scripts/clean-release-debug.mjs",
+    "build:lite:mac:x64": "npm run build:icons && tsc && vite build && electron-builder --config build/electron-builder.lite.yml --mac --x64 --publish never && node scripts/clean-release-debug.mjs",
     "build:installers": "npm run build:bundle && npm run build:lite",
     "typecheck": "tsc --noEmit",
     "audit:high": "npm audit --omit=dev --audit-level=high"
@@ -25,29 +27,29 @@
   "dependencies": {
     "@phosphor-icons/react": "^2.1.7",
     "exceljs": "^4.4.0",
+    "jszip": "^3.10.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "jszip": "^3.10.1",
     "react-router-dom": "^6.26.0",
     "tar": "^7.5.13"
+  },
+  "overrides": {
+    "tmp": "^0.2.6",
+    "uuid": "11.1.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
-    "concurrently": "^8.2.2",
-    "electron": "^31.7.7",
     "electron-builder": "^26.8.1",
-    "esbuild": "^0.27.4",
-    "png-to-ico": "^3.0.1",
     "postcss": "^8.4.40",
     "tailwindcss": "^3.4.7",
     "typescript": "^5.5.4",
     "vite": "^7.0.0",
     "vite-plugin-electron": "^0.28.7",
     "vite-plugin-electron-renderer": "^0.14.5",
-    "wait-on": "^7.2.0"
+    "electron": "40.10.2"
   },
   "build": {
     "appId": "com.metis.app",
@@ -84,16 +86,33 @@
           "plumber.R",
           "renv-bootstrap.R",
           "renv.lock",
-          "renv/**",
-          "R-Portable.zip",
-          "R-macos.tar.gz",
-          "R-linux.tar.gz"
+          "renv/**"
         ]
       }
     ],
     "win": {
       "target": "nsis",
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "extraResources": [
+        {
+          "from": "r-api",
+          "to": "r-api",
+          "filter": [
+            "R-Portable.zip"
+          ]
+        }
+      ]
+    },
+    "mac": {
+      "extraResources": [
+        {
+          "from": "r-api",
+          "to": "r-api",
+          "filter": [
+            "R-macos-${arch}.tar.gz"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": true,
@@ -106,7 +125,7 @@
     },
     "fileAssociations": [
       {
-        "ext": "ada",
+        "ext": "metisws",
         "name": "metis Workspace",
         "role": "Editor"
       }

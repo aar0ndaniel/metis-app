@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { CheckCircle, FolderOpen, PencilSimple, Trash, X } from '@phosphor-icons/react'
+import { FolderOpen, PencilSimple, Trash, X } from '@phosphor-icons/react'
 import { dispatchToast } from './Toast'
 import {
   deleteDatasetsFromWorkspace,
@@ -241,7 +241,7 @@ export default function DatasetManagerModal({
           border: '1px solid var(--color-border)',
           borderRadius: 14,
           overflow: 'hidden',
-          boxShadow: '0 28px 72px rgba(0,0,0,0.78)',
+          boxShadow: 'var(--shadow-modal)',
         }}
       >
         <div
@@ -366,7 +366,21 @@ export default function DatasetManagerModal({
                 </div>
 
                 {isActive && renamingId !== dataset.id && (
-                  <CheckCircle size={15} color="rgba(234,236,239,0.72)" weight="fill" style={{ flexShrink: 0 }} />
+                  <div
+                    className="flex items-center"
+                    style={{
+                      height: 24,
+                      padding: '0 8px',
+                      borderRadius: 999,
+                      background: 'rgb(var(--color-hover-rgb) / 0.55)',
+                      border: '1px solid var(--color-border)',
+                      flexShrink: 0,
+                    }}
+                  >
+                    <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 700 }}>
+                      Active
+                    </span>
+                  </div>
                 )}
               </div>
             )
@@ -395,7 +409,7 @@ export default function DatasetManagerModal({
                   flexShrink: 0,
                 }}
               >
-                <Trash size={14} color="'var(--color-danger)'" />
+                <Trash size={14} color="var(--color-danger)" />
               </button>
             )}
           </div>
@@ -468,7 +482,7 @@ export default function DatasetManagerModal({
               borderRadius: 10,
               background: 'var(--color-surface)',
               border: '1px solid var(--color-border)',
-              boxShadow: '0 16px 36px rgba(0,0,0,0.58)',
+              boxShadow: 'var(--shadow-modal-popover)',
               padding: '6px 0',
               zIndex: 2250,
             }}
@@ -492,7 +506,7 @@ export default function DatasetManagerModal({
               className="flex items-center transition-colors hover:bg-white/[0.05]"
               style={{ height: 34, padding: '0 12px', gap: 8, textAlign: 'left' }}
             >
-              <Trash size={13} color="'var(--color-danger)'" />
+              <Trash size={13} color="var(--color-danger)" />
               <span style={{ color: 'var(--color-danger)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600 }}>
                 Delete
               </span>

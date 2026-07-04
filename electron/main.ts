@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu, type MenuItemConstructorOptions, type Rectangle } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -8,6 +8,8 @@ import { spawn, spawnSync, exec, execSync, type ChildProcess } from 'child_proce
 import { createServer } from 'net'
 import JSZip from 'jszip'
 import { isRendererWriteTargetAllowed } from '../src/utils/securityPaths'
+
+declare const __METIS_APP_EDITION__: string | undefined
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
@@ -24,6 +26,7 @@ const DEFAULT_PLUMBER_PORT = Number(process.env.METIS_PLUMBER_PORT || '8765')
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 let installerWindow: BrowserWindow | null = null
+let lastNormalMainWindowBounds: Rectangle | null = null
 let plumberProcess: ChildProcess | null = null
 let plumberBaseUrl = `http://${DEFAULT_PLUMBER_HOST}:${DEFAULT_PLUMBER_PORT}`
 let resolvedRscript = ''
@@ -36,6 +39,13 @@ let splashShownAt = 0
 let splashCloseRequested = false
 let pendingOpenFilePath: string | null = null
 const plumberAuthToken = randomBytes(32).toString('hex')
+const BLAS_THREAD_ENV_DEFAULTS: Record<string, string> = {
+  OPENBLAS_NUM_THREADS: '1',
+  OMP_NUM_THREADS: '1',
+  MKL_NUM_THREADS: '1',
+  BLIS_NUM_THREADS: '1',
+  VECLIB_MAXIMUM_THREADS: '1',
+}
 const approvedRendererReadPaths = new Set<string>()
 const approvedRendererWritePaths = new Set<string>()
 const approvedRendererOpenPaths = new Set<string>()
@@ -44,8 +54,162 @@ const allowedDatasetReadExtensions = new Set(['.csv', '.xlsx', '.xls'])
 const allowedRendererReadExtensions = new Set([...allowedDatasetReadExtensions, '.r'])
 const allowedRendererWriteExtensions = new Set(['.csv', '.png', '.xlsx', '.html', '.htm', '.json', '.r'])
 const allowedRendererOpenExtensions = new Set(['.html', '.htm'])
+const WORKSPACE_FILE_EXTENSION = '.metisws'
+const LEGACY_WORKSPACE_FILE_EXTENSION = '.ada'
+const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FILE_EXTENSION]
 const sampleDatasetFileName = 'sample dataset.csv'
 const missingValueTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
+const sessionTempDirName = `session-${randomBytes(8).toString('hex')}`
+
+type NativeMenuViewState = {
+  showVars: boolean
+  showProps: boolean
+  showZoomControl: boolean
+}
+
+let nativeMenuViewState: NativeMenuViewState = {
+  showVars: true,
+  showProps: true,
+  showZoomControl: true,
+}
+
+function sendRendererMenuAction(action: string) {
+  const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
+  if (!targetWindow || targetWindow.isDestroyed()) return
+  targetWindow.webContents.send('menu:action', action)
+}
+
+function nativeMenuAction(label: string, action: string, accelerator?: string): MenuItemConstructorOptions {
+  return {
+    label,
+    accelerator,
+    click: () => sendRendererMenuAction(action),
+  }
+}
+
+function nativeMenuCheckbox(label: string, action: string, checked: boolean, accelerator?: string): MenuItemConstructorOptions {
+  return {
+    label,
+    accelerator,
+    type: 'checkbox',
+    checked,
+    click: () => sendRendererMenuAction(action),
+  }
+}
+
+function installApplicationMenu() {
+  if (process.platform !== 'darwin') return
+
+  const appName = app.name || 'metis'
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: appName,
+      submenu: [
+        nativeMenuAction(`About ${appName}`, 'open-about'),
+        { type: 'separator' },
+        nativeMenuAction('Preferences...', 'open-preferences', 'Command+,'),
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { label: `Quit ${appName}`, role: 'quit', accelerator: 'Command+Q' },
+      ],
+    },
+    {
+      label: 'File',
+      submenu: [
+        nativeMenuAction('New Workspace', 'new-workspace', 'Command+N'),
+        nativeMenuAction('New Model', 'new-model', 'Command+Shift+N'),
+        { type: 'separator' },
+        nativeMenuAction('Open Workspace...', 'open-workspace', 'Command+O'),
+        {
+          label: 'Open Recent',
+          submenu: [
+            { label: 'No Recent Models', enabled: false },
+          ],
+        },
+        { type: 'separator' },
+        nativeMenuAction('Save', 'file:save', 'Command+S'),
+        nativeMenuAction('Save As...', 'file:save-as', 'Command+Shift+S'),
+        { type: 'separator' },
+        nativeMenuAction('Import Dataset...', 'import-dataset', 'Command+I'),
+        nativeMenuAction('Import R Script...', 'import-rscript'),
+        { type: 'separator' },
+        nativeMenuAction('Export R Script', 'results:export-r-script'),
+        { type: 'separator' },
+        nativeMenuAction('Close Model', 'canvas:go-home', 'Command+W'),
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        nativeMenuAction('Undo', 'edit:undo', 'Command+Z'),
+        nativeMenuAction('Redo', 'edit:redo', 'Command+Shift+Z'),
+        { type: 'separator' },
+        nativeMenuAction('Cut', 'edit:cut', 'Command+X'),
+        nativeMenuAction('Copy', 'edit:copy', 'Command+C'),
+        nativeMenuAction('Paste', 'edit:paste', 'Command+V'),
+        nativeMenuAction('Delete', 'edit:delete'),
+        { type: 'separator' },
+        nativeMenuAction('Select All', 'edit:selectall', 'Command+A'),
+        { type: 'separator' },
+        nativeMenuAction('Preferences', 'open-preferences', 'Command+,'),
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        nativeMenuAction('Zoom In', 'view:zoom-in', 'Command+Plus'),
+        nativeMenuAction('Zoom Out', 'view:zoom-out', 'Command+-'),
+        nativeMenuAction('Fit to Screen', 'view:fit-screen', 'Command+0'),
+        { type: 'separator' },
+        nativeMenuCheckbox('Zoom Control', 'view:toggle-zoom-control', nativeMenuViewState.showZoomControl),
+        nativeMenuCheckbox('Indicators Panel', 'view:toggle-vars', nativeMenuViewState.showVars),
+        nativeMenuCheckbox('Properties Panel', 'view:toggle-props', nativeMenuViewState.showProps),
+      ],
+    },
+    {
+      label: 'Analysis',
+      submenu: [
+        nativeMenuAction('Run PLS-SEM', 'run-pls', 'Command+Enter'),
+        nativeMenuAction('Run Bootstrap', 'run-bootstrap', 'Command+B'),
+        nativeMenuAction('PLS Predict', 'run-pls-predict'),
+        nativeMenuAction('Advanced analysis', 'run-advanced-analysis'),
+        { type: 'separator' },
+        { label: 'Algorithm Settings', enabled: false },
+      ],
+    },
+    {
+      label: 'Tark it',
+      submenu: [
+        nativeMenuAction('Create Tark Report', 'open-tark'),
+      ],
+    },
+    {
+      label: 'Help',
+      submenu: [
+        nativeMenuAction('Documentation', 'open-docs'),
+        nativeMenuAction('Getting Started', 'open-tour'),
+        { type: 'separator' },
+        nativeMenuAction('Feedback', 'open-feedback'),
+        nativeMenuAction('Report a Bug', 'open-report-bug'),
+        nativeMenuAction('Cite Metis', 'open-cite-metis'),
+        { type: 'separator' },
+        nativeMenuAction(`About ${appName}`, 'open-about'),
+      ],
+    },
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+}
+
+function hasWorkspaceFileExtension(targetPath: string): boolean {
+  const fileName = path.basename(String(targetPath ?? '').trim()).toLowerCase()
+  return WORKSPACE_FILE_EXTENSIONS.some((extension) => fileName.endsWith(extension))
+}
 
 function rememberPlumberLog(level: 'stdout' | 'stderr' | 'system', text: string) {
   const lines = String(text || '')
@@ -74,8 +238,21 @@ function plumberBridgeExceptionResponse(err: any, action: string) {
     rscript: resolvedRscript,
     error: `Metis could not complete the ${action} request because the local R analysis engine stopped responding. Try a smaller run, close other heavy apps, or restart Metis and run it again.`,
     backendDetail: err?.message || 'Unknown bridge error.',
+    runtimeStatus: getBundledPortableRuntimeStatus(),
     recentPlumberLogs: getRecentPlumberLogs(),
   }
+}
+
+function getPlumberNotReadyHint(): string {
+  if (!isLiteBuild()) {
+    return 'The bundled R analysis engine could not start. Run setup again or reinstall the current Bundle build so Metis can unpack R into its cache runtime folder.'
+  }
+
+  if (process.platform === 'win32') {
+    return `Verify Rscript is installed and no firewall or Windows port exclusion is blocking ${plumberBaseUrl}.`
+  }
+
+  return 'Verify Rscript is installed and Metis can launch it from the configured Lite setup path.'
 }
 
 function getThemePreferencePath(): string {
@@ -226,8 +403,39 @@ function focusMainWindow() {
   mainWindow.focus()
 }
 
+function isWorkAreaSizedWindow(win: BrowserWindow): boolean {
+  if (win.isDestroyed() || win.isMinimized() || win.isFullScreen()) return false
+
+  const bounds = win.getBounds()
+  const { workArea } = screen.getDisplayMatching(bounds)
+  const tolerance = 2
+
+  return (
+    Math.abs(bounds.x - workArea.x) <= tolerance &&
+    Math.abs(bounds.y - workArea.y) <= tolerance &&
+    Math.abs(bounds.width - workArea.width) <= tolerance &&
+    Math.abs(bounds.height - workArea.height) <= tolerance
+  )
+}
+
+function getMainWindowState(win = mainWindow) {
+  const isMaximized = !!win && !win.isDestroyed() && (win.isMaximized() || isWorkAreaSizedWindow(win))
+  const isFullScreen = !!win && !win.isDestroyed() && win.isFullScreen()
+  return { isMaximized, isFullScreen }
+}
+
+function rememberNormalMainWindowBounds(win: BrowserWindow) {
+  if (win.isDestroyed() || win.isMinimized() || win.isMaximized() || isWorkAreaSizedWindow(win)) return
+  lastNormalMainWindowBounds = win.getBounds()
+}
+
+function sendMainWindowState(win = mainWindow) {
+  if (!win || win.isDestroyed()) return
+  win.webContents.send('window:state-changed', getMainWindowState(win))
+}
+
 function queueOpenWorkspaceFile(filePath: string) {
-  if (!filePath.toLowerCase().endsWith('.ada')) return
+  if (!hasWorkspaceFileExtension(filePath)) return
   rememberApprovedWorkspacePath(filePath)
   pendingOpenFilePath = filePath
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoadingMainFrame()) {
@@ -242,20 +450,20 @@ if (!hasSingleInstanceLock) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
-    const argvAdaFile = argv.slice(1).find(
-      arg => typeof arg === 'string' && arg.toLowerCase().endsWith('.ada') && fs.existsSync(arg)
+    const argvWorkspaceFile = argv.slice(1).find(
+      arg => typeof arg === 'string' && hasWorkspaceFileExtension(arg) && fs.existsSync(arg)
     )
 
     focusMainWindow()
 
-    if (argvAdaFile) {
-      console.log('[main] Reusing existing instance for .ada file:', argvAdaFile)
-      queueOpenWorkspaceFile(argvAdaFile)
+    if (argvWorkspaceFile) {
+      console.log('[main] Reusing existing instance for workspace file:', argvWorkspaceFile)
+      queueOpenWorkspaceFile(argvWorkspaceFile)
     }
   })
 }
 
-// macOS: file opened by double-clicking an .ada file while app is running
+// macOS: file opened by double-clicking a workspace file while app is running
 app.on('open-file', (event, filePath) => {
   event.preventDefault()
   queueOpenWorkspaceFile(filePath)
@@ -998,7 +1206,7 @@ function summarizeDatasetFile(filePath: string): {
 
 function isWorkspaceFileLikePath(targetPath: string): boolean {
   const resolved = path.resolve(String(targetPath ?? '').trim())
-  return path.basename(resolved).toLowerCase().endsWith('.ada')
+  return hasWorkspaceFileExtension(resolved)
 }
 
 function queryWindowsRegistryValue(key: string, valueName: string, timeout = 6000): string | null {
@@ -1036,7 +1244,7 @@ function getExistingWindowsInstallInfo(): ExistingWindowsInstallInfo {
   return { found: false, version: null, installLocation: null }
 }
 
-function probeRscriptExecutable(rscriptPath: string): RscriptProbeResult {
+function probeRscriptExecutable(rscriptPath: string, env?: NodeJS.ProcessEnv): RscriptProbeResult {
   const executablePath = normalizeExecutablePath(rscriptPath)
   const probeCode = [
     'cat("__METIS_BEGIN__\\n")',
@@ -1051,6 +1259,7 @@ function probeRscriptExecutable(rscriptPath: string): RscriptProbeResult {
       windowsHide: true,
       encoding: 'utf8',
       timeout: 10000,
+      ...(env ? { env: { ...process.env, ...env } } : {}),
     })
     const stdout = String(result.stdout ?? '')
     const stderr = String(result.stderr ?? '')
@@ -1503,7 +1712,7 @@ function getBundledRscriptEnv(rscriptPath: string): NodeJS.ProcessEnv | null {
 
 function resolveRscriptCommand(): string {
   const { extractedRscriptPath } = getBundledPortableRuntimePaths()
-  if (!isLiteBuild() && fs.existsSync(extractedRscriptPath)) {
+  if (!isLiteBuild()) {
     return extractedRscriptPath
   }
 
@@ -1660,7 +1869,25 @@ async function startPlumberServer(): Promise<boolean> {
   const scriptPath = resolvePlumberScriptPath()
   if (!fs.existsSync(scriptPath)) {
     console.warn('[plumber] Script not found at', scriptPath)
+    rememberPlumberLog('system', `Plumber script not found at ${scriptPath}`)
     return false
+  }
+
+  const runtimeStatus = getBundledPortableRuntimeStatus()
+  if (!isLiteBuild() && !runtimeStatus.extractedRscriptExists) {
+    rememberPlumberLog('system', `Bundled Rscript missing at ${runtimeStatus.extractedRscriptPath}; archive exists=${runtimeStatus.archiveExists} size=${runtimeStatus.archiveSize ?? 'null'}`)
+    console.warn('[plumber] Bundled Rscript missing before startup:', runtimeStatus)
+    return false
+  }
+
+  if (!isLiteBuild() && process.platform !== 'win32') {
+    try {
+      await prepareBundledUnixRuntime(runtimeStatus.runtimeDir, runtimeStatus.extractedRscriptPath)
+    } catch (err: any) {
+      rememberPlumberLog('system', `Bundled Unix R runtime relocation failed: ${err?.message || err}`)
+      console.warn('[plumber] Bundled Unix R runtime relocation failed:', err?.message || err)
+      return false
+    }
   }
 
   const preferredPort = Number(process.env.METIS_PLUMBER_PORT || String(DEFAULT_PLUMBER_PORT))
@@ -1706,6 +1933,7 @@ async function startPlumberServer(): Promise<boolean> {
 
   const isReady = await waitForPlumber(plumberBaseUrl)
   if (!isReady) {
+    rememberPlumberLog('system', `Health check timed out for ${plumberBaseUrl}`)
     console.warn('[plumber] Health check timed out')
   } else {
     console.log('[plumber] Ready at', plumberBaseUrl)
@@ -1803,11 +2031,19 @@ function stopPlumberServer(options?: { preserveStartupPromise?: boolean }) {
 
 const INSTALL_CONFIG_NAME = 'install-config.json'
 
+interface InstallConfig {
+  rootPath?: string
+  workspaceDataPath?: string
+  exportPath?: string
+  liteSetupComplete?: boolean
+  rscriptPath?: string
+}
+
 function getInstallConfigPath(): string {
   return path.join(app.getPath('userData'), INSTALL_CONFIG_NAME)
 }
 
-function readInstallConfig(): { rootPath: string; liteSetupComplete?: boolean; rscriptPath?: string } | null {
+function readInstallConfig(): InstallConfig | null {
   try {
     const cfgPath = getInstallConfigPath()
     if (!fs.existsSync(cfgPath)) return null
@@ -1825,6 +2061,7 @@ function updateInstallConfig(updates: Record<string, unknown>): void {
     fs.writeFileSync(cfgPath, JSON.stringify({ ...existing, ...updates }, null, 2), 'utf-8')
   } catch (err: any) {
     console.error('[main] updateInstallConfig error:', err.message)
+    throw err
   }
 }
 
@@ -1856,7 +2093,27 @@ function getRegistryWorkspacePath(): string | null {
   return null
 }
 
-function getBundledPortableRuntimePaths(): { extractedRscriptPath: string; archivePath: string; runtimeDir: string; extractionRoot: string } {
+function getBundledRuntimeArch(): string {
+  return process.arch
+}
+
+function getBundledUnixRuntimeExtractionRoot(): string {
+  return path.join(app.getPath('cache'), 'r-runtime', getBundledRuntimeArch())
+}
+
+function getBundledUnixRuntimeLegacyExtractionRoot(): string | null {
+  if (process.platform === 'win32') return null
+  return path.join(app.getPath('userData'), 'r-runtime')
+}
+
+function getBundledPortableRuntimePaths(): {
+  extractedRscriptPath: string
+  archiveName: string
+  archivePath: string
+  runtimeDir: string
+  extractionRoot: string
+  legacyRuntimeDir: string | null
+} {
   const rApiResourcesDir = app.isPackaged
     ? path.join(process.resourcesPath, 'r-api')
     : path.join(process.cwd(), 'r-api')
@@ -1864,47 +2121,118 @@ function getBundledPortableRuntimePaths(): { extractedRscriptPath: string; archi
   const archiveName = process.platform === 'win32'
     ? 'R-Portable.zip'
     : process.platform === 'darwin'
-      ? 'R-macos.tar.gz'
+      ? `R-macos-${getBundledRuntimeArch()}.tar.gz`
       : 'R-linux.tar.gz'
 
   const extractionRoot = process.platform === 'win32'
     ? rApiResourcesDir
-    : path.join(app.getPath('userData'), 'r-runtime')
+    : getBundledUnixRuntimeExtractionRoot()
 
   const runtimeDir = process.platform === 'win32'
     ? path.join(extractionRoot, 'R-Portable')
     : path.join(extractionRoot, 'R-Bundled')
+  const legacyExtractionRoot = getBundledUnixRuntimeLegacyExtractionRoot()
+  const legacyRuntimeDir = legacyExtractionRoot
+    ? path.join(legacyExtractionRoot, 'R-Bundled')
+    : null
 
   const extractedRscriptPath = process.platform === 'win32'
     ? path.join(runtimeDir, 'App', 'R-Portable', 'bin', 'x64', 'Rscript.exe')
     : path.join(runtimeDir, 'bin', 'Rscript')
 
   const archivePath = path.join(rApiResourcesDir, archiveName)
-  return { extractedRscriptPath, archivePath, runtimeDir, extractionRoot }
+  return { extractedRscriptPath, archiveName, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir }
 }
 
 function getBundledUnixRuntimeRelocationMarker(runtimeDir: string): string {
   return path.join(runtimeDir, '.metis-conda-unpacked')
 }
 
+function getFileSizeIfPresent(filePath: string): number | null {
+  try {
+    return fs.statSync(filePath).size
+  } catch {
+    return null
+  }
+}
+
+function getBundledPortableRuntimeStatus() {
+  const { extractedRscriptPath, archiveName, archivePath, runtimeDir, extractionRoot, legacyRuntimeDir } = getBundledPortableRuntimePaths()
+  const relocationMarkerPath = process.platform === 'win32'
+    ? null
+    : getBundledUnixRuntimeRelocationMarker(runtimeDir)
+  const condaUnpackPath = process.platform === 'win32'
+    ? null
+    : path.join(runtimeDir, 'bin', 'conda-unpack')
+
+  return {
+    platform: process.platform,
+    runtimeArch: getBundledRuntimeArch(),
+    appEdition: getConfiguredAppEdition(),
+    packaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+    archiveName,
+    archivePath,
+    archiveExists: fs.existsSync(archivePath),
+    archiveSize: getFileSizeIfPresent(archivePath),
+    extractionRoot,
+    runtimeDir,
+    runtimeDirExists: fs.existsSync(runtimeDir),
+    legacyRuntimeDir,
+    legacyRuntimeDirExists: legacyRuntimeDir ? fs.existsSync(legacyRuntimeDir) : null,
+    extractedRscriptPath,
+    extractedRscriptExists: fs.existsSync(extractedRscriptPath),
+    relocationMarkerPath,
+    relocationMarkerExists: relocationMarkerPath ? fs.existsSync(relocationMarkerPath) : null,
+    condaUnpackPath,
+    condaUnpackExists: condaUnpackPath ? fs.existsSync(condaUnpackPath) : null,
+  }
+}
+
 function isBundledPortableRuntimeReady(): boolean {
   const { extractedRscriptPath, archivePath, runtimeDir } = getBundledPortableRuntimePaths()
   if (fs.existsSync(extractedRscriptPath)) {
-    return process.platform === 'win32' || fs.existsSync(getBundledUnixRuntimeRelocationMarker(runtimeDir))
+    const relocationComplete = process.platform === 'win32' || fs.existsSync(getBundledUnixRuntimeRelocationMarker(runtimeDir))
+    if (!relocationComplete) return false
+    return probeRscriptExecutable(extractedRscriptPath, getBundledRscriptEnv(extractedRscriptPath) ?? undefined).ok
   }
   if (fs.existsSync(archivePath)) return false
-  return true
+  return isLiteBuild()
 }
 
-/** Returns true when no bundled R runtime was shipped (Lite build). */
+function verifyBundledPortableRuntimeCanStart(extractedRscriptPath: string): void {
+  const probe = probeRscriptExecutable(extractedRscriptPath, getBundledRscriptEnv(extractedRscriptPath) ?? undefined)
+  if (probe.ok) return
+
+  const detail = [
+    probe.error,
+    probe.stderr?.trim(),
+    probe.stdout?.trim(),
+  ].filter(Boolean).join(' | ')
+
+  throw new Error(`Bundled R runtime could not start from ${extractedRscriptPath}. ${detail || 'No Rscript output was produced.'}`)
+}
+
+function getConfiguredAppEdition(): 'Bundle' | 'Lite' {
+  try {
+    return __METIS_APP_EDITION__ === 'Lite' ? 'Lite' : 'Bundle'
+  } catch {
+    return 'Bundle'
+  }
+}
+
+/** Returns true when this app was built as Lite. Dev keeps archive-based detection for local workflows. */
 function isLiteBuild(): boolean {
   const { archivePath } = getBundledPortableRuntimePaths()
-  return !fs.existsSync(archivePath)
+  if (isDev) return !fs.existsSync(archivePath)
+  return getConfiguredAppEdition() === 'Lite'
 }
 
 function getDataPath(): string {
   // 1. Check ephemeral config (installer flow / dev preview)
   const cfg = readInstallConfig()
+  if (cfg?.workspaceDataPath) return path.resolve(cfg.workspaceDataPath)
   if (cfg?.rootPath) return path.join(cfg.rootPath, 'metis')
 
   // 2. Check Windows Registry (Actual NSIS installation)
@@ -1925,6 +2253,12 @@ function getDataPath(): string {
 
   // 4. Absolute default
   return path.join(app.getPath('downloads'), 'metis')
+}
+
+function getExportPath(): string {
+  const cfg = readInstallConfig()
+  if (cfg?.exportPath) return path.resolve(cfg.exportPath)
+  return path.join(getDataPath(), 'exports')
 }
 
 function formatDisplayName(rawUsername: string): string {
@@ -2075,7 +2409,7 @@ function validateWorkspaceFilePath(targetPath: string, allowDirectory = true): s
     throw new Error('Workspace path is required.')
   }
   if (!isWorkspaceFileLikePath(resolved)) {
-    throw new Error('Workspace path must point to a .ada workspace file.')
+    throw new Error('Workspace path must point to a .metisws workspace file or legacy .ada workspace.')
   }
   if (!isWorkspacePathAllowed(resolved)) {
     throw new Error('Workspace path is not approved for this action.')
@@ -2083,7 +2417,7 @@ function validateWorkspaceFilePath(targetPath: string, allowDirectory = true): s
   if (fs.existsSync(resolved)) {
     const stat = fs.statSync(resolved)
     if (stat.isDirectory() && !allowDirectory) {
-      throw new Error('Workspace save target must be a .ada file, not a directory.')
+      throw new Error('Workspace save target must be a .metisws file, not a directory.')
     }
   }
   return resolved
@@ -2123,7 +2457,7 @@ function getTrustedDatasetRoots(): string[] {
 
 function getTrustedExportRoots(): string[] {
   return [
-    normalizeSecurityPath(path.join(getDataPath(), 'exports')),
+    normalizeSecurityPath(getExportPath()),
   ]
 }
 
@@ -2140,7 +2474,7 @@ function buildPlumberHeaders(includeContentType = false): Record<string, string>
 }
 
 function buildPlumberEnv(port: number, rscriptPath = ''): NodeJS.ProcessEnv {
-  return {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...(rscriptPath ? getBundledRscriptEnv(rscriptPath) ?? {} : {}),
     METIS_PLUMBER_PORT: String(port),
@@ -2148,6 +2482,12 @@ function buildPlumberEnv(port: number, rscriptPath = ''): NodeJS.ProcessEnv {
     METIS_PLUMBER_TOKEN: plumberAuthToken,
     METIS_ALLOWED_DATA_ROOTS: getTrustedDatasetRoots().join(path.delimiter),
   }
+
+  for (const [name, value] of Object.entries(BLAS_THREAD_ENV_DEFAULTS)) {
+    if (!env[name]) env[name] = value
+  }
+
+  return env
 }
 
 function syncProcessSecurityEnv(): void {
@@ -2166,6 +2506,13 @@ function registerDialogOpenPaths(result: { canceled?: boolean; filePaths?: strin
     if (isWorkspaceFileLikePath(filePath)) {
       rememberApprovedWorkspacePath(filePath)
     }
+  }
+}
+
+function registerDialogDirectoryPaths(result: { canceled?: boolean; filePaths?: string[] }): void {
+  if (result?.canceled) return
+  for (const filePath of result?.filePaths ?? []) {
+    rememberApprovedPath(approvedRendererOpenPaths, filePath)
   }
 }
 
@@ -2244,7 +2591,7 @@ function isSetupNeeded(): boolean {
 
   const cfg = readInstallConfig()
   const regPath = getRegistryWorkspacePath()
-  const hasWorkspaceRoot = !!cfg?.rootPath || !!regPath
+  const hasWorkspaceRoot = !!cfg?.rootPath || !!cfg?.workspaceDataPath || !!regPath
 
   if (!hasWorkspaceRoot) return true
 
@@ -2271,8 +2618,9 @@ function createWindow() {
     maxHeight:isSetup ? undefined : installerPreviewHeight,
     backgroundColor: readStoredThemePreference() === 'light' ? '#F4F6F8' : '#181818',
     titleBarStyle: isSetup ? 'hidden' : 'hidden',
-    // Use frameless chrome so the custom React title bar and circular controls are visible.
-    frame: false,
+    // macOS keeps the native traffic lights with titleBarStyle: hidden; other
+    // platforms stay frameless for the renderer window controls.
+    frame: process.platform === 'darwin' && isSetup,
     transparent: false,
     roundedCorners: true,
     resizable: isSetup,
@@ -2297,6 +2645,7 @@ function createWindow() {
 
   if (isSetup) {
     mainWindow = win
+    lastNormalMainWindowBounds = win.getBounds()
   } else {
     installerWindow = win
   }
@@ -2304,10 +2653,26 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => {
     if (isSetup) {
       scheduleSplashFallback()
+      sendMainWindowState(win)
     } else {
       win.show()
     }
   })
+
+  if (isSetup) {
+    const syncWindowState = () => {
+      rememberNormalMainWindowBounds(win)
+      sendMainWindowState(win)
+    }
+
+    win.on('maximize', syncWindowState)
+    win.on('unmaximize', syncWindowState)
+    win.on('enter-full-screen', syncWindowState)
+    win.on('leave-full-screen', syncWindowState)
+    win.on('restore', syncWindowState)
+    win.on('resize', syncWindowState)
+    win.on('move', syncWindowState)
+  }
 
   win.webContents.on('did-fail-load', () => {
     revealMainWindow()
@@ -2407,19 +2772,21 @@ function launchWindows() {
 }
 
 app.whenReady().then(() => {
+  cleanLegacyTempDatasetDirectories()
   const preloadPath = resolvePreloadPath()
   console.log('[main] Preload path:', preloadPath)
   console.log('[main] Preload exists:', fs.existsSync(preloadPath))
   syncProcessSecurityEnv()
+  installApplicationMenu()
 
-  // Windows: check if launched by double-clicking a .ada file
-  const argvAdaFile = process.argv.slice(1).find(
-    arg => typeof arg === 'string' && arg.toLowerCase().endsWith('.ada') && fs.existsSync(arg)
+  // Windows: check if launched by double-clicking a workspace file
+  const argvWorkspaceFile = process.argv.slice(1).find(
+    arg => typeof arg === 'string' && hasWorkspaceFileExtension(arg) && fs.existsSync(arg)
   )
-  if (argvAdaFile) {
-    rememberApprovedWorkspacePath(argvAdaFile)
-    pendingOpenFilePath = argvAdaFile
-    console.log('[main] .ada file passed via argv:', argvAdaFile)
+  if (argvWorkspaceFile) {
+    rememberApprovedWorkspacePath(argvWorkspaceFile)
+    pendingOpenFilePath = argvWorkspaceFile
+    console.log('[main] workspace file passed via argv:', argvWorkspaceFile)
   }
 
   // Restore saved Rscript path for lite builds so plumber finds it immediately
@@ -2508,6 +2875,14 @@ app.on('before-quit', (event) => {
 
 app.on('will-quit', () => {
   stopPlumberServer()
+  try {
+    const sessionDir = getTempDatasetsDir()
+    if (fs.existsSync(sessionDir)) {
+      fs.rmSync(sessionDir, { recursive: true, force: true })
+    }
+  } catch (err: any) {
+    console.error('[main] Failed to purge temp dataset directory on quit:', err.message)
+  }
 })
 
 ipcMain.handle('quit-confirmed', () => {
@@ -2555,7 +2930,7 @@ ipcMain.handle('app:reportRendererError', async (_event, payload: any) => {
 
 ipcMain.on('app:renderer-ready', () => {
   revealMainWindow()
-  // If the app was opened by double-clicking a .ada file, notify the renderer
+  // If the app was opened by double-clicking a workspace file, notify the renderer
   if (pendingOpenFilePath && mainWindow && !mainWindow.isDestroyed()) {
     const filePath = pendingOpenFilePath
     pendingOpenFilePath = null
@@ -2587,19 +2962,43 @@ ipcMain.on('install:close', () => {
 // ─── Window controls ──────────────────────────────────────────────────────────
 ipcMain.on('window:minimize', () => mainWindow?.minimize())
 ipcMain.on('window:maximize', () => {
-  if (mainWindow?.isMaximized()) mainWindow.unmaximize()
-  else mainWindow?.maximize()
+  if (!mainWindow || mainWindow.isDestroyed()) return
+
+  if (getMainWindowState(mainWindow).isMaximized) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else if (lastNormalMainWindowBounds) {
+      mainWindow.setBounds(lastNormalMainWindowBounds, true)
+    }
+    sendMainWindowState(mainWindow)
+    return
+  }
+
+  rememberNormalMainWindowBounds(mainWindow)
+  mainWindow.maximize()
+  sendMainWindowState(mainWindow)
 })
 ipcMain.on('window:close', () => mainWindow?.close())
+ipcMain.handle('window:isMaximized', () => getMainWindowState().isMaximized)
+ipcMain.on('native-menu:view-state', (_, state: Partial<NativeMenuViewState>) => {
+  nativeMenuViewState = {
+    showVars: typeof state?.showVars === 'boolean' ? state.showVars : nativeMenuViewState.showVars,
+    showProps: typeof state?.showProps === 'boolean' ? state.showProps : nativeMenuViewState.showProps,
+    showZoomControl: typeof state?.showZoomControl === 'boolean' ? state.showZoomControl : nativeMenuViewState.showZoomControl,
+  }
+  installApplicationMenu()
+})
 
 // ─── File / Directory dialogs ─────────────────────────────────────────────────
 ipcMain.handle('dialog:openDirectory', async (_, options) => {
   if (!mainWindow) return
-  return await dialog.showOpenDialog(mainWindow, {
+  const result = await dialog.showOpenDialog(mainWindow, {
     defaultPath: getDataPath(),
     ...options,
     properties: ['openDirectory'],
   })
+  registerDialogDirectoryPaths(result)
+  return result
 })
 
 ipcMain.handle('dialog:openFile', async (_, options) => {
@@ -2616,7 +3015,7 @@ ipcMain.handle('dialog:openFile', async (_, options) => {
 ipcMain.handle('dialog:showSaveDialog', async (_, options) => {
   if (!mainWindow) return
   const result = await dialog.showSaveDialog(mainWindow, {
-    defaultPath: getDataPath(),
+    defaultPath: getExportPath(),
     ...options,
   })
   registerDialogSavePath(result?.filePath, Array.isArray(options?.filters) ? options.filters : undefined)
@@ -2706,6 +3105,39 @@ ipcMain.handle('app:dataPath', async () => {
   }
 })
 
+ipcMain.handle('app:getStoragePaths', async () => {
+  try {
+    const workspacePath = getDataPath()
+    const exportPath = getExportPath()
+    return { success: true, dataPath: workspacePath, workspacePath, exportPath }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('app:setStoragePaths', async (_, data: { workspacePath?: string; exportPath?: string }) => {
+  try {
+    const workspacePath = path.resolve(String(data?.workspacePath ?? '').trim())
+    const exportPath = path.resolve(String(data?.exportPath ?? '').trim())
+    if (!String(data?.workspacePath ?? '').trim()) throw new Error('Workspace folder is required.')
+    if (!String(data?.exportPath ?? '').trim()) throw new Error('Export folder is required.')
+    const currentWorkspacePath = getDataPath()
+    const currentExportPath = getExportPath()
+    if (normalizeSecurityPath(workspacePath) !== normalizeSecurityPath(currentWorkspacePath) && !hasApprovedPath(approvedRendererOpenPaths, workspacePath)) {
+      throw new Error('Workspace folder must be selected through the folder picker.')
+    }
+    if (normalizeSecurityPath(exportPath) !== normalizeSecurityPath(currentExportPath) && !hasApprovedPath(approvedRendererOpenPaths, exportPath)) {
+      throw new Error('Export folder must be selected through the folder picker.')
+    }
+    fs.mkdirSync(workspacePath, { recursive: true })
+    fs.mkdirSync(exportPath, { recursive: true })
+    updateInstallConfig({ workspaceDataPath: workspacePath, exportPath })
+    return { success: true, dataPath: workspacePath, workspacePath, exportPath }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+})
+
 ipcMain.handle('app:setThemePreference', async (_event, theme: 'dark' | 'light') => {
   const success = writeStoredThemePreference(theme)
   return { success, theme: success ? normalizeThemePreference(theme) : readStoredThemePreference() }
@@ -2723,14 +3155,14 @@ ipcMain.handle('app:welcomeContext', async () => {
   }
 })
 
-// ─── Workspace persistence (.ada single-file format) ─────────────────────────
+// ─── Workspace persistence (.metisws single-file format) ─────────────────────
 //
-// Each workspace is stored as a single `Name.ada` JSON file in the metis
+// Each new workspace is stored as a single `Name.metisws` JSON file in the metis
 // data directory. The file embeds the dataset as base64 so the workspace is
 // fully self-contained — double-clicking opens metis via the OS file
 // association registered in the installer.
 //
-// Backward compatibility: old `.ada` folder workspaces (v1) are still read.
+// Backward compatibility: old `.ada` file/folder workspaces are still read.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface WorkspaceManifest {
@@ -2769,31 +3201,58 @@ type AdaWorkspaceFile = AdaFileV2 | AdaFileV3
 
 /** Sanitises a name to a safe filename base (no extension). */
 function sanitizeFileName(name: string): string {
-  return name.replace(/\.ada$/i, '').replace(/[^\w\s\-]/g, '_').trim() || 'workspace'
+  return name
+    .replace(/\.metisws$/i, '')
+    .replace(/\.ada$/i, '')
+    .replace(/[^\w\s\-]/g, '_')
+    .trim() || 'workspace'
 }
 
-/** Returns the absolute path of the .ada FILE for a workspace name. */
+/** Returns the absolute path of the .metisws file for a workspace name. */
 function getWorkspaceFilePath(name: string): string {
-  return path.join(getDataPath(), `${sanitizeFileName(name)}.ada`)
+  return path.join(getDataPath(), `${sanitizeFileName(name)}${WORKSPACE_FILE_EXTENSION}`)
 }
 
 /** Returns the temp directory used for extracted datasets. */
 function getTempDatasetsDir(): string {
-  return path.join(app.getPath('userData'), 'temp-datasets')
+  return path.join(app.getPath('userData'), 'temp-datasets', sessionTempDirName)
 }
 
+function cleanLegacyTempDatasetDirectories(): void {
+  try {
+    const baseTempDir = path.join(app.getPath('userData'), 'temp-datasets')
+    if (fs.existsSync(baseTempDir)) {
+      const entries = fs.readdirSync(baseTempDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory() && entry.name.startsWith('session-') && entry.name !== sessionTempDirName) {
+          try {
+            fs.rmSync(path.join(baseTempDir, entry.name), { recursive: true, force: true })
+          } catch (err: any) {
+            console.warn('[main] Failed to clean legacy temp directory entry:', entry.name, err.message)
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[main] Failed to clean legacy temp directories:', err.message)
+  }
+}
 /**
  * Writes the embedded base64 dataset to a temp file and returns its path.
  * The temp file is re-created on every app startup so it stays current.
  */
-function extractEmbeddedDataset(wsId: string, datasetId: string, base64Data: string, originalName = 'dataset.csv'): string {
+async function extractEmbeddedDataset(wsId: string, datasetId: string, base64Data: string, originalName = 'dataset.csv'): Promise<string> {
   const dir = getTempDatasetsDir()
-  fs.mkdirSync(dir, { recursive: true })
-  const ext = path.extname(originalName) || '.csv'
+  await fs.promises.mkdir(dir, { recursive: true })
+  const safeOriginalName = path.basename(originalName)
+  const ext = path.extname(safeOriginalName) || '.csv'
   const safeWorkspaceId = sanitizePathComponent(wsId, 'workspace')
   const safeDatasetId = sanitizePathComponent(datasetId, 'dataset')
   const tempPath = path.join(dir, `${safeWorkspaceId}__${safeDatasetId}${ext}`)
-  fs.writeFileSync(tempPath, Buffer.from(base64Data, 'base64'))
+  if (!isPathWithinRoot(tempPath, dir)) {
+    throw new Error('Security Error: Directory traversal detected in extraction target path.')
+  }
+  await fs.promises.writeFile(tempPath, Buffer.from(base64Data, 'base64'))
   return tempPath
 }
 
@@ -2880,67 +3339,210 @@ function resolveLegacyDatasetInternalPath(workspacePath: string, datasetId: stri
   return path.join(dir, `${safeDatasetId}${ext}`)
 }
 
-function writeDatasetBufferIntoWorkspace(
+async function writeDatasetBufferIntoWorkspace(
   workspacePath: string,
   datasetId: string,
   fileBuffer: Buffer,
   originalName: string
-): {
+): Promise<{
   success: true
   internalName: string
   path: string
   datasetTempPath?: string
-} {
-  const stat = fs.statSync(workspacePath)
+}> {
+  const stat = fs.existsSync(workspacePath) ? fs.statSync(workspacePath) : null
   const safeDatasetId = ensureSafeDatasetId(datasetId)
   const internalName = `${sanitizePathComponent(safeDatasetId, 'dataset')}${path.extname(originalName) || '.csv'}`
 
-  if (stat.isFile()) {
-    const wsData = JSON.parse(fs.readFileSync(workspacePath, 'utf-8')) as AdaWorkspaceFile
-    const base64Data = fileBuffer.toString('base64')
-    const embeddedDatasets = normalizeEmbeddedDatasets(wsData)
-    const updated: AdaFileV3 = {
-      ...hydrateWorkspaceManifest(wsData),
-      _metis: true,
-      _version: '3.0',
-      embeddedDatasets: [
-        ...embeddedDatasets.filter((entry) => entry.datasetId !== safeDatasetId),
-        { datasetId: safeDatasetId, base64Data, originalName, internalName },
-      ],
+  if (stat && stat.isFile()) {
+    let zip: JSZip
+    let wsData: WorkspaceManifest
+
+    if (await isZipFile(workspacePath)) {
+      const zipData = await fs.promises.readFile(workspacePath)
+      zip = await JSZip.loadAsync(zipData)
+      const wsJsonFile = zip.file('workspace.json')
+      if (wsJsonFile) {
+        const wsJsonText = await wsJsonFile.async('text')
+        wsData = JSON.parse(wsJsonText) as WorkspaceManifest
+      } else {
+        wsData = { id: `ws-${Date.now()}`, name: path.basename(workspacePath, WORKSPACE_FILE_EXTENSION), children: [] }
+      }
+    } else {
+      // Legacy JSON file migration
+      const raw = await fs.promises.readFile(workspacePath, 'utf-8')
+      const legacyData = JSON.parse(raw) as AdaWorkspaceFile
+      wsData = hydrateWorkspaceManifest(legacyData)
+
+      zip = new JSZip()
+      const embeddedDatasets = normalizeEmbeddedDatasets(legacyData)
+      for (const entry of embeddedDatasets) {
+        const base64Buffer = Buffer.from(entry.base64Data, 'base64')
+        const entryInternalName = entry.internalName || `${entry.datasetId}${path.extname(entry.originalName || 'dataset.csv') || '.csv'}`
+        zip.file(`datasets/${entryInternalName}`, base64Buffer)
+      }
     }
-    fs.writeFileSync(workspacePath, JSON.stringify(updated, null, 2), 'utf-8')
-    const tempPath = extractEmbeddedDataset(wsData.id, safeDatasetId, base64Data, originalName)
+
+    zip.file(`datasets/${internalName}`, fileBuffer)
+
+    if (!wsData.children) wsData.children = []
+    const existingChildIndex = wsData.children.findIndex((c: any) => c.id === safeDatasetId && c.type === 'dataset')
+
+    const newChild = {
+      id: safeDatasetId,
+      type: 'dataset',
+      name: originalName,
+      filePath: internalName,
+      originalFileName: originalName,
+    }
+
+    if (existingChildIndex >= 0) {
+      wsData.children[existingChildIndex] = {
+        ...wsData.children[existingChildIndex],
+        ...newChild,
+      }
+    } else {
+      wsData.children.push(newChild)
+    }
+
+    zip.file('workspace.json', JSON.stringify(wsData, null, 2))
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    writeAtomicSync(workspacePath, zipBuffer)
+
+    const tempDir = getTempDatasetsDir()
+    await fs.promises.mkdir(tempDir, { recursive: true })
+    const tempPath = path.join(tempDir, `${wsData.id}__${safeDatasetId}${path.extname(internalName) || '.csv'}`)
+    if (!isPathWithinRoot(tempPath, tempDir)) {
+      throw new Error('Security Error: Directory traversal detected in extraction target path.')
+    }
+    await fs.promises.writeFile(tempPath, fileBuffer)
+
     return { success: true, internalName, path: tempPath, datasetTempPath: tempPath }
   }
 
   if (!fs.existsSync(workspacePath)) {
-    fs.mkdirSync(workspacePath, { recursive: true })
+    await fs.promises.mkdir(workspacePath, { recursive: true })
   }
 
   const datasetsDir = path.join(workspacePath, 'datasets')
   if (!fs.existsSync(datasetsDir)) {
-    fs.mkdirSync(datasetsDir, { recursive: true })
+    await fs.promises.mkdir(datasetsDir, { recursive: true })
   }
   const internalPath = resolveLegacyDatasetInternalPath(workspacePath, safeDatasetId, originalName)
-  fs.writeFileSync(internalPath, fileBuffer)
+  writeAtomicSync(internalPath, fileBuffer)
   return { success: true, internalName: path.basename(internalPath), path: internalPath, datasetTempPath: internalPath }
 }
 
-function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: string, datasetId: string): {
+async function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: string, datasetId: string): Promise<{
   success: true
   internalName: string
   path: string
   datasetTempPath?: string
-} {
-  const fileBuffer = fs.readFileSync(originalFilePath)
+}> {
+  const fileBuffer = await fs.promises.readFile(originalFilePath)
   const originalName = path.basename(originalFilePath)
-  return writeDatasetBufferIntoWorkspace(workspacePath, datasetId, fileBuffer, originalName)
+  return await writeDatasetBufferIntoWorkspace(workspacePath, datasetId, fileBuffer, originalName)
 }
 
-/** Parses a v2 .ada file and (if it contains a dataset) extracts to temp. */
-function readAdaFile(adaFilePath: string): (WorkspaceManifest & { path: string; _format: 'v2' | 'v3' }) | null {
+function writeAtomicSync(targetPath: string, content: string | Buffer): void {
+  const tmpPath = `${targetPath}.tmp`
   try {
-    const raw = fs.readFileSync(adaFilePath, 'utf-8')
+    fs.writeFileSync(tmpPath, content)
+  } catch (err) {
+    try { fs.unlinkSync(tmpPath) } catch {}
+    throw err
+  }
+
+  let retries = 3
+  const delay = 50
+  while (retries > 0) {
+    try {
+      fs.renameSync(tmpPath, targetPath)
+      return
+    } catch (err: any) {
+      retries--
+      if (retries === 0) {
+        try { fs.unlinkSync(tmpPath) } catch {}
+        throw err
+      }
+      const start = Date.now()
+      while (Date.now() - start < delay) {}
+    }
+  }
+}
+
+async function isZipFile(filePath: string): Promise<boolean> {
+  let fd: fs.promises.FileHandle | null = null
+  try {
+    fd = await fs.promises.open(filePath, 'r')
+    const buffer = Buffer.alloc(4)
+    const { bytesRead } = await fd.read(buffer, 0, 4, 0)
+    return bytesRead === 4 && buffer.toString('hex') === '504b0304'
+  } catch {
+    return false
+  } finally {
+    if (fd !== null) {
+      try {
+        await fd.close()
+      } catch {}
+    }
+  }
+}
+
+/** Parses a workspace file and (if it contains a dataset) extracts to temp. */
+async function readAdaFile(adaFilePath: string, extract = true): Promise<(WorkspaceManifest & { path: string; _format: 'v2' | 'v3' | 'zip' }) | null> {
+  try {
+    if (await isZipFile(adaFilePath)) {
+      const fileBuffer = await fs.promises.readFile(adaFilePath)
+      const zip = await JSZip.loadAsync(fileBuffer)
+      const wsJsonFile = zip.file('workspace.json')
+      if (!wsJsonFile) return null
+
+      const wsJsonText = await wsJsonFile.async('text')
+      const data = JSON.parse(wsJsonText) as WorkspaceManifest
+      if (!data || !data.id) return null
+
+      const datasetTempPaths = new Map<string, string>()
+      if (extract) {
+        const datasetChildren = getManifestDatasetChildren(data)
+        for (const dataset of datasetChildren) {
+          const dir = getTempDatasetsDir()
+          if (dataset.filePath) {
+            const unsafePath = path.join(dir, dataset.filePath)
+            if (!isPathWithinRoot(unsafePath, dir)) {
+              throw new Error('Security Error: Directory traversal detected in extraction target path.')
+            }
+          }
+          const zipPath = `datasets/${dataset.filePath}`
+          const zipEntry = zip.file(zipPath)
+          if (zipEntry) {
+            try {
+              const buffer = await zipEntry.async('nodebuffer')
+              await fs.promises.mkdir(dir, { recursive: true })
+              const safeName = path.basename(dataset.filePath || `${dataset.id}.csv`)
+              const tempPath = path.join(dir, `${data.id}__${dataset.id}${path.extname(safeName) || '.csv'}`)
+              if (!isPathWithinRoot(tempPath, dir)) {
+                throw new Error('Security Error: Directory traversal detected in extraction target path.')
+              }
+              await fs.promises.writeFile(tempPath, buffer)
+              datasetTempPaths.set(dataset.id, tempPath)
+            } catch (err: any) {
+              console.warn('[main] Failed to extract zip dataset:', dataset.id, err.message)
+            }
+          }
+        }
+      }
+
+      const hydrated = hydrateWorkspaceManifest(data, datasetTempPaths)
+      return {
+        ...hydrated,
+        path: adaFilePath,
+        _format: 'zip',
+      }
+    }
+
+    const raw = await fs.promises.readFile(adaFilePath, 'utf-8')
     const data = JSON.parse(raw) as AdaWorkspaceFile
     const isRecognizedWorkspaceFile = (data as any)?._metis === true || data._version === '2.0' || data._version === '3.0'
     if (!isRecognizedWorkspaceFile) return null
@@ -2948,14 +3550,16 @@ function readAdaFile(adaFilePath: string): (WorkspaceManifest & { path: string; 
 
     const embeddedDatasets = normalizeEmbeddedDatasets(data)
     const datasetTempPaths = new Map<string, string>()
-    for (const dataset of embeddedDatasets) {
-      try {
-        datasetTempPaths.set(
-          dataset.datasetId,
-          extractEmbeddedDataset(data.id, dataset.datasetId, dataset.base64Data, dataset.originalName)
-        )
-      } catch (e: any) {
-        console.warn('[main] Failed to extract embedded dataset:', e.message)
+    if (extract) {
+      for (const dataset of embeddedDatasets) {
+        try {
+          datasetTempPaths.set(
+            dataset.datasetId,
+            await extractEmbeddedDataset(data.id, dataset.datasetId, dataset.base64Data, dataset.originalName)
+          )
+        } catch (e: any) {
+          console.warn('[main] Failed to extract embedded dataset:', e.message)
+        }
       }
     }
 
@@ -2972,7 +3576,10 @@ function readAdaFile(adaFilePath: string): (WorkspaceManifest & { path: string; 
       path: adaFilePath,
       _format: data._version === '3.0' ? 'v3' : 'v2',
     }
-  } catch {
+  } catch (err: any) {
+    if (err && err.message && err.message.includes('Security Error')) {
+      throw err
+    }
     return null
   }
 }
@@ -3005,7 +3612,7 @@ function readLegacyWorkspaceFolder(folderPath: string): (WorkspaceManifest & { p
   }
 }
 
-/** Open a specific workspace .ada file or legacy folder, even outside the app data directory. */
+/** Open a specific workspace file or legacy folder, even outside the app data directory. */
 ipcMain.handle('workspace:openFile', async (_, workspaceFilePath: string) => {
   try {
     const resolvedPath = validateWorkspaceFilePath(workspaceFilePath)
@@ -3014,7 +3621,7 @@ ipcMain.handle('workspace:openFile', async (_, workspaceFilePath: string) => {
     const stat = fs.statSync(resolvedPath)
     const workspace = stat.isDirectory()
       ? readLegacyWorkspaceFolder(resolvedPath)
-      : readAdaFile(resolvedPath)
+      : await readAdaFile(resolvedPath)
 
     if (!workspace) throw new Error('Could not read workspace file.')
     rememberApprovedWorkspacePath(resolvedPath)
@@ -3026,7 +3633,7 @@ ipcMain.handle('workspace:openFile', async (_, workspaceFilePath: string) => {
   }
 })
 
-/** Embed dataset into .ada file and return the temp path for the R backend. */
+/** Embed dataset into the workspace file and return the temp path for the R backend. */
 ipcMain.handle('file:copyToWorkspace', async (_, data) => {
   try {
     const originalFilePath = String(data?.originalFilePath ?? '').trim()
@@ -3047,7 +3654,7 @@ ipcMain.handle('file:copyToWorkspace', async (_, data) => {
     if (!fs.existsSync(originalFilePath)) {
       throw new Error(`Source file does not exist: ${originalFilePath}`)
     }
-    const result = copyDatasetIntoWorkspace(originalFilePath, workspacePath, datasetId)
+    const result = await copyDatasetIntoWorkspace(originalFilePath, workspacePath, datasetId)
     console.log('[main:file:copyToWorkspace] Dataset persisted:', result.path)
     return result
   } catch (err: any) {
@@ -3069,7 +3676,7 @@ ipcMain.handle('dataset:saveToWorkspace', async (_, data: { workspacePath: strin
       throw new Error('Dataset save blocked: destination must be an approved metis workspace.')
     }
     const buffer = Buffer.from(base64Data, 'base64')
-    return writeDatasetBufferIntoWorkspace(workspacePath, datasetId, buffer, fileName)
+    return await writeDatasetBufferIntoWorkspace(workspacePath, datasetId, buffer, fileName)
   } catch (err: any) {
     console.error('[main:dataset:saveToWorkspace] error:', err.message)
     return { success: false, error: err.message }
@@ -3092,7 +3699,7 @@ ipcMain.handle('dataset:useSample', async (_, data: { workspacePath: string; dat
 
     const samplePath = resolveSampleDatasetPath()
     const summary = summarizeDatasetFile(samplePath)
-    const persisted = writeDatasetBufferIntoWorkspace(
+    const persisted = await writeDatasetBufferIntoWorkspace(
       workspacePath,
       datasetId,
       fs.readFileSync(samplePath),
@@ -3119,7 +3726,7 @@ ipcMain.handle('dataset:useSample', async (_, data: { workspacePath: string; dat
   }
 })
 
-/** Scan metis data directory for .ada files (new) and .ada folders (legacy). */
+/** Scan metis data directory for workspace files and legacy .ada folders. */
 ipcMain.handle('workspace:list', async () => {
   const dataPath = getDataPath()
   try {
@@ -3132,11 +3739,12 @@ ipcMain.handle('workspace:list', async () => {
     const workspaces: any[] = []
     for (const entry of entries) {
       const fullPath = path.join(dataPath, entry.name)
-      const isAda = entry.name.toLowerCase().endsWith('.ada')
-      if (entry.isFile() && isAda) {
-        const ws = readAdaFile(fullPath)
+      const isWorkspaceFile = hasWorkspaceFileExtension(entry.name)
+      const isLegacyFolder = entry.name.toLowerCase().endsWith(LEGACY_WORKSPACE_FILE_EXTENSION)
+      if (entry.isFile() && isWorkspaceFile) {
+        const ws = await readAdaFile(fullPath, false)
         if (ws) workspaces.push(ws)
-      } else if (entry.isDirectory() && isAda) {
+      } else if (entry.isDirectory() && isLegacyFolder) {
         // Legacy v1 folder
         const ws = readLegacyWorkspaceFolder(fullPath)
         if (ws) workspaces.push(ws)
@@ -3148,21 +3756,23 @@ ipcMain.handle('workspace:list', async () => {
   }
 })
 
-/** Create a new workspace as a single .ada file. */
+/** Create a new workspace as a single .metisws file. */
 ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
   console.log('[main] workspace:create request', { name: wsData.name, id: wsData.id })
   try {
     ensureDataDir()
     const adaFilePath = getWorkspaceFilePath(wsData.name)
     console.log('[main] Creating workspace at:', adaFilePath)
-    const fileData: AdaFileV3 = {
-      _metis: true,
-      _version: '3.0',
-      ...hydrateWorkspaceManifest(wsData),
-      embeddedDatasets: [],
-    }
-    fs.writeFileSync(adaFilePath, JSON.stringify(fileData, null, 2), 'utf-8')
-    console.log('[main] Workspace .ada file created')
+
+    const hydrated = hydrateWorkspaceManifest(wsData)
+    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
+
+    const zip = new JSZip()
+    zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    writeAtomicSync(adaFilePath, zipBuffer)
+    console.log('[main] Workspace .metisws file created')
     return { success: true, path: adaFilePath }
   } catch (err: any) {
     console.error('[main] workspace:create error:', err.message)
@@ -3171,7 +3781,7 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
   }
 })
 
-/** Save updated workspace data to its .ada file (preserves embedded datasets). */
+/** Save updated workspace data to its workspace file (preserves embedded datasets). */
 ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: string }) => {
   console.log('[main] workspace:save request', { name: wsData.name, id: wsData.id })
   try {
@@ -3189,32 +3799,59 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
     }
     // Guard against legacy v1 directory at the same path (prevents EISDIR)
     if (fs.existsSync(adaFilePath) && !fs.statSync(adaFilePath).isFile()) {
-      adaFilePath = adaFilePath.replace(/\.ada$/i, '_v2.ada')
+      const parsed = path.parse(adaFilePath)
+      adaFilePath = path.join(parsed.dir, `${parsed.name}_v2${WORKSPACE_FILE_EXTENSION}`)
       console.warn('[main] workspace:save — legacy folder conflict, writing to:', adaFilePath)
     }
 
-    let existingEmbeddedDatasets: EmbeddedDatasetV3[] = []
-    if (fs.existsSync(adaFilePath) && fs.statSync(adaFilePath).isFile()) {
-      try {
-        const existing = JSON.parse(fs.readFileSync(adaFilePath, 'utf-8')) as AdaWorkspaceFile
-        existingEmbeddedDatasets = normalizeEmbeddedDatasets(existing)
-      } catch { /* ignore */ }
-    }
+    let zip = new JSZip()
+    const isExistingFile = fs.existsSync(adaFilePath) && fs.statSync(adaFilePath).isFile()
 
     const hydrated = hydrateWorkspaceManifest(wsData)
-    const datasetIds = new Set(getManifestDatasetChildren(hydrated).map((child: any) => child.id))
-    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
-    const fileData: AdaFileV3 = {
-      _metis: true,
-      _version: '3.0',
-      ...cleanData,
-      embeddedDatasets: existingEmbeddedDatasets.filter((entry) => datasetIds.has(entry.datasetId)),
+    const datasetChildren = getManifestDatasetChildren(hydrated)
+    const datasetIds = new Set(datasetChildren.map((child: any) => child.id))
+    const datasetFileNames = new Set(datasetChildren.map((child: any) => child.filePath).filter(Boolean))
+
+    if (isExistingFile) {
+      if (await isZipFile(adaFilePath)) {
+        const fileBuffer = await fs.promises.readFile(adaFilePath)
+        zip = await JSZip.loadAsync(fileBuffer)
+
+        // Clean up deleted datasets from datasets/ in the zip
+        zip.folder('datasets')?.forEach((relativePath, file) => {
+          if (!datasetFileNames.has(relativePath)) {
+            zip.remove(`datasets/${relativePath}`)
+          }
+        })
+      } else {
+        // Migrate legacy JSON file to ZIP
+        try {
+          const raw = await fs.promises.readFile(adaFilePath, 'utf-8')
+          const existing = JSON.parse(raw) as AdaWorkspaceFile
+          const existingEmbeddedDatasets = normalizeEmbeddedDatasets(existing)
+          const activeEmbedded = existingEmbeddedDatasets.filter((entry) => datasetIds.has(entry.datasetId))
+
+          for (const entry of activeEmbedded) {
+            const base64Buffer = Buffer.from(entry.base64Data, 'base64')
+            const entryInternalName = entry.internalName || `${entry.datasetId}${path.extname(entry.originalName || 'dataset.csv') || '.csv'}`
+            zip.file(`datasets/${entryInternalName}`, base64Buffer)
+          }
+        } catch (e: any) {
+          console.warn('[main] Failed to parse legacy JSON workspace for migration:', e.message)
+        }
+      }
     }
 
+    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
+    zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
+
     if (!fs.existsSync(path.dirname(adaFilePath))) {
-      fs.mkdirSync(path.dirname(adaFilePath), { recursive: true })
+      await fs.promises.mkdir(path.dirname(adaFilePath), { recursive: true })
     }
-    fs.writeFileSync(adaFilePath, JSON.stringify(fileData, null, 2), 'utf-8')
+
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    writeAtomicSync(adaFilePath, zipBuffer)
+
     rememberApprovedWorkspacePath(adaFilePath)
     console.log('[main] Workspace saved to:', adaFilePath)
     return { success: true, path: adaFilePath }
@@ -3227,7 +3864,7 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
   }
 })
 
-/** Delete a workspace .ada file (or legacy folder). Also cleans up temp datasets. */
+/** Delete a workspace file (or legacy folder). Also cleans up temp datasets. */
 ipcMain.handle('workspace:delete', async (_, wsData: Partial<WorkspaceManifest> & { path?: string }) => {
   const dataPath = path.resolve(getDataPath())
   try {
@@ -3293,30 +3930,58 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
     const stat = fs.statSync(wsPath)
 
     if (stat.isFile()) {
-      const wsData = JSON.parse(fs.readFileSync(wsPath, 'utf-8')) as AdaWorkspaceFile
+      let wsData: WorkspaceManifest
+      let zip: JSZip | null = null
+      const isZip = await isZipFile(wsPath)
+
+      if (isZip) {
+        const fileBuffer = await fs.promises.readFile(wsPath)
+        zip = await JSZip.loadAsync(fileBuffer)
+        const wsJsonFile = zip.file('workspace.json')
+        if (wsJsonFile) {
+          const wsJsonText = await wsJsonFile.async('text')
+          wsData = JSON.parse(wsJsonText) as WorkspaceManifest
+        } else {
+          throw new Error('workspace.json not found in ZIP archive.')
+        }
+      } else {
+        const raw = await fs.promises.readFile(wsPath, 'utf-8')
+        wsData = JSON.parse(raw) as AdaWorkspaceFile
+      }
+
       const children = Array.isArray(wsData.children) ? wsData.children : []
       const child = children.find((e: any) => e?.id === childId)
       if (!child) return { success: true, deleted: false, reason: 'child_not_found' }
       const nextChildren = children.filter((e: any) => e?.id !== childId)
       const childType = String(child?.type ?? '').toLowerCase()
 
-      const nextEmbeddedDatasets = childType === 'dataset'
-        ? normalizeEmbeddedDatasets(wsData).filter((entry) => entry.datasetId !== childId)
-        : normalizeEmbeddedDatasets(wsData)
-
       const nextManifest = hydrateWorkspaceManifest({
         ...wsData,
         children: nextChildren,
       })
+      const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = nextManifest as any
 
-      const updated: AdaFileV3 = {
-        ...(nextManifest as any),
-        _metis: true,
-        _version: '3.0',
-        embeddedDatasets: nextEmbeddedDatasets,
+      if (isZip && zip) {
+        if (childType === 'dataset' && child.filePath) {
+          zip.remove(`datasets/${child.filePath}`)
+        }
+        zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
+        const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+        writeAtomicSync(wsPath, zipBuffer)
+      } else {
+        const nextEmbeddedDatasets = childType === 'dataset'
+          ? normalizeEmbeddedDatasets(wsData as AdaWorkspaceFile).filter((entry) => entry.datasetId !== childId)
+          : normalizeEmbeddedDatasets(wsData as AdaWorkspaceFile)
+
+        const updated: AdaFileV3 = {
+          ...cleanData,
+          _metis: true,
+          _version: '3.0',
+          embeddedDatasets: nextEmbeddedDatasets,
+        }
+        writeAtomicSync(wsPath, JSON.stringify(updated, null, 2))
       }
 
-      fs.writeFileSync(wsPath, JSON.stringify(updated, null, 2), 'utf-8')
       return { success: true, deleted: true, childId, childType, deletedFiles: [] }
     }
 
@@ -3358,7 +4023,7 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
 })
 
 /**
- * Extract the embedded dataset from a .ada file to a temp location.
+ * Extract the embedded dataset from a workspace file to a temp location.
  * The R backend calls this (via IPC) to get a real file path it can read.
  */
 ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFilePath?: string; datasetId?: string }) => {
@@ -3382,13 +4047,26 @@ ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFile
       if (existingPath) return { success: true, datasetTempPath: existingPath }
       return { success: false, error: 'Dataset file not found in legacy workspace.' }
     }
-    const wsData = JSON.parse(fs.readFileSync(adaFilePath, 'utf-8')) as AdaWorkspaceFile
+    if (await isZipFile(adaFilePath)) {
+      const ws = await readAdaFile(adaFilePath, true)
+      if (!ws) throw new Error('Could not read ZIP workspace.')
+      const datasetChildren = getManifestDatasetChildren(ws)
+      const targetDataset = datasetId
+        ? datasetChildren.find((entry) => entry.id === datasetId)
+        : datasetChildren[0]
+      if (!targetDataset || !targetDataset.datasetTempPath) {
+        return { success: false, error: 'No dataset found in this workspace.' }
+      }
+      return { success: true, datasetTempPath: targetDataset.datasetTempPath }
+    }
+    const wsDataText = await fs.promises.readFile(adaFilePath, 'utf-8')
+    const wsData = JSON.parse(wsDataText) as AdaWorkspaceFile
     const embeddedDatasets = normalizeEmbeddedDatasets(wsData)
     const targetDataset = datasetId
       ? embeddedDatasets.find((entry) => entry.datasetId === datasetId)
       : embeddedDatasets[0]
     if (!targetDataset) return { success: false, error: 'No embedded dataset in this workspace.' }
-    const tempPath = extractEmbeddedDataset(wsData.id, targetDataset.datasetId, targetDataset.base64Data, targetDataset.originalName)
+    const tempPath = await extractEmbeddedDataset(wsData.id, targetDataset.datasetId, targetDataset.base64Data, targetDataset.originalName)
     return { success: true, datasetTempPath: tempPath }
   } catch (err: any) {
     console.error('[main] workspace:extractDataset error:', err.message)
@@ -3398,7 +4076,19 @@ ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFile
 
 ipcMain.handle('plumber:health', async () => {
   try {
-    await ensurePlumberReady()
+    const ready = await ensurePlumberReady()
+    if (!ready) {
+      return {
+        success: false,
+        status: 0,
+        url: plumberBaseUrl,
+        rscript: resolvedRscript,
+        error: 'PLS backend is not ready.',
+        runtimeStatus: getBundledPortableRuntimeStatus(),
+        recentPlumberLogs: getRecentPlumberLogs(),
+      }
+    }
+
     const response = await fetch(`${plumberBaseUrl}/health`, {
       headers: buildPlumberHeaders(),
     })
@@ -3409,6 +4099,8 @@ ipcMain.handle('plumber:health', async () => {
       url: plumberBaseUrl,
       rscript: resolvedRscript,
       body: text,
+      runtimeStatus: getBundledPortableRuntimeStatus(),
+      recentPlumberLogs: response.ok ? undefined : getRecentPlumberLogs(),
     }
   } catch (err: any) {
     return {
@@ -3417,6 +4109,8 @@ ipcMain.handle('plumber:health', async () => {
       url: plumberBaseUrl,
       rscript: resolvedRscript,
       error: err.message,
+      runtimeStatus: getBundledPortableRuntimeStatus(),
+      recentPlumberLogs: getRecentPlumberLogs(),
     }
   }
 })
@@ -3434,7 +4128,8 @@ async function postToPlumber(pathname: string, payload: any) {
         status: 0,
         url: plumberBaseUrl,
         rscript: resolvedRscript,
-        error: `PLS backend is not ready. Verify Rscript is installed and no firewall or Windows port exclusion is blocking ${plumberBaseUrl}.`,
+        error: `PLS backend is not ready. ${getPlumberNotReadyHint()}`,
+        runtimeStatus: getBundledPortableRuntimeStatus(),
         recentPlumberLogs: getRecentPlumberLogs(),
       }
     }
@@ -3456,6 +4151,7 @@ async function postToPlumber(pathname: string, payload: any) {
         rscript: resolvedRscript,
         error: `The R analysis engine stopped responding before it could return results. This can happen when a long bootstrap or prediction run is too heavy for the machine. Try fewer samples, close other heavy apps, or restart Metis and run again.`,
         backendDetail: err?.message || 'Local R backend request failed.',
+        runtimeStatus: getBundledPortableRuntimeStatus(),
         bridgeTimings: {
           route: pathname,
           totalSeconds: Number(elapsedSeconds.toFixed(3)),
@@ -3477,6 +4173,7 @@ async function postToPlumber(pathname: string, payload: any) {
         rscript: resolvedRscript,
         error: `The R analysis engine started the response but Metis could not finish receiving it. Try fewer samples, close other heavy apps, or restart Metis and run again.`,
         backendDetail: err?.message || 'Could not read the R backend response.',
+        runtimeStatus: getBundledPortableRuntimeStatus(),
         bridgeTimings: {
           route: pathname,
           totalSeconds: Number(((Date.now() - requestStarted) / 1000).toFixed(3)),
@@ -3521,6 +4218,7 @@ async function postToPlumber(pathname: string, payload: any) {
       url: plumberBaseUrl,
       rscript: resolvedRscript,
       bridgeTimings,
+      runtimeStatus: response.ok ? undefined : getBundledPortableRuntimeStatus(),
       recentPlumberLogs: response.ok ? undefined : getRecentPlumberLogs(),
       ...data,
     }
@@ -3532,6 +4230,7 @@ async function postToPlumber(pathname: string, payload: any) {
     url: plumberBaseUrl,
     rscript: resolvedRscript,
     error: `404 - Resource Not Found (${pathname})`,
+    runtimeStatus: getBundledPortableRuntimeStatus(),
     recentPlumberLogs: getRecentPlumberLogs(),
   }
 }
@@ -3679,12 +4378,15 @@ async function runProcess(executablePath: string, args: string[], options: { cwd
     let stdout = ''
     child.stdout?.on('data', (chunk) => { stdout += String(chunk) })
     child.stderr?.on('data', (chunk) => { stderr += String(chunk) })
-    child.on('error', reject)
+    child.on('error', (err) => {
+      reject(new Error(`Failed to start ${executablePath}: ${err.message}`))
+    })
     child.on('exit', (code) => {
       if (code === 0) {
         resolve()
       } else {
-        reject(new Error(stderr.trim() || stdout.trim() || `${path.basename(executablePath)} exited with code ${code}`))
+        const output = stderr.trim() || stdout.trim() || 'no process output'
+        reject(new Error(`${path.basename(executablePath)} ${args.join(' ')} exited with code ${code}: ${output}`))
       }
     })
   })
@@ -3724,13 +4426,18 @@ async function extractRPortable(sendProgress: (step: string, detail: string) => 
   const { extractedRscriptPath, archivePath, runtimeDir, extractionRoot } = getBundledPortableRuntimePaths()
 
   if (!fs.existsSync(archivePath)) {
-    console.log('[install] Bundled R archive not found at', archivePath, '— skipping extraction')
-    return
+    if (isLiteBuild()) {
+      console.log('[install] Lite build has no bundled R archive — skipping extraction')
+      return
+    }
+
+    throw new Error(`Bundled R archive was not found at ${archivePath}. Add the platform runtime archive before running the Bundle installer.`)
   }
 
   if (fs.existsSync(extractedRscriptPath)) {
     console.log('[install] Bundled R runtime already extracted, skipping')
     await prepareBundledUnixRuntime(runtimeDir, extractedRscriptPath)
+    verifyBundledPortableRuntimeCanStart(extractedRscriptPath)
     return
   }
 
@@ -3757,6 +4464,9 @@ async function extractRPortable(sendProgress: (step: string, detail: string) => 
     sendProgress('extracting', 'Relocating bundled R runtime...')
     await prepareBundledUnixRuntime(runtimeDir, extractedRscriptPath)
   }
+
+  sendProgress('extracting', 'Checking bundled R runtime...')
+  verifyBundledPortableRuntimeCanStart(extractedRscriptPath)
 
   console.log('[install] Bundled R runtime extracted successfully')
 }

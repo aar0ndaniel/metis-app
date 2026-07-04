@@ -567,16 +567,23 @@ function expandPlsPredictSummaryRows(rows: Array<Record<string, unknown>>): Arra
   })
 }
 
-export function extractQ2PredictRows(rows: Array<Record<string, unknown>>): Array<{ label: string; q2Predict: number }> {
-  const byLabel = new Map<string, number>()
+export function extractQ2PredictRows(rows: Array<Record<string, unknown>>): Array<{ label: string; q2Predict: number | null }> {
+  const byLabel = new Map<string, number | null>()
   expandPlsPredictSummaryRows(rows).forEach((row) => {
     const summaryRow = unwrapSummaryRow(row)
     const label = getSummaryLabel(summaryRow)
+    if (!label) return
     const q2Predict = readNumericMetric(row, Q2_PREDICT_KEYS)
       ?? readNumericMetric(summaryRow, Q2_PREDICT_KEYS)
       ?? readLongMetricValue(summaryRow, Q2_PREDICT_KEYS)
-    if (label && q2Predict != null && !byLabel.has(label)) {
-      byLabel.set(label, q2Predict)
+    // Include the row as long as it has a label AND at least one metric present
+    const hasAnyMetric = q2Predict != null
+      || readNumericMetric(row, PLS_RMSE_KEYS) != null
+      || readNumericMetric(summaryRow, PLS_RMSE_KEYS) != null
+      || readNumericMetric(row, PLS_MAE_KEYS) != null
+      || readNumericMetric(summaryRow, PLS_MAE_KEYS) != null
+    if (hasAnyMetric && !byLabel.has(label)) {
+      byLabel.set(label, q2Predict ?? null)
     }
   })
   return Array.from(byLabel.entries()).map(([label, q2Predict]) => ({ label, q2Predict }))
@@ -615,14 +622,6 @@ export function extractPlsLmComparisonRows(rows: Array<Record<string, unknown>>)
   )
 }
 
-export function formatBottleneckDisplayValue(value: unknown): string {
-  if (value == null) return '—'
-  if (typeof value === 'string' && !value.trim()) return '—'
-  const numeric = Number(value)
-  if (Number.isFinite(numeric) && Math.abs(numeric) < 0.0005) return 'NN'
-  return formatPreciseNumber(value)
-}
-
 export function formatPreciseNumber(value: unknown, decimals = 3): string {
   if (value == null) return '—'
   const numeric = Number(value)
@@ -634,4 +633,133 @@ export function formatPreciseNumber(value: unknown, decimals = 3): string {
   }
 
   return rounded
+}
+
+function normalizeBottleneckKey(key?: string): string {
+  return String(key ?? '').trim().replace(/[\s_.()%/-]+/g, '').toLowerCase()
+}
+
+export function isBottleneckOutcomeField(header?: string): boolean {
+  return [
+    'outcomelevel',
+    'outcome',
+    'desiredoutcome',
+    'desiredoutcomelevel',
+    'targetlevel',
+    'performancelevel',
+    'level',
+  ].includes(normalizeBottleneckKey(header))
+}
+
+export function isBottleneckMetaField(header?: string): boolean {
+  return ['method', 'ceiling', 'ceilingline', 'ceilingmethod'].includes(normalizeBottleneckKey(header))
+}
+
+function isBottleneckMissingValue(value: unknown): boolean {
+  if (value == null) return true
+  const text = String(value).trim()
+  if (!text) return true
+  return ['NN', '-', '—', 'NA', 'N/A', 'NULL'].includes(text.toUpperCase())
+}
+
+function isOutcomeLevelSeries(values: unknown[]): boolean {
+  const numericValues = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value))
+
+  if (numericValues.length < Math.min(3, values.length)) return false
+  if (numericValues.some((value) => value < 0 || value > 100)) return false
+
+  for (let index = 1; index < numericValues.length; index += 1) {
+    if (numericValues[index] < numericValues[index - 1]) return false
+  }
+
+  return new Set(numericValues).size >= Math.min(3, numericValues.length)
+}
+
+function bottleneckCeilingLabel(value: unknown): string {
+  const text = String(value ?? '').trim()
+  const normalized = normalizeBottleneckKey(text)
+  if (normalized === 'cefdh') return 'CE-FDH'
+  if (normalized === 'crfdh') return 'CR-FDH'
+  return text
+}
+
+function inferBottleneckOutcomeKey(rows: Array<Record<string, unknown>>): { key: string; restoreAsCondition: boolean } | null {
+  if (!rows.length) return null
+
+  const keys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))))
+    .filter((key) => !isBottleneckMetaField(key))
+  const explicitKey = keys.find((key) => isBottleneckOutcomeField(key) || normalizeBottleneckKey(key) === 'rowname' || normalizeBottleneckKey(key) === 'row')
+
+  if (explicitKey) return { key: explicitKey, restoreAsCondition: false }
+
+  const firstDataKey = keys[0]
+  if (!firstDataKey) return null
+
+  const firstColumnValues = rows.map((row) => row[firstDataKey])
+  return isOutcomeLevelSeries(firstColumnValues)
+    ? { key: firstDataKey, restoreAsCondition: true }
+    : null
+}
+
+export function normalizeBottleneckRowsForDisplay(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const allKeys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))))
+  const hasExplicitOutcomeKey = allKeys.some((key) =>
+    isBottleneckOutcomeField(key) || normalizeBottleneckKey(key) === 'rowname' || normalizeBottleneckKey(key) === 'row'
+  )
+
+  if (!hasExplicitOutcomeKey) {
+    const groupKeys = rows.map((row) => bottleneckCeilingLabel(row.Ceiling ?? row.ceiling ?? row.Method ?? row.method ?? 'Bottleneck') || 'Bottleneck')
+    const uniqueGroupKeys = Array.from(new Set(groupKeys))
+    if (uniqueGroupKeys.length > 1) {
+      return uniqueGroupKeys.flatMap((groupKey) =>
+        normalizeBottleneckRowsForDisplay(rows.filter((_, index) => groupKeys[index] === groupKey))
+      )
+    }
+  }
+
+  const outcomeKeyInfo = inferBottleneckOutcomeKey(rows)
+  if (!outcomeKeyInfo) return rows
+
+  const conditionKeys = allKeys.filter((key) =>
+    key !== outcomeKeyInfo.key &&
+    !isBottleneckMetaField(key) &&
+    !(isBottleneckOutcomeField(key) || normalizeBottleneckKey(key) === 'rowname' || normalizeBottleneckKey(key) === 'row')
+  )
+  const orderedConditionKeys = outcomeKeyInfo.restoreAsCondition
+    ? [outcomeKeyInfo.key, ...conditionKeys.filter((key) => key !== outcomeKeyInfo.key)]
+    : conditionKeys
+
+  return rows.map((row) => {
+    const rawMethod = row.Method ?? row.method
+    const rawCeiling = row.Ceiling ?? row.ceiling ?? row.Ceiling_Line ?? row.ceiling_line
+    const methodLooksLikeCeiling = /(?:ce|cr)[\s_-]*fdh/i.test(String(rawMethod ?? ''))
+    const ceiling = bottleneckCeilingLabel(rawCeiling ?? (methodLooksLikeCeiling ? rawMethod : ''))
+    const normalized: Record<string, unknown> = {
+      Method: 'NCA',
+      Ceiling: ceiling || bottleneckCeilingLabel(rawMethod) || '—',
+      Outcome_Level: row[outcomeKeyInfo.key],
+    }
+
+    orderedConditionKeys.forEach((key) => {
+      normalized[key] = key === outcomeKeyInfo.key ? 'NN' : row[key]
+    })
+
+    return normalized
+  })
+}
+
+export function formatBottleneckOutcomeLevel(value: unknown): string {
+  if (value == null || (typeof value === 'string' && !value.trim())) return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return String(value).trim()
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(2)
+}
+
+export function formatBottleneckDisplayValue(value: unknown): string {
+  if (isBottleneckMissingValue(value)) return 'NN'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return String(value).trim()
+  return numeric.toFixed(2)
 }

@@ -17,6 +17,8 @@ const [
   plumberSource,
   viteEnvSource,
   titleBarSource,
+  calculatingModalSource,
+  calculatingChipSource,
 ] = await Promise.all([
   read('src/state/calculationContext.tsx'),
   read('src/pages/ModelCanvas.tsx'),
@@ -27,9 +29,12 @@ const [
   read('r-api/plumber.R'),
   read('src/vite-env.d.ts'),
   read('src/components/TitleBar.tsx'),
+  read('src/components/CalculatingModal.tsx'),
+  read('src/components/CalculatingChip.tsx'),
 ])
 
 assert.match(contextSource, /lastTransientDone/, 'CalculationContext should track a transient done chip.')
+assert.doesNotMatch(contextSource, /estimatedSeconds\?: number/, 'CalculationContext should not carry estimated duration now that timing is hidden.')
 assert.match(contextSource, /clearTransientDone/, 'CalculationContext should auto-clear transient done state.')
 assert.match(contextSource, /__metisIsCalculating/, 'CalculationProvider should expose the busy flag for Electron quit confirmation.')
 assert.match(contextSource, /onConfirmQuitDuringCalc/, 'CalculationProvider should listen for Electron quit confirmation requests.')
@@ -44,6 +49,7 @@ assert.match(canvasSource, /runBootstrapModel/, 'Bootstrap should keep the singl
 assert.doesNotMatch(canvasSource, /runBootstrapChunked|onChunkStart|chunk_n/, 'ModelCanvas should not keep chunked bootstrap flow.')
 assert.match(canvasSource, /type: 'pls'[\s\S]*progressMode: 'indeterminate'/, 'PLS-SEM should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /type: 'bootstrap'[\s\S]*progressMode: 'indeterminate'/, 'Bootstrap should use indeterminate modal progress while the blocking backend call runs.')
+assert.doesNotMatch(canvasSource, /estimatedSeconds:\s*estimateBootstrapSeconds\(totalNboot\)|formatBootstrapEstimate|estimateBootstrapSeconds/, 'Bootstrap should not pass estimated duration into the calculation modal.')
 assert.match(canvasSource, /type: 'plspredict'[\s\S]*progressMode: 'indeterminate'/, 'PLSpredict should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /type: 'advanced'[\s\S]*progressMode: 'indeterminate'/, 'Advanced analysis should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /Backend detail:/, 'Unexpected backend failures should show the real backend detail instead of only the generic model error.')
@@ -86,13 +92,18 @@ assert.match(mainSource, /quit-confirmed/, 'Electron main should accept the quit
 assert.match(mainSource, /quit-cancelled/, 'Electron main should accept the quit cancelled reply.')
 assert.doesNotMatch(mainSource, /runBootstrapChunk|finalizeBootstrap|run-bootstrap-chunk|finalize-bootstrap/, 'Electron main should not register chunked bootstrap IPC routes.')
 
+assert.doesNotMatch(calculatingModalSource, /active\.estimatedSeconds|Estimated time|Elapsed|formatDuration|startedAt/, 'Calculating modal should not show estimated or elapsed time while a run is active.')
+assert.match(calculatingModalSource, /dispatch\(\{ type: 'hide' \}\)/, 'Calculating modal should keep the existing Hide affordance while a calculation runs.')
+assert.doesNotMatch(calculatingChipSource, /estimatedSeconds|Est\.|bg-neutral-|text-neutral-|border-neutral-|hover:bg-neutral-/, 'Hidden calculation chip should not show estimated timing or force dark neutral styling.')
+assert.match(calculatingChipSource, /background:\s*'var\(--color-panel-pop\)'[\s\S]*color:\s*'var\(--color-text-primary\)'/, 'Hidden calculation chip should use theme-aware surface and text tokens.')
+
 assert.match(plumberSource, /analysis_core_plan <- function\(\)[\s\S]*max\(1L, min\(as\.integer\(requested\), as\.integer\(detected\)\)\)[\s\S]*analysis_cores <- function\(\)/, 'R API should keep bounded analysis core planning and compatibility selection.')
-assert.match(plumberSource, /reserve <- if \(detected > 9L\) 2L else 1L[\s\S]*requested <- detected - reserve/, 'R API should reserve two cores above 9 detected cores and one core at 9 or fewer detected cores.')
+assert.match(plumberSource, /reserve <- if \(detected > 16L\) \{\s*4L\s*\} else if \(detected > 10L\) \{\s*2L\s*\} else \{\s*1L\s*\}[\s\S]*requested <- detected - reserve/, 'R API should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.')
 assert.doesNotMatch(plumberSource, /coerce_boot_array|run-bootstrap-chunk|finalize-bootstrap|chunk_n|accumulated|Chunked bootstrap|chunked bootstrap/, 'R API should not expose chunked bootstrap routes or helpers.')
 assert.match(plumberSource, /assemble_bootstrap_response <- function/, 'R API should share bootstrap response assembly for the single bootstrap route.')
 assert.match(plumberSource, /"\/run-bootstrap"/, 'R API should expose the single /run-bootstrap route.')
 
-assert.match(titleBarSource, /ChatCircleText/, 'TitleBar should render a feedback icon.')
-assert.match(titleBarSource, />Feedback</, 'TitleBar should show Feedback text beside the Tark entry point.')
+assert.match(titleBarSource, /label: 'Feedback'[\s\S]*action: 'open-feedback'/, 'TitleBar should keep Feedback available from Help.')
+assert.doesNotMatch(titleBarSource, /id="tour-feedback"|ChatCircleText/, 'TitleBar should not render the old feedback button near the window controls.')
 
 console.log('PASS calculating modal plan static coverage')

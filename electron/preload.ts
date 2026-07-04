@@ -1,10 +1,28 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
+type NativeMenuViewState = {
+  showVars: boolean
+  showProps: boolean
+  showZoomControl: boolean
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Window controls
   minimize:  () => ipcRenderer.send('window:minimize'),
   maximize:  () => ipcRenderer.send('window:maximize'),
   close:     () => ipcRenderer.send('window:close'),
+  isMaximized: () => ipcRenderer.invoke('window:isMaximized'),
+  onWindowStateChanged: (cb: (data: { isMaximized: boolean; isFullScreen?: boolean }) => void) => {
+    const handler = (_: unknown, data: { isMaximized: boolean; isFullScreen?: boolean }) => cb(data)
+    ipcRenderer.on('window:state-changed', handler)
+    return () => ipcRenderer.removeListener('window:state-changed', handler)
+  },
+  onNativeMenuAction: (cb: (action: string) => void) => {
+    const handler = (_: unknown, action: string) => cb(action)
+    ipcRenderer.on('menu:action', handler)
+    return () => ipcRenderer.removeListener('menu:action', handler)
+  },
+  setNativeMenuState: (state: NativeMenuViewState) => ipcRenderer.send('native-menu:view-state', state),
   notifyAppReady: () => ipcRenderer.send('app:renderer-ready'),
   sendRendererReady: () => ipcRenderer.send('app:renderer-ready'),
   platform:  process.platform,
@@ -21,6 +39,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveDatasetToWorkspace: (data: { workspacePath: string; datasetId: string; fileName: string; base64Data: string }) =>
     ipcRenderer.invoke('dataset:saveToWorkspace', data),
   getDataPath:   () => ipcRenderer.invoke('app:dataPath'),
+  getStoragePaths: () => ipcRenderer.invoke('app:getStoragePaths'),
+  setStoragePaths: (data: { workspacePath: string; exportPath: string }) => ipcRenderer.invoke('app:setStoragePaths', data),
   getWelcomeContext: () => ipcRenderer.invoke('app:welcomeContext'),
   setThemePreference: (theme: 'dark' | 'light') => ipcRenderer.invoke('app:setThemePreference', theme),
   useSampleDataset: (data: { workspacePath: string; datasetId?: string }) => ipcRenderer.invoke('dataset:useSample', data),
@@ -52,7 +72,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Workspace: extract embedded dataset to a temp file for the R backend
   extractDataset: (payload: string | { adaFilePath: string; datasetId?: string }) => ipcRenderer.invoke('workspace:extractDataset', payload),
 
-  // Workspace: listen for a .ada file opened via OS file association
+  // Workspace: listen for a workspace file opened via OS file association
   onOpenFile: (cb: (filePath: string) => void) => {
     const handler = (_: unknown, filePath: string) => cb(filePath)
     ipcRenderer.on('workspace:openedViaFile', handler)

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = path.resolve(__dirname, '..')
 const packageSource = await fs.readFile(path.join(workspaceRoot, 'package.json'), 'utf8')
+const mainSource = await fs.readFile(path.join(workspaceRoot, 'electron/main.ts'), 'utf8')
 const plumberSource = await fs.readFile(path.join(workspaceRoot, 'r-api/plumber.R'), 'utf8')
 const bootstrapModalSource = await fs.readFile(path.join(workspaceRoot, 'src/components/BootstrapModal.tsx'), 'utf8')
 const advancedModalSource = await fs.readFile(path.join(workspaceRoot, 'src/components/AdvancedAnalysisModal.tsx'), 'utf8')
@@ -20,8 +21,8 @@ assert.match(
 
 assert.match(
   plumberSource,
-  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*9L\s*\)\s*2L\s*else\s*1L[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
-  'Default analysis cores should reserve two cores above 9 detected cores and one core at 9 or fewer detected cores.'
+  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s+if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
+  'Default analysis cores should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.'
 )
 
 assert.match(
@@ -57,7 +58,7 @@ for (const releasePlumberPath of [
 
   assert.match(
     releasePlumberSource,
-    /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*9L\s*\)\s*2L\s*else\s*1L[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
+    /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s+if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
     `${releasePlumberPath} should match the dynamic bundled core fallback.`
   )
 
@@ -108,8 +109,26 @@ assert.match(
 
 assert.match(
   plumberSource,
+  /format_timing_details\s*<-\s*function\s*\(details\)[\s\S]*core plan: using[\s\S]*logical cores[\s\S]*reserved[\s\S]*core_policy/,
+  'Timing details should explain the bootstrap core plan instead of only printing a raw cores number.'
+)
+
+assert.match(
+  plumberSource,
   /timing_execution_log\s*<-\s*function\s*\(timings\)[\s\S]*Timing:/,
   'Timing phases should continue to be formatted into execution log entries.'
+)
+
+assert.match(
+  mainSource,
+  /const BLAS_THREAD_ENV_DEFAULTS[\s\S]*OPENBLAS_NUM_THREADS:\s*'1'[\s\S]*OMP_NUM_THREADS:\s*'1'[\s\S]*VECLIB_MAXIMUM_THREADS:\s*'1'/,
+  'Plumber should default BLAS engines to one thread so optimized BLAS does not oversubscribe bootstrap workers.'
+)
+
+assert.match(
+  mainSource,
+  /for \(const \[name, value\] of Object\.entries\(BLAS_THREAD_ENV_DEFAULTS\)\)[\s\S]*if \(!env\[name\]\) env\[name\] = value/,
+  'Plumber BLAS thread defaults should preserve explicit user environment overrides.'
 )
 
 assert.match(

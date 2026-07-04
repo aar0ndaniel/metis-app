@@ -11,6 +11,8 @@ export interface PanelEmptyStateContext {
   cvpatStatus?: string
   modelSelectionComparable?: boolean
   fitAvailable?: boolean
+  hasInteractions?: boolean
+  hasInteractionCoefficients?: boolean
   advancedAnalyses?: {
     ipma?: boolean
     nca?: boolean
@@ -49,6 +51,24 @@ export function classifyPanelEmptyState(context: PanelEmptyStateContext): string
 
     case 'htmt-confidence-intervals':
       return 'Bootstrap HTMT confidence intervals are not available yet for this analysis.'
+
+    case 'moderation-summary':
+    case 'moderation-r2-change':
+    case 'moderation-bootstrap':
+      if (context.hasInteractions === false) {
+        return 'No moderation effects in the current model.'
+      }
+      return 'No moderation effect data available for this analysis.'
+
+    case 'moderation-slopes':
+    case 'moderation-slope-chart':
+      if (context.hasInteractions === false) {
+        return 'No moderation effects in the current model.'
+      }
+      if (context.hasInteractionCoefficients === false) {
+        return 'Re-run PLS-SEM to compute simple slopes — results predate the moderation path.'
+      }
+      return 'No moderation effect data available for this analysis.'
 
     case 'cvpat-lv-summary':
       if (context.cvpatStatus === 'missing-seminrextras') {

@@ -49,8 +49,8 @@ assert.doesNotMatch(
 
 assert.match(
   resultsSource,
-  /:root \{[\s\S]*--bg:#F4F6F8;[\s\S]*--card:#FFFFFF;[\s\S]*--line:#D7DDE6;[\s\S]*--text:#1A1F2B;[\s\S]*--muted:#5F6978;[\s\S]*--brand:#87976B;[\s\S]*--indicator:#C6A24B;/,
-  'HTML export should use the light app palette and expose green/gold diagram tokens.',
+  /:root \{[\s\S]*--bg:#F4F6F8;[\s\S]*--card:#FFFFFF;[\s\S]*--line:#D7DDE6;[\s\S]*--text:#1A1F2B;[\s\S]*--muted:#5F6978;[\s\S]*--brand:\$\{exportAccent\.color\};[\s\S]*--indicator:\$\{exportAccent\.color\};/,
+  'HTML export should use the light app palette and expose dynamic diagram accent tokens.',
 )
 
 assert.doesNotMatch(
@@ -61,26 +61,44 @@ assert.doesNotMatch(
 
 assert.match(
   resultsSource,
-  /const EXPORT_CONSTRUCT_COLOR = '#87976B'/,
-  'Exported diagrams should use green constructs.',
+  /function getCurrentExportAccent\(\): ExportAccent[\s\S]*getPropertyValue\('--color-accent'\)[\s\S]*\|\| '#2F8FB3'/,
+  'Exported diagrams should resolve the current accent with the default fallback.',
 )
 
 assert.match(
   resultsSource,
-  /const EXPORT_INDICATOR_COLOR = '#C6A24B'/,
-  'Exported diagrams should use gold indicators.',
+  /getPropertyValue\('--color-accent-rgb'\)[\s\S]*\|\| '47 143 179'/,
+  'Exported diagrams should resolve the current accent RGB with the default fallback.',
 )
 
 assert.match(
   resultsSource,
-  /<circle cx="\$\{c\.x\}" cy="\$\{c\.y\}" r="\$\{c\.radius\}" fill="\$\{EXPORT_CONSTRUCT_COLOR\}"/,
-  'Exported construct circles should be filled with the green construct color.',
+  /<circle cx="\$\{c\.x\}" cy="\$\{c\.y\}" r="\$\{c\.radius\}" fill="\$\{exportAccent\.color\}" stroke="\$\{exportAccent\.color\}"/,
+  'Exported construct circles should be filled with the export accent color.',
 )
 
 assert.match(
   resultsSource,
-  /<rect x="\$\{ind\.ix - ind\.labelW \/ 2\}"[\s\S]*fill="\$\{EXPORT_INDICATOR_COLOR\}"/,
-  'Exported indicator boxes should be filled with the gold indicator color.',
+  /<rect x="\$\{ind\.ix - ind\.labelW \/ 2\}"[\s\S]*height="\$\{ind\.labelH\}"[\s\S]*fill="\$\{ind\.constructColor\}24"[\s\S]*stroke="\$\{ind\.constructColor\}"/,
+  'Exported indicator boxes should inherit their construct color.',
+)
+
+assert.doesNotMatch(
+  resultsSource.slice(resultsSource.indexOf('interface CanvasConstruct'), resultsSource.indexOf('interface CanvasPath')),
+  /width\?: number|height\?: number/,
+  'Results canvas indicators should not persist custom size fields.',
+)
+
+assert.match(
+  resultsSource,
+  /arrowPathSplit\(from,\s*to,\s*40,\s*p\.labelT\)/,
+  'Exported structural path statistics should use persisted label positions.',
+)
+
+assert.match(
+  resultsSource,
+  /clampResultsLabelT\(ind\.labelT\)/,
+  'Exported indicator score labels should use persisted label positions.',
 )
 
 assert.match(

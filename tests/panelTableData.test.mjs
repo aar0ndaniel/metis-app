@@ -60,7 +60,10 @@ await runTest('panel table helpers split PLSpredict summaries and expose matrix/
     extractQ2PredictRows,
     extractPlsLmComparisonRows,
     formatBottleneckDisplayValue,
+    formatBottleneckOutcomeLevel,
     formatPreciseNumber,
+    isBottleneckOutcomeField,
+    normalizeBottleneckRowsForDisplay,
     normalizeIndexedTableLabel,
     normalizeBootstrapSignificanceRows,
     isBootstrapSignificancePanel,
@@ -76,7 +79,10 @@ await runTest('panel table helpers split PLSpredict summaries and expose matrix/
   assert.equal(typeof extractQ2PredictRows, 'function')
   assert.equal(typeof extractPlsLmComparisonRows, 'function')
   assert.equal(typeof formatBottleneckDisplayValue, 'function')
+  assert.equal(typeof formatBottleneckOutcomeLevel, 'function')
   assert.equal(typeof formatPreciseNumber, 'function')
+  assert.equal(typeof isBottleneckOutcomeField, 'function')
+  assert.equal(typeof normalizeBottleneckRowsForDisplay, 'function')
   assert.equal(typeof normalizeIndexedTableLabel, 'function')
   assert.equal(typeof normalizeBootstrapSignificanceRows, 'function')
   assert.equal(typeof isBootstrapSignificancePanel, 'function')
@@ -205,9 +211,27 @@ await runTest('panel table helpers split PLSpredict summaries and expose matrix/
     { label: 'SAT7', plsRmse: 0.39, plsMae: 0.28, lmRmse: 0.46, lmMae: 0.33 },
   ])
 
-  assert.equal(formatBottleneckDisplayValue(0), 'NN')
-  assert.equal(formatBottleneckDisplayValue('0.000'), 'NN')
-  assert.equal(formatBottleneckDisplayValue(12.3456), '12.346')
+  assert.equal(formatBottleneckDisplayValue('NN'), 'NN')
+  assert.equal(formatBottleneckDisplayValue(null), 'NN')
+  assert.equal(formatBottleneckDisplayValue(0), '0.00')
+  assert.equal(formatBottleneckDisplayValue('0.000'), '0.00')
+  assert.equal(formatBottleneckDisplayValue(12.3456), '12.35')
+  assert.equal(formatBottleneckOutcomeLevel(10), '10')
+  assert.equal(formatBottleneckOutcomeLevel(12.5), '12.50')
+  assert.equal(isBottleneckOutcomeField('Outcome_Level'), true)
+
+  assert.deepEqual(
+    normalizeBottleneckRowsForDisplay([
+      { Method: 'CR-FDH', Ceiling: 'cr_fdh', ATT: 0, PEOU: 'NN', PU: 'NN', SE: 'NN' },
+      { Method: 'CR-FDH', Ceiling: 'cr_fdh', ATT: 10, PEOU: 'NN', PU: 0.4, SE: 32.6 },
+      { Method: 'CR-FDH', Ceiling: 'cr_fdh', ATT: 20, PEOU: 'NN', PU: 0.4, SE: 32.6 },
+    ]),
+    [
+      { Method: 'NCA', Ceiling: 'CR-FDH', Outcome_Level: 0, ATT: 'NN', PEOU: 'NN', PU: 'NN', SE: 'NN' },
+      { Method: 'NCA', Ceiling: 'CR-FDH', Outcome_Level: 10, ATT: 'NN', PEOU: 'NN', PU: 0.4, SE: 32.6 },
+      { Method: 'NCA', Ceiling: 'CR-FDH', Outcome_Level: 20, ATT: 'NN', PEOU: 'NN', PU: 0.4, SE: 32.6 },
+    ],
+  )
 
   assert.equal(formatPreciseNumber(0.0004), '0.000400')
   assert.equal(formatPreciseNumber(-0.0004), '-0.000400')

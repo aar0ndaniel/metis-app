@@ -26,14 +26,14 @@
   --color-border-rgb: 58 58 58;
   --color-menu-bg: #202020;
   --color-menu-bg-rgb: 32 32 32;
-  --color-input: #1A1A1A;
-  --color-input-rgb: 26 26 26;
+  --color-input: #1C1C1C;
+  --color-input-rgb: 28 28 28;
   --color-chrome: #202020;
   --color-chrome-rgb: 32 32 32;
   --color-panel: var(--color-menu-bg);
   --color-panel-rgb: var(--color-menu-bg-rgb);
-  --color-panel-pop: #383838;
-  --color-panel-pop-rgb: 56 56 56;
+  --color-panel-pop: #222222;
+  --color-panel-pop-rgb: 34 34 34;
   --color-panel-control: #202020;
   --color-panel-control-rgb: 32 32 32;
   --color-panel-control-active: #2A2A2A;
@@ -75,7 +75,8 @@
   --color-calculation-accent: var(--color-accent);
   --color-calculation-accent-rgb: var(--color-accent-rgb);
   --color-on-calculation-accent: var(--color-on-accent);
-  --color-warning: #B7923F;
+  --color-warning: #DC6973;
+  --color-warning-rgb: 220 105 115;
   --color-danger: #D96B4D;
   --color-danger-rgb: 217 107 77;
   --color-on-accent: #181818;
@@ -88,6 +89,9 @@
   --color-success-text-light: #DCE7CB;
   --color-success-text-light-alt: #C8D5B4;
   --color-titlebar-bg: var(--color-surface);
+  --color-title-menu-text: #FFFFFF;
+  --color-title-menu-muted: #9499A1;
+  --color-title-menu-disabled: #666A72;
   --color-sidebar-bg: var(--color-menu-bg);
   --color-right-panel-bg: #181818;
   --color-toolbar-bg: rgba(10, 12, 13, 0.88);
@@ -101,6 +105,8 @@
   --shadow-panel-pop: 0 10px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 var(--color-floating-highlight);
   --shadow-floating-dropdown: 0 12px 22px rgba(0, 0, 0, 0.34);
   --shadow-floating-tooltip: 0 8px 18px rgba(0, 0, 0, 0.26);
+  --shadow-modal: 0 14px 34px rgba(0, 0, 0, 0.38), inset 0 1px 0 var(--color-floating-highlight-soft);
+  --shadow-modal-popover: 0 8px 18px rgba(0, 0, 0, 0.28), inset 0 1px 0 var(--color-floating-highlight-soft);
 }
 
 [data-theme='light'] {
@@ -117,8 +123,8 @@
   --color-border-rgb: 215 221 230;
   --color-menu-bg: #FAFBFD;
   --color-menu-bg-rgb: 250 251 253;
-  --color-input: #FFFFFF;
-  --color-input-rgb: 255 255 255;
+  --color-input: #EEF2F6;
+  --color-input-rgb: 238 242 246;
   --color-chrome: #F1F4F7;
   --color-chrome-rgb: 241 244 247;
   --color-panel: var(--color-menu-bg);
@@ -163,10 +169,11 @@
   --color-success: #87976B;
   --color-success-rgb: 135 151 107;
   --color-success-border: rgba(135, 151, 107, 0.38);
-  --color-calculation-accent: var(--color-success);
-  --color-calculation-accent-rgb: var(--color-success-rgb);
-  --color-on-calculation-accent: var(--color-on-success);
-  --color-warning: #9B7A2E;
+  --color-calculation-accent: var(--color-accent);
+  --color-calculation-accent-rgb: var(--color-accent-rgb);
+  --color-on-calculation-accent: var(--color-on-accent);
+  --color-warning: #DC6973;
+  --color-warning-rgb: 220 105 115;
   --color-danger: #C65D44;
   --color-danger-rgb: 198 93 68;
   --color-on-accent: #181818;
@@ -179,6 +186,9 @@
   --color-success-text-light: #98AA7F;
   --color-success-text-light-alt: #8F9F75;
   --color-titlebar-bg: #F4F4F4;
+  --color-title-menu-text: #3F4651;
+  --color-title-menu-muted: #7F8A9A;
+  --color-title-menu-disabled: #A0AABC;
   --color-sidebar-bg: #F4F4F4;
   --color-right-panel-bg: #FAFAFA;
   --color-toolbar-bg: #F4F4F4;
@@ -192,6 +202,8 @@
   --shadow-panel-pop: 0 10px 24px rgba(15, 18, 25, 0.10), inset 0 1px 0 var(--color-floating-highlight);
   --shadow-floating-dropdown: 0 12px 22px rgba(15, 18, 25, 0.12);
   --shadow-floating-tooltip: 0 8px 18px rgba(15, 18, 25, 0.10);
+  --shadow-modal: 0 14px 34px rgba(15, 18, 25, 0.12), inset 0 1px 0 var(--color-floating-highlight);
+  --shadow-modal-popover: 0 8px 18px rgba(15, 18, 25, 0.10), inset 0 1px 0 var(--color-floating-highlight);
 }
 
 [data-font-scale='small'] {
@@ -229,10 +241,34 @@ body {
   background: transparent;
 }
 
+.titlebar-menu-row {
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  outline: none;
+  transition:
+    background 120ms ease,
+    box-shadow 120ms ease,
+    filter 120ms ease;
+}
+
+.titlebar-menu-row:not(.titlebar-menu-row-disabled):hover,
+.titlebar-menu-row:not(.titlebar-menu-row-disabled):focus-visible {
+  background: rgb(var(--color-hover-rgb) / 0.64);
+  box-shadow: inset 0 0 0 1px rgb(var(--color-border-rgb) / 0.28);
+  filter: brightness(1.03);
+}
+
+.titlebar-menu-row:not(.titlebar-menu-row-disabled):active {
+  background: rgb(var(--color-hover-rgb) / 0.82);
+}
+
 .metis-app-shell {
   width: calc(100vw / var(--app-font-scale));
   height: calc(100vh / var(--app-font-scale));
   zoom: var(--app-font-scale);
+  filter: var(--app-interface-contrast-filter, contrast(100%));
+  transition: filter 180ms ease-in-out;
 }
 
 /* Theme-aware scrollbar */
@@ -436,6 +472,29 @@ body {
   backface-visibility: hidden;
   perspective: 1000px;
 }
+
+.data-view-context-action {
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+
+.data-view-context-action:hover {
+  background: rgb(var(--color-accent-rgb) / 0.10) !important;
+  color: var(--color-text-primary) !important;
+}
+
+.data-view-context-action-warning:hover {
+  background: rgb(var(--color-warning-rgb) / 0.12) !important;
+  color: var(--color-warning) !important;
+}
+
+.data-view-unsaved-save:hover {
+  background: rgb(var(--color-accent-rgb) / 0.08) !important;
+}
+
+.data-view-unsaved-discard:hover {
+  background: rgb(var(--color-warning-rgb) / 0.84) !important;
+}
+
 @keyframes fadeUp {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

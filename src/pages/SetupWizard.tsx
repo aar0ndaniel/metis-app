@@ -203,8 +203,8 @@ function StatusMark({
   const colors = tone === 'success'
     ? { bg: 'rgb(var(--color-accent-rgb) / 0.12)', border: 'rgb(var(--color-accent-rgb) / 0.30)', icon: ACCENT_HEX }
     : tone === 'warning'
-      ? { bg: 'rgba(183, 146, 63, 0.12)', border: 'rgba(183, 146, 63, 0.32)', icon: 'var(--color-warning)' }
-      : { bg: 'rgba(183, 146, 63, 0.12)', border: 'rgba(183, 146, 63, 0.32)', icon: 'var(--color-warning)' }
+      ? { bg: 'rgb(var(--color-warning-rgb) / 0.12)', border: 'rgb(var(--color-warning-rgb) / 0.32)', icon: 'var(--color-warning)' }
+      : { bg: 'rgb(var(--color-warning-rgb) / 0.12)', border: 'rgb(var(--color-warning-rgb) / 0.32)', icon: 'var(--color-warning)' }
 
   return (
     <div

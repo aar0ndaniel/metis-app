@@ -63,6 +63,10 @@ await runTest('results panel catalog exposes the approved mode-specific sidebars
   const bootstrap = getPanelSectionsForMode('bootstrap')
   const plspredict = getPanelSectionsForMode('plspredict')
   const advanced = getPanelSectionsForMode('advanced')
+  const moderatedPlsSem = getPanelSectionsForMode('pls-sem', { hasInteractions: true })
+  const moderatedBootstrap = getPanelSectionsForMode('bootstrap', { hasInteractions: true })
+  const moderatedPlsPredict = getPanelSectionsForMode('plspredict', { hasInteractions: true })
+  const moderatedAdvanced = getPanelSectionsForMode('advanced', { hasInteractions: true })
 
   assert.deepEqual(plsSem.map((section) => section.label), [
     'Structural effects',
@@ -73,15 +77,28 @@ await runTest('results panel catalog exposes the approved mode-specific sidebars
   ])
 
   assert.ok(collectIds(plsSem).includes('cross-loadings'))
+  assert.ok(!collectIds(plsSem).includes('moderation-summary'))
+  assert.ok(collectIds(moderatedPlsSem).includes('moderation-summary'))
+  assert.ok(collectIds(moderatedPlsSem).includes('moderation-slopes'))
+  assert.ok(collectIds(moderatedPlsSem).includes('moderation-slope-chart'))
+  assert.ok(collectIds(moderatedPlsSem).includes('moderation-r2-change'))
   assert.ok(!collectIds(plsSem).includes('blindfold-q-square'))
   assert.ok(collectIds(bootstrap).includes('cross-loadings'))
+  assert.ok(!collectIds(bootstrap).includes('moderation-bootstrap'))
+  assert.ok(collectIds(moderatedBootstrap).includes('moderation-bootstrap'))
+  assert.deepEqual(bootstrap.slice(0, 2).map((section) => section.label), [
+    'Bootstrap structural effects',
+    'Bootstrap measurement effects',
+  ])
   assert.ok(!collectIds(bootstrap).includes('model-fit'))
   assert.ok(!collectIds(bootstrap).includes('model-select'))
   assert.equal(bootstrap.find((section) => section.id === 'base-model-quality')?.defaultOpen, true)
   assert.ok(!collectIds(plspredict).includes('algorithm-settings'))
+  assert.ok(!collectIds(moderatedPlsPredict).includes('moderation-summary'))
   assert.ok(collectIds(plspredict).includes('cvpat-lv-summary'))
   assert.ok(!collectIds(plspredict).includes('cvpat-mv-summary'))
   assert.equal(plspredict.find((section) => section.id === 'prediction-diagnostics')?.defaultOpen, true)
+  assert.ok(!collectIds(moderatedAdvanced).includes('moderation-summary'))
 
   assert.deepEqual(advanced.map((section) => section.label), [
     'PLS-SEM Results',

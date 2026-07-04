@@ -87,8 +87,20 @@ assert.match(
 
 assert.match(
   source,
-  /normalize_bottleneck_rows <- function\(summary_obj, method_keys = c\("ce_fdh", "cr_fdh"\)\)[\s\S]*for \(method_key in method_keys\)[\s\S]*as_rows\(bottleneck\[\[method_key\]\]\)[\s\S]*Method = nca_method_label\(method_key\)/,
-  'Bottleneck rows should preserve both seminrExtras bottleneck tables with method labels.'
+  /normalize_bottleneck_rows <- function\(summary_obj, method_keys = c\("ce_fdh", "cr_fdh"\), predictor_names = character\(0\), target_construct = NULL\)[\s\S]*infer_bottleneck_outcome_key\(method_rows\)[\s\S]*Method = "NCA"[\s\S]*Ceiling = nca_method_label\(method_key\)[\s\S]*Outcome_Level = if \(!is\.null\(outcome_key\)\) row\[\[outcome_key\]\]/,
+  'Bottleneck rows should preserve both seminrExtras ceiling tables while moving desired outcome levels into Outcome_Level.'
+)
+
+assert.match(
+  source,
+  /restore_condition[\s\S]*normalized\[\[condition_key\]\] <- if \(restore_condition && identical\(condition_key, outcome_key\)\)[\s\S]*"NN"/,
+  'Bottleneck normalization should keep a misplaced first construct column as NN instead of treating outcome levels as required construct values.'
+)
+
+assert.match(
+  source,
+  /target_construct <- as\.character\(target_construct %\|\|% ""\)[\s\S]*predictor_names <- predictor_names\[predictor_names != target_construct\][\s\S]*raw_condition_keys <- raw_condition_keys\[raw_condition_keys != target_construct\]/,
+  'Bottleneck normalization should not include the selected target construct as its own necessary condition.'
 )
 
 assert.match(

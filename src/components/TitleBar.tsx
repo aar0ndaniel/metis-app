@@ -9,8 +9,7 @@ import {
   NotePencil,
   CaretRight,
   Check,
-  ChatCircleText,
-  FileText,
+  CopySimple,
 } from '@phosphor-icons/react'
 import AppLogo from './AppLogo'
 import { APP_BRAND_NAME } from '../config/appBranding'
@@ -27,15 +26,23 @@ interface TitleBarProps {
   /** Which screen we're on — controls which menu items are grayed out */
   currentScreen?: 'home' | 'canvas' | 'results' | 'import'
   theme?: 'Dark' | 'Light'
+  activeModelName?: string
 }
 
-const TITLEBAR_OLIVE = '#87976B'
+function buildTarkMenu(): MenuItem[] {
+  return [
+    { type: 'item', label: 'Create Tark Report', action: 'open-tark' },
+  ]
+}
 
 function buildHelpMenu(): MenuItem[] {
   return [
     { type: 'item', label: 'Documentation', shortcut: 'F1', action: 'open-docs' },
     { type: 'item', label: 'Getting Started', action: 'open-tour' },
-    { type: 'item', label: 'PLS-SEM Reference' },
+    { type: 'separator' },
+    { type: 'item', label: 'Feedback', action: 'open-feedback' },
+    { type: 'item', label: 'Report a Bug', action: 'open-report-bug' },
+    { type: 'item', label: 'Cite Metis', action: 'open-cite-metis' },
     { type: 'separator' },
     { type: 'item', label: `About ${APP_BRAND_NAME}`, action: 'open-about' },
   ]
@@ -137,9 +144,9 @@ function MenuDropdown({
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [hoveredSubmenu, setHoveredSubmenu] = useState<number | null>(null)
-  const menuItemColor = 'var(--color-text-primary)'
-  const menuMutedColor = 'var(--color-title-tab)'
-  const menuDisabledColor = 'var(--color-text-dim)'
+  const menuItemColor = 'var(--color-title-menu-text)'
+  const menuMutedColor = 'var(--color-title-menu-muted)'
+  const menuDisabledColor = 'var(--color-title-menu-disabled)'
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -179,7 +186,7 @@ function MenuDropdown({
           return (
             <button
               key={i}
-              className={`w-full flex items-center gap-2 px-3.5 h-8 transition-colors ${item.disabled ? 'cursor-default' : 'hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
+              className={`titlebar-menu-row w-full flex items-center gap-2 px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled cursor-default' : ''}`}
               onClick={handleClick}
             >
               {item.checked && !item.disabled && <Check size={12} color={menuItemColor} />}
@@ -200,7 +207,7 @@ function MenuDropdown({
               onMouseLeave={() => setHoveredSubmenu(null)}
             >
               <button
-                className={`w-full flex items-center justify-between px-3.5 h-8 transition-colors ${hoveredSubmenu === i ? 'bg-[rgb(var(--color-hover-rgb)/0.75)]' : 'hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'} ${item.disabled ? 'opacity-50 cursor-default' : ''}`}
+                className={`titlebar-menu-row w-full flex items-center justify-between px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled opacity-50 cursor-default' : ''}`}
                 onClick={item.disabled ? undefined : () => {}}
               >
                 <span className="text-[13px]" style={{ color: item.disabled ? menuDisabledColor : menuItemColor, fontFamily: 'Inter, DM Sans, sans-serif' }}>
@@ -219,7 +226,7 @@ function MenuDropdown({
         }
 
         // Regular item
-        const textColor = item.disabled ? menuDisabledColor : menuItemColor
+        const textColor = item.disabled ? menuDisabledColor : item.color ?? menuItemColor
         const scColor = item.disabled ? menuDisabledColor : menuMutedColor
 
         const handleClick = item.disabled ? undefined : () => {
@@ -232,9 +239,7 @@ function MenuDropdown({
         return (
           <button
             key={i}
-            className={`w-full flex items-center justify-between gap-2 px-3.5 h-8 transition-colors ${
-              item.disabled ? 'cursor-default' : 'hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'
-            }`}
+            className={`titlebar-menu-row w-full flex items-center justify-between gap-2 px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled cursor-default' : ''}`}
             onClick={handleClick}
           >
             <span className="flex items-center gap-2">
@@ -257,15 +262,18 @@ function MenuDropdown({
 }
 
 // ─── TitleBar ──────────────────────────────────────────────────────────────────
-export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: TitleBarProps) {
+export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activeModelName = '' }: TitleBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [showVars, setShowVars] = useState(true)
   const [showProps, setShowProps] = useState(true)
   const [showZoomControl, setShowZoomControl] = useState(true)
   const [isMaximized, setIsMaximized] = useState(false)
+  const [isFullScreen, setIsFullScreen] = useState(false)
   const [recentModels, setRecentModels] = useState<{ id: string; name: string }[]>([])
   const [showAdvancedHint, setShowAdvancedHint] = useState(false)
+  const [showLogoHint, setShowLogoHint] = useState(false)
   const hintTimerRef = useRef<number | null>(null)
+  const logoHintTimerRef = useRef<number | null>(null)
   const [status, setStatus] = useState({
     canUndo: false,
     canRedo: false,
@@ -302,9 +310,6 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
       if (action === 'view:toggle-vars') setShowVars(v => !v)
       if (action === 'view:toggle-props') setShowProps(v => !v)
       if (action === 'view:toggle-zoom-control') setShowZoomControl(v => !v)
-      if (action === 'open-feedback') {
-        void window.electronAPI?.openExternal?.('https://metis.emend.it.com/feedback.html')
-      }
       
       const st = e.detail?.status
       if (st) {
@@ -328,8 +333,9 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
 
     syncWindowState()
 
-    const unsub = window.electronAPI?.onWindowStateChanged?.(({ isMaximized }) => {
+    const unsub = window.electronAPI?.onWindowStateChanged?.(({ isMaximized, isFullScreen }) => {
       setIsMaximized(isMaximized)
+      setIsFullScreen(!!isFullScreen)
     })
 
     return () => {
@@ -337,6 +343,14 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
       unsub?.()
     }
   }, [])
+
+  useEffect(() => {
+    window.electronAPI?.setNativeMenuState?.({
+      showVars,
+      showProps,
+      showZoomControl,
+    })
+  }, [showProps, showVars, showZoomControl])
 
   const toggleMenu = (label: string) => {
     if (label === 'Analysis') setShowAdvancedHint(false)
@@ -368,50 +382,70 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
     }
   }, [currentScreen, status.canRunAdvanced, status.showAdvancedHintToken])
 
+  useEffect(() => {
+    if (currentScreen !== 'canvas') {
+      setShowLogoHint(false)
+      if (logoHintTimerRef.current) {
+        window.clearTimeout(logoHintTimerRef.current)
+        logoHintTimerRef.current = null
+      }
+      return
+    }
+
+    const storageKey = 'metis:titlebar-logo-home-hint-seen'
+    try {
+      if (sessionStorage.getItem(storageKey) === 'true') return
+      sessionStorage.setItem(storageKey, 'true')
+    } catch {}
+
+    setShowLogoHint(true)
+    logoHintTimerRef.current = window.setTimeout(() => {
+      setShowLogoHint(false)
+      logoHintTimerRef.current = null
+    }, 2800)
+
+    return () => {
+      if (logoHintTimerRef.current) {
+        window.clearTimeout(logoHintTimerRef.current)
+        logoHintTimerRef.current = null
+      }
+    }
+  }, [currentScreen])
+
   // Build menus with context-aware disabled states
   const menus: { label: string; items: MenuItem[]; width: number }[] = [
     { label: 'File', items: buildFileMenu(currentScreen, recentModels, status), width: 240 },
     { label: 'Edit', items: buildEditMenu(currentScreen, status), width: 220 },
     { label: 'View', items: buildViewMenu(currentScreen, showVars, showProps, showZoomControl), width: 230 },
     { label: 'Analysis', items: buildAnalysisMenu(currentScreen, status), width: 230 },
-    { label: 'Help', items: buildHelpMenu(), width: 220 },
+    { label: 'Tark it', items: buildTarkMenu(), width: 220 },
+    { label: 'Help', items: buildHelpMenu(), width: 240 },
   ]
 
   const logoVariant = theme === 'Light' ? 'black' : 'white'
   const showTitleBarDivider = currentScreen === 'canvas'
-
-  return (
-    <div
-      className="flex items-center shrink-0 select-none drag-region"
-      style={{
-        height: 36,
-        padding: '0 16px',
-        gap: 24,
-        borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
-        ...(theme === 'Light'
-          ? { background: 'var(--color-titlebar-bg)' }
-          : { background: '#202020' }),
-        ...({ WebkitAppRegion: 'drag' } as any),
-      }}
-    >
-      <div className="flex items-center no-drag shrink-0" style={{ gap: 7, ...({ WebkitAppRegion: 'no-drag' } as any) }}>
-        {/* Logo mark */}
-        <button
-          className="flex items-center no-drag shrink-0"
-          style={{ gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
-          title={currentScreen === 'home' ? 'Return to last model' : 'Go to workspace home'}
-          onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'toggle-home-canvas' } }))}
+  const isMac = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin'
+  const activeModelTitle = activeModelName.trim()
+  const showActiveModelTitle = isMac && (currentScreen === 'canvas' || currentScreen === 'results') && activeModelTitle.length > 0
+  const brandButton = (
+    <div className="relative flex items-center no-drag shrink-0" style={{ ...({ WebkitAppRegion: 'no-drag' } as any) }}>
+      <button
+        className="flex items-center no-drag shrink-0"
+        style={{ gap: isMac ? 0 : 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+        title={currentScreen === 'home' ? 'Return to last model' : 'Go to workspace home'}
+        onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'toggle-home-canvas' } }))}
+      >
+        <div
+          className="flex items-center justify-center shrink-0"
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 5,
+          }}
         >
-          <div
-            className="flex items-center justify-center shrink-0"
-            style={{
-              width: 22,
-              height: 22,
-              borderRadius: 5,
-            }}
-          >
-            <AppLogo size={14} variant={logoVariant} />
-          </div>
+          <AppLogo size={14} variant={logoVariant} />
+        </div>
+        {!isMac && (
           <span
             style={{
               color: 'var(--color-text-primary)',
@@ -424,22 +458,107 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
           >
             {APP_BRAND_NAME}
           </span>
-        </button>
+        )}
+      </button>
+
+      {currentScreen === 'canvas' && showLogoHint && (
+        <div
+          className="absolute left-0 top-full z-50 mt-2"
+          style={{ pointerEvents: 'none' }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              top: -4,
+              left: 7,
+              width: 8,
+              height: 8,
+              background: 'var(--color-accent)',
+              transform: 'rotate(45deg)',
+              borderTopLeftRadius: 2,
+            }}
+          />
+          <div
+            className="flex items-center gap-1.5 rounded-[8px] px-2.5 py-1.5"
+            style={{
+              background: 'var(--color-accent)',
+              color: '#111111',
+              boxShadow: '0 10px 22px rgba(0,0,0,0.22)',
+            }}
+          >
+            <HandPointing size={12} weight="fill" color="#111111" />
+            <span
+              style={{
+                fontFamily: 'Inter, DM Sans, sans-serif',
+                fontSize: 11,
+                fontWeight: 700,
+                lineHeight: 1.2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Back to Workspaces
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <div
+      className="flex items-center shrink-0 select-none drag-region relative z-50"
+      style={{
+        height: 36,
+        padding: isMac ? (isFullScreen ? '0 16px' : '0 16px 0 80px') : '0 0 0 16px',
+        gap: isMac ? 16 : 24,
+        borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
+        ...(theme === 'Light'
+          ? { background: 'var(--color-titlebar-bg)' }
+          : { background: '#202020' }),
+        ...({ WebkitAppRegion: 'drag' } as any),
+      }}
+    >
+      <div className="flex items-center no-drag shrink-0" style={{ gap: 7, ...({ WebkitAppRegion: 'no-drag' } as any) }}>
+        {/* Logo mark */}
+        {brandButton}
       </div>
 
+      {showActiveModelTitle && (
+        <div
+          className="pointer-events-none absolute left-1/2 top-0 flex h-full max-w-[44vw] -translate-x-1/2 items-center justify-center"
+          style={{ ...({ WebkitAppRegion: 'drag' } as any) }}
+        >
+          <span
+            style={{
+              color: 'var(--color-title-tab)',
+              fontFamily: 'DM Sans, sans-serif',
+              fontSize: 13,
+              fontWeight: 700,
+              letterSpacing: 0,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {activeModelTitle}
+          </span>
+        </div>
+      )}
+
       {/* Divider between logo and menus */}
-      <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-surface)', flexShrink: 0 }} />
+      {!isMac && <div style={{ width: 1, height: 20, backgroundColor: 'var(--color-surface)', flexShrink: 0 }} />}
 
       {/* Menu items — exact from Pencil: gap 2, padding [4,10], cornerRadius 5 */}
-      <nav className="flex items-center no-drag" style={{ gap: 2 }}>
+      {!isMac && <nav className="flex items-center no-drag" style={{ gap: 2 }}>
         {menus.map((menu) => (
           <div key={menu.label} className="relative">
             <div className="relative h-full flex items-center">
             <button
-              className="px-3 h-7 rounded-[6px] text-[13px] font-medium transition-colors outline-none"
+              id={menu.label === 'Tark it' ? 'tour-tark' : menu.label === 'Help' ? 'tour-help' : undefined}
+              className="px-3 h-7 rounded-[6px] text-[13px] font-medium outline-none"
               style={{
-                color: openMenu === menu.label ? 'var(--color-text-primary)' : 'var(--color-title-tab)',
-                backgroundColor: openMenu === menu.label ? 'rgb(var(--color-text-primary-rgb) / 0.08)' : 'transparent',
+                color: openMenu === menu.label ? 'var(--color-text-secondary-alt)' : 'var(--color-title-tab)',
+                backgroundColor: 'transparent',
                 fontFamily: 'Inter, DM Sans, sans-serif'
               }}
               onClick={() => toggleMenu(menu.label)}
@@ -464,9 +583,9 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
                     left: '50%',
                     width: 12,
                     height: 12,
-                    backgroundColor: 'rgba(135,151,107,0.95)',
-                    borderLeft: '1px solid rgba(173,192,141,0.4)',
-                    borderTop: '1px solid rgba(173,192,141,0.4)',
+                    backgroundColor: 'rgb(var(--color-accent-rgb) / 0.95)',
+                    borderLeft: '1px solid rgb(var(--color-accent-rgb) / 0.4)',
+                    borderTop: '1px solid rgb(var(--color-accent-rgb) / 0.4)',
                     transform: 'translateX(-50%) rotate(45deg)',
                     borderTopLeftRadius: 2,
                   }}
@@ -475,13 +594,13 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
                   className="flex items-center gap-2 rounded-[10px] px-3 py-2"
                   style={{
                     minWidth: 244,
-                    background: 'rgba(135,151,107,0.95)',
-                    border: '1px solid rgba(173,192,141,0.38)',
-                    color: '#10150B',
+                    background: 'rgb(var(--color-accent-rgb) / 0.95)',
+                    border: '1px solid rgb(var(--color-accent-rgb) / 0.38)',
+                    color: 'var(--color-on-accent)',
                     boxShadow: '0 12px 28px rgba(0,0,0,0.28)',
                   }}
                 >
-                  <HandPointing size={14} weight="fill" color="#10150B" />
+                  <HandPointing size={14} weight="fill" color="var(--color-on-accent)" />
                   <span
                     style={{
                       fontFamily: 'Inter, DM Sans, sans-serif',
@@ -509,89 +628,15 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
           </div>
           </div>
         ))}
-      </nav>
+      </nav>}
 
       {/* Spacer (fills remaining space, also drag region) */}
       <div className="flex-1 h-full" />
 
-      <div
-        className="no-drag flex items-center"
-        style={{
-          gap: 6,
-          ...({ WebkitAppRegion: 'no-drag' } as any),
-        }}
-      >
-        {/* Tark report entry point */}
-        <button
-          id="tour-tark"
-          className="no-drag flex items-center justify-center transition-opacity hover:opacity-80"
-          style={{
-            height: 24,
-            borderRadius: 8,
-            border: 'none',
-            background: 'transparent',
-            color: TITLEBAR_OLIVE,
-            padding: '0 5px',
-            gap: 5,
-            fontFamily: 'Matter, "DM Sans", sans-serif',
-            fontSize: 11,
-            fontWeight: 600,
-            width: 'fit-content',
-            maxWidth: 'min(320px, 32vw)',
-            overflow: 'hidden',
-            flexShrink: 1,
-          }}
-          title="Tark journal-ready report"
-          aria-label="Open Tark"
-          onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'open-tark' } }))}
-        >
-          <FileText size={14} weight="fill" color={TITLEBAR_OLIVE} />
-          <span
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              minWidth: 0,
-              width: 'fit-content',
-              maxWidth: 'min(282px, 28vw)',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span style={{ overflow: 'hidden', textOverflow: 'clip', whiteSpace: 'nowrap' }}>Tark it</span>
-          </span>
-        </button>
-
-        <button
-          id="tour-feedback"
-          className="no-drag flex items-center justify-center transition-opacity hover:opacity-80"
-          style={{
-            height: 24,
-            borderRadius: 8,
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--color-title-tab)',
-            padding: '0 5px',
-            gap: 5,
-            fontFamily: 'Matter, "DM Sans", sans-serif',
-            fontSize: 11,
-            fontWeight: 600,
-            flexShrink: 0,
-          }}
-          title="Send feedback to the team"
-          aria-label="Send feedback"
-          onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'open-feedback' } }))}
-        >
-          <ChatCircleText size={14} weight="regular" color="var(--color-title-tab)" />
-          <span style={{ whiteSpace: 'nowrap' }}>Feedback</span>
-        </button>
-      </div>
-
       {/* Window controls */}
-      <div
-        className="flex items-center no-drag"
+      {!isMac && <div
+        className="flex h-full items-center no-drag"
         style={{
-          gap: 2,
-          marginRight: 2,
           ...({ WebkitAppRegion: 'no-drag' } as any),
         }}
       >
@@ -599,81 +644,46 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark' }: Tit
           onClick={() => window.electronAPI?.minimize()}
           title="Minimize"
           aria-label="Minimize window"
-          className="group flex h-[20px] w-[20px] items-center justify-center rounded-full transition-all duration-200 ease-out focus-visible:outline-none"
+          className={`flex h-9 w-[46px] items-center justify-center rounded-none bg-transparent transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.86)] hover:text-[var(--color-text-primary)] focus-visible:bg-[rgb(var(--color-hover-rgb)/0.95)] focus-visible:text-[var(--color-text-primary)] focus-visible:outline-none ${theme === 'Light' ? 'text-[#202124]' : 'text-[#F4F4F5]'}`}
           style={{
             margin: 0,
             padding: 0,
             border: 'none',
-            background: 'transparent',
           }}
         >
-          <span
-            className="flex h-[14px] w-[14px] items-center justify-center rounded-full transition-all duration-200 ease-out group-hover:scale-[1.04] group-hover:brightness-105 group-focus-visible:scale-[1.04]"
-            style={{
-              border: '1px solid #67676B',
-              background: 'linear-gradient(180deg, #808085 0%, #626267 100%)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
-              color: '#E2E2E5',
-            }}
-          >
-            <Minus size={8} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-          </span>
+          <Minus size={15} weight="bold" color="currentColor" />
         </button>
         <button
           onClick={() => window.electronAPI?.maximize()}
           title={isMaximized ? 'Restore' : 'Maximize'}
           aria-label={isMaximized ? 'Restore window' : 'Maximize window'}
-          className="group flex h-[20px] w-[20px] items-center justify-center rounded-full transition-all duration-200 ease-out focus-visible:outline-none"
+          className={`flex h-9 w-[46px] items-center justify-center rounded-none bg-transparent transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.86)] hover:text-[var(--color-text-primary)] focus-visible:bg-[rgb(var(--color-hover-rgb)/0.95)] focus-visible:text-[var(--color-text-primary)] focus-visible:outline-none ${theme === 'Light' ? 'text-[#202124]' : 'text-[#F4F4F5]'}`}
           style={{
-            marginRight: 0,
+            margin: 0,
             padding: 0,
             border: 'none',
-            background: 'transparent',
           }}
         >
-          <span
-            className="flex h-[14px] w-[14px] items-center justify-center rounded-full transition-all duration-200 ease-out group-hover:scale-[1.04] group-hover:brightness-105 group-focus-visible:scale-[1.04]"
-            style={{
-              border: '1px solid #B99B78',
-              background: isMaximized
-                ? 'linear-gradient(180deg, #DABFA1 0%, #BB9369 100%)'
-                : 'linear-gradient(180deg, #DABFA1 0%, #BB9369 100%)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
-              color: '#473120',
-            }}
-          >
-            {isMaximized ? (
-              <CornersIn size={8} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-            ) : (
-              <Square size={7} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-            )}
-          </span>
+          {isMaximized ? (
+            <CopySimple size={15} weight="bold" color="currentColor" />
+          ) : (
+            <Square size={14} weight="bold" color="currentColor" />
+          )}
         </button>
         <button
           onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'quit-app' } }))}
           title="Close"
           aria-label="Close window"
-          className="group flex h-[20px] w-[20px] items-center justify-center rounded-full transition-all duration-200 ease-out focus-visible:outline-none"
+          className={`flex h-9 w-[46px] items-center justify-center rounded-none bg-transparent transition-colors hover:bg-[var(--color-warning)] hover:text-white focus-visible:bg-[var(--color-warning)] focus-visible:text-white focus-visible:outline-none ${theme === 'Light' ? 'text-[#202124]' : 'text-[#F4F4F5]'}`}
           style={{
-            marginRight: 0,
+            margin: 0,
             padding: 0,
             border: 'none',
-            background: 'transparent',
           }}
         >
-          <span
-            className="flex h-[14px] w-[14px] items-center justify-center rounded-full transition-all duration-200 ease-out group-hover:scale-[1.04] group-hover:brightness-105 group-focus-visible:scale-[1.04]"
-            style={{
-              border: '1px solid #92516E',
-              background: 'linear-gradient(180deg, #B17391 0%, #7B3554 100%)',
-              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)',
-              color: '#F3D7E2',
-            }}
-          >
-            <X size={8} weight="bold" className="opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100" />
-          </span>
+          <X size={15} weight="bold" color="currentColor" />
         </button>
-      </div>
+      </div>}
     </div>
   )
 }

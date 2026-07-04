@@ -1,0 +1,483 @@
+﻿diff --git a/package.json b/package.json
+index 4a22087..e211845 100644
+--- a/package.json
++++ b/package.json
+@@ -42,18 +42,13 @@
+     "@types/react-dom": "^18.3.0",
+     "@vitejs/plugin-react": "^4.3.1",
+     "autoprefixer": "^10.4.19",
+-    "concurrently": "^8.2.2",
+-    "electron": "40.10.2",
+     "electron-builder": "^26.8.1",
+-    "esbuild": "^0.27.4",
+-    "png-to-ico": "^3.0.1",
+     "postcss": "^8.4.40",
+     "tailwindcss": "^3.4.7",
+     "typescript": "^5.5.4",
+     "vite": "^7.0.0",
+     "vite-plugin-electron": "^0.28.7",
+-    "vite-plugin-electron-renderer": "^0.14.5",
+-    "wait-on": "^7.2.0"
++    "vite-plugin-electron-renderer": "^0.14.5"
+   },
+   "build": {
+     "appId": "com.metis.app",
+@@ -135,4 +130,4 @@
+       }
+     ]
+   }
+-}
++}
+\ No newline at end of file
+diff --git a/src/components/DraftNumberInput.tsx b/src/components/DraftNumberInput.tsx
+index 05845a0..17fd692 100644
+--- a/src/components/DraftNumberInput.tsx
++++ b/src/components/DraftNumberInput.tsx
+@@ -20,7 +20,7 @@ function clampNumber(value: number, min?: number, max?: number): number {
+   return next
+ }
+ 
+-export function resolveDraftNumber(
++function resolveDraftNumber(
+   draft: string,
+   currentValue: number,
+   options: { min?: number; max?: number; fallback?: number } = {},
+diff --git a/src/components/ResultsCharts.tsx b/src/components/ResultsCharts.tsx
+index f95a374..6e62a24 100644
+--- a/src/components/ResultsCharts.tsx
++++ b/src/components/ResultsCharts.tsx
+@@ -21,7 +21,6 @@ import {
+   shouldExportChart,
+ } from '../results/chartRegistry'
+ 
+-export { CHART_SUPPORTED_PANELS, getChartConfig, shouldExportChart } from '../results/chartRegistry'
+ 
+ // ═══════════════════════════════════════════════════════════════════════════════
+ //  COLORS
+@@ -233,7 +232,7 @@ export interface HBarItem {
+   tooltipLines?: string[]
+ }
+ 
+-export function HBarChart({
++function HBarChart({
+   items,
+   refLines = [],
+   domain,
+@@ -360,7 +359,7 @@ export interface ForestItem {
+   tooltipLines?: string[]
+ }
+ 
+-export function ForestPlot({ items }: { items: ForestItem[] }) {
++function ForestPlot({ items }: { items: ForestItem[] }) {
+   const [hover, setHover] = useState<number | null>(null)
+ 
+   if (!items.length) return null
+@@ -446,7 +445,7 @@ export interface GroupedBarGroup {
+   bars: { value: number; color: string; legendLabel: string }[]
+ }
+ 
+-export function GroupedBarChart({
++function GroupedBarChart({
+   groups,
+   domain,
+   refLines = [],
+@@ -637,7 +636,7 @@ function rawTStat(r: any): number {
+ }
+ 
+ /** Path coefficient / effects rows → HBarItems. Handles both pre-parsed and raw R formats. */
+-export function buildPathCoefItems(rows: any[]): HBarItem[] {
++function buildPathCoefItems(rows: any[]): HBarItem[] {
+   return rows.map(r => {
+     const label   = rawLabel(r)
+     const value   = rawEstimate(r)
+@@ -658,7 +657,7 @@ export function buildPathCoefItems(rows: any[]): HBarItem[] {
+ }
+ 
+ /** Path coefficient / effects rows → ForestItems (Bootstrap CI). Handles raw R formats. */
+-export function buildForestItems(rows: any[]): ForestItem[] {
++function buildForestItems(rows: any[]): ForestItem[] {
+   return rows.map(r => {
+     const label   = rawLabel(r)
+     const est     = rawEstimate(r)
+@@ -682,7 +681,7 @@ export function buildForestItems(rows: any[]): ForestItem[] {
+ }
+ 
+ /** R-square rows → HBarItems (paired R² + R²adj) */
+-export function buildRSquareItems(rows: any[]): HBarItem[] {
++function buildRSquareItems(rows: any[]): HBarItem[] {
+   return rows.map(r => ({
+     label: String(r.construct ?? ''),
+     value: Number(r.r2),
+@@ -699,7 +698,7 @@ export function buildRSquareItems(rows: any[]): HBarItem[] {
+ }
+ 
+ /** Reliability rows → GroupedBarGroups */
+-export function buildReliabilityGroups(rows: any[]): GroupedBarGroup[] {
++function buildReliabilityGroups(rows: any[]): GroupedBarGroup[] {
+   return rows.map(r => {
+     const α    = parseFloat(r.cronbach)
+     const rhoA = parseFloat(r.rhoA)
+@@ -718,7 +717,7 @@ export function buildReliabilityGroups(rows: any[]): GroupedBarGroup[] {
+ }
+ 
+ /** Outer loading rows → HBarItems */
+-export function buildOuterLoadingItems(rows: any[]): HBarItem[] {
++function buildOuterLoadingItems(rows: any[]): HBarItem[] {
+   // Assign a unique color per construct
+   const constructs = Array.from(new Set(rows.map(r => String(r.construct ?? ''))))
+   const colorMap = new Map(constructs.map((c, i) => [c, PALETTE[i % PALETTE.length]]))
+@@ -737,7 +736,7 @@ export function buildOuterLoadingItems(rows: any[]): HBarItem[] {
+ }
+ 
+ /** VIF sections → HBarItems (inner + outer merged) */
+-export function buildVIFItems(sections: { inner: any[]; outer: any[] }): HBarItem[] {
++function buildVIFItems(sections: { inner: any[]; outer: any[] }): HBarItem[] {
+   const all = [
+     ...sections.inner.map(r => ({ ...r, _type: 'Inner' })),
+     ...sections.outer.map(r => ({ ...r, _type: 'Outer' })),
+@@ -773,7 +772,7 @@ function normalizePlsPredictMetric(metric: string): string {
+ }
+ 
+ /** PLSpredict MV or LV summary → GroupedBarGroups (metric × construct) */
+-export function buildPlsPredictSummaryItems(
++function buildPlsPredictSummaryItems(
+   mvRows: any[],
+   lvRows: any[],
+   isMV: boolean,
+@@ -837,7 +836,7 @@ export function buildPlsPredictSummaryItems(
+ }
+ 
+ /** Prediction error rows → HBarItems (error per indicator/construct) */
+-export function buildPredictionErrorItems(rows: any[]): HBarItem[] {
++function buildPredictionErrorItems(rows: any[]): HBarItem[] {
+   return rows.map((r: any, i: number) => {
+     const label = String(r.Indicator ?? r.indicator ?? r.Construct ?? r.construct ?? r.row ?? r.row_name ?? `Item ${i + 1}`)
+     const value = Number(r.Error ?? r.error ?? r.MAE ?? r.mae ?? r.RMSE ?? r.rmse ?? NaN)
+@@ -851,7 +850,7 @@ export function buildPredictionErrorItems(rows: any[]): HBarItem[] {
+ }
+ 
+ /** Generic rows → HBarItems for f-square, model-selection, etc. */
+-export function buildGenericBarItems(rawRows: any[]): HBarItem[] {
++function buildGenericBarItems(rawRows: any[]): HBarItem[] {
+   if (!rawRows?.length) return []
+ 
+   // Find the first numeric column as the value
+@@ -2336,7 +2335,7 @@ function NoChartData() {
+  * Used by the HTML export to embed charts as static, interactive SVGs.
+  * Colors are hardcoded to the light theme (matching the exported report).
+  */
+-export function buildChartSvgForPanel(
++function buildChartSvgForPanel(
+   panel: string,
+   mode: AnalysisMode,
+   analysisResults: any,
+diff --git a/src/config/appBranding.ts b/src/config/appBranding.ts
+index 918991e..0ccae26 100644
+--- a/src/config/appBranding.ts
++++ b/src/config/appBranding.ts
+@@ -1,11 +1,11 @@
+ export type AppEdition = 'Bundle' | 'Lite'
+ 
+ export const APP_BRAND_NAME = __METIS_APP_NAME__
+-export const APP_VERSION = __METIS_APP_VERSION__
++const APP_VERSION = __METIS_APP_VERSION__
+ export const APP_EDITION = (__METIS_APP_EDITION__ === 'Lite' ? 'Lite' : 'Bundle') as AppEdition
+-export const APP_VERSION_LABEL = APP_VERSION
++const APP_VERSION_LABEL = APP_VERSION
+ export const APP_BASE_RELEASE_LABEL = APP_VERSION
+ 
+-export function getEditionReleaseLabel(edition: AppEdition): string {
++function getEditionReleaseLabel(edition: AppEdition): string {
+   return `${edition} ${APP_VERSION}`
+ }
+diff --git a/src/results/chartRegistry.ts b/src/results/chartRegistry.ts
+index 168c8ce..5172cb9 100644
+--- a/src/results/chartRegistry.ts
++++ b/src/results/chartRegistry.ts
+@@ -91,7 +91,7 @@ export function getChartConfig(mode: AnalysisMode, panelId: string): ChartConfig
+   return config ? { ...config } : null
+ }
+ 
+-export function supportsChart(mode: AnalysisMode, panelId: string): boolean {
++function supportsChart(mode: AnalysisMode, panelId: string): boolean {
+   return getChartConfig(mode, panelId) !== null
+ }
+ 
+diff --git a/src/results/panelCatalog.ts b/src/results/panelCatalog.ts
+index aac7d4d..423e976 100644
+--- a/src/results/panelCatalog.ts
++++ b/src/results/panelCatalog.ts
+@@ -8,7 +8,7 @@ export type PanelIconKey =
+   | 'info'
+   | 'folders'
+ 
+-export interface PanelDefinition {
++interface PanelDefinition {
+   id: string
+   label: string
+   iconKey: PanelIconKey
+@@ -254,7 +254,7 @@ export function getPanelSectionsForMode(mode: AnalysisMode, options: PanelCatalo
+   return sections
+ }
+ 
+-export function getPanelDefinition(mode: AnalysisMode, panelId: string, options: PanelCatalogOptions = {}): PanelDefinition | null {
++function getPanelDefinition(mode: AnalysisMode, panelId: string, options: PanelCatalogOptions = {}): PanelDefinition | null {
+   for (const section of getPanelSectionsForMode(mode, options)) {
+     const match = section.items.find((item) => item.id === panelId)
+     if (match) return { ...match }
+diff --git a/src/results/panelData.ts b/src/results/panelData.ts
+index aad90e6..6261635 100644
+--- a/src/results/panelData.ts
++++ b/src/results/panelData.ts
+@@ -78,7 +78,7 @@ const BOOTSTRAP_BASE_MODEL_REFERENCE_PANELS = new Set([
+   'vif',
+ ])
+ 
+-export function getPanelDataPath(mode: AnalysisMode, panelId: string): string | undefined {
++function getPanelDataPath(mode: AnalysisMode, panelId: string): string | undefined {
+   return PANEL_DATA_PATHS[mode]?.[panelId]
+ }
+ 
+diff --git a/src/services/plsApi.ts b/src/services/plsApi.ts
+index 4fd0759..66f39a5 100644
+--- a/src/services/plsApi.ts
++++ b/src/services/plsApi.ts
+@@ -36,13 +36,13 @@ export interface RunPlsRequest {
+   }
+ }
+ 
+-export interface RunPlsPathResult {
++interface RunPlsPathResult {
+   from: string
+   to: string
+   coefficient: number
+ }
+ 
+-export interface RunPlsR2Result {
++interface RunPlsR2Result {
+   construct: string
+   r2: number | null
+ }
+diff --git a/src/state/calculationContext.tsx b/src/state/calculationContext.tsx
+index 08e693b..378684d 100644
+--- a/src/state/calculationContext.tsx
++++ b/src/state/calculationContext.tsx
+@@ -9,7 +9,7 @@ import {
+ } from 'react'
+ import CalcCancelDialog from '@/components/CalcCancelDialog'
+ 
+-export type CalcType = 'pls' | 'bootstrap' | 'plspredict' | 'advanced'
++type CalcType = 'pls' | 'bootstrap' | 'plspredict' | 'advanced'
+ 
+ export type CalcPhase = {
+   id: string
+@@ -17,9 +17,9 @@ export type CalcPhase = {
+   status: 'pending' | 'active' | 'done'
+ }
+ 
+-export type ProgressMode = 'real' | 'phase' | 'indeterminate'
++type ProgressMode = 'real' | 'phase' | 'indeterminate'
+ 
+-export type ActiveCalc = {
++type ActiveCalc = {
+   type: CalcType
+   title: string
+   phases: CalcPhase[]
+@@ -33,21 +33,21 @@ export type ActiveCalc = {
+   cancelRequested: boolean
+ }
+ 
+-export type CompletedCalc = {
++type CompletedCalc = {
+   type: CalcType
+   completedAt: number
+   resultsRoute: string         // e.g. "/results/abc?view=bootstrap"
+   navigationState?: Record<string, unknown>
+ }
+ 
+-export type CalculationState = {
++type CalculationState = {
+   active: ActiveCalc | null
+   lastCompletedByType: Partial<Record<CalcType, CompletedCalc>>
+   mostRecent: CompletedCalc | null
+   lastTransientDone: { type: CalcType; resultsRoute: string; navigationState?: Record<string, unknown>; createdAt: number } | null
+ }
+ 
+-export type CalculationAction =
++type CalculationAction =
+   | { type: 'start'; payload: Omit<ActiveCalc, 'view' | 'status' | 'startedAt' | 'cancelRequested' | 'progressPct'> & { progressPct?: number } }
+   | { type: 'setPhase'; phaseId: string }
+   | { type: 'setProgress'; pct: number; subLabel?: string }
+diff --git a/src/types/workspace.ts b/src/types/workspace.ts
+index ef2d322..67650f9 100644
+--- a/src/types/workspace.ts
++++ b/src/types/workspace.ts
+@@ -1,6 +1,6 @@
+ export type VariableKind = 'MET' | 'CAT'
+ 
+-export interface WorkspaceChildBase {
++interface WorkspaceChildBase {
+   id: string
+   name: string
+   type: 'model' | 'dataset' | 'result'
+diff --git a/src/utils/datasetColumns.ts b/src/utils/datasetColumns.ts
+index 4a36869..d16739e 100644
+--- a/src/utils/datasetColumns.ts
++++ b/src/utils/datasetColumns.ts
+@@ -112,7 +112,7 @@ export function getUniqueHeaderName(headers: string[], proposedValue: string, cu
+   return makeUniqueAgainstExisting(otherHeaders, base)
+ }
+ 
+-export function ensureUniqueHeaders(headers: string[]): string[] {
++function ensureUniqueHeaders(headers: string[]): string[] {
+   return headers.reduce<string[]>((accumulator, header, index) => {
+     accumulator.push(makeUniqueAgainstExisting(accumulator, normalizeHeaderBase(header, index)))
+     return accumulator
+diff --git a/src/utils/datasetLoading.ts b/src/utils/datasetLoading.ts
+index a8eed3b..bb786f8 100644
+--- a/src/utils/datasetLoading.ts
++++ b/src/utils/datasetLoading.ts
+@@ -5,7 +5,7 @@ import {
+   writeDatasetViewCache,
+ } from './datasetViewCache'
+ 
+-export interface DatasetFileBridge {
++interface DatasetFileBridge {
+   readFile?: (filePath: string) => Promise<any>
+   extractDataset?: (payload: string | { adaFilePath: string; datasetId?: string }) => Promise<any>
+ }
+diff --git a/src/utils/datasetParsing.ts b/src/utils/datasetParsing.ts
+index 6044c50..30a8d51 100644
+--- a/src/utils/datasetParsing.ts
++++ b/src/utils/datasetParsing.ts
+@@ -7,9 +7,9 @@ export interface ParseResult {
+   delimiter: string
+ }
+ 
+-export const HEAD_ROWS = 5
++const HEAD_ROWS = 5
+ 
+-export function detectDelimiter(firstLine: string): string {
++function detectDelimiter(firstLine: string): string {
+   const candidates = [',', ';', '\t', '|']
+   let best = ','
+   let bestCount = 0
+@@ -54,7 +54,7 @@ function stringifyExcelCellValue(value: any): string {
+   return String(value)
+ }
+ 
+-export function parseCSVText(text: string, delimiter: string): ParseResult {
++function parseCSVText(text: string, delimiter: string): ParseResult {
+   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter((line) => line.trim())
+ 
+   function splitLine(line: string): string[] {
+diff --git a/src/utils/datasetPersistence.ts b/src/utils/datasetPersistence.ts
+index 6036557..4a0c7cd 100644
+--- a/src/utils/datasetPersistence.ts
++++ b/src/utils/datasetPersistence.ts
+@@ -22,13 +22,13 @@ function escapeCsvCell(value: string): string {
+   return safeValue
+ }
+ 
+-export function buildCsvText(headers: string[], allRows: string[][]): string {
++function buildCsvText(headers: string[], allRows: string[][]): string {
+   const headerLine = headers.map((header) => escapeCsvCell(header)).join(',')
+   const dataLines = allRows.map((row) => row.map((cell) => escapeCsvCell(cell)).join(','))
+   return [headerLine, ...dataLines].join('\n')
+ }
+ 
+-export function encodeBase64(text: string): string {
++function encodeBase64(text: string): string {
+   return btoa(unescape(encodeURIComponent(text)))
+ }
+ 
+diff --git a/src/utils/plsModelPayload.ts b/src/utils/plsModelPayload.ts
+index c5bf0b7..98cc4a5 100644
+--- a/src/utils/plsModelPayload.ts
++++ b/src/utils/plsModelPayload.ts
+@@ -2,7 +2,7 @@ import type { MeasurementType, RunPlsConstruct, RunPlsInteraction, RunPlsPath }
+ 
+ export type HocPathRole = 'measurement' | 'structural'
+ 
+-export interface PlsCanvasIndicatorLike {
++interface PlsCanvasIndicatorLike {
+   name: string
+ }
+ 
+diff --git a/src/utils/tarkReadiness.ts b/src/utils/tarkReadiness.ts
+index 8a6484e..bce526e 100644
+--- a/src/utils/tarkReadiness.ts
++++ b/src/utils/tarkReadiness.ts
+@@ -1,5 +1,5 @@
+-export type CoreRequiredMode = 'pls-sem' | 'bootstrap' | 'plspredict'
+-export type AdvancedRequiredMode = 'advanced'
++type CoreRequiredMode = 'pls-sem' | 'bootstrap' | 'plspredict'
++type AdvancedRequiredMode = 'advanced'
+ export type RequiredMode = CoreRequiredMode | AdvancedRequiredMode
+ 
+ export interface ModelReadiness {
+@@ -23,13 +23,13 @@ interface WorkspaceResultLike {
+   }
+ }
+ 
+-export const REQUIRED_RESULTS: Array<{ mode: CoreRequiredMode; label: string }> = [
++const REQUIRED_RESULTS: Array<{ mode: CoreRequiredMode; label: string }> = [
+   { mode: 'pls-sem', label: 'PLS-SEM' },
+   { mode: 'bootstrap', label: 'Bootstrap' },
+   { mode: 'plspredict', label: 'PLSpredict' },
+ ]
+ 
+-export const ADVANCED_ANALYSIS_RESULT: { mode: AdvancedRequiredMode; label: string } = {
++const ADVANCED_ANALYSIS_RESULT: { mode: AdvancedRequiredMode; label: string } = {
+   mode: 'advanced',
+   label: 'Advanced analysis',
+ }
+@@ -50,7 +50,7 @@ export function normalizeResultMode(value: unknown): RequiredMode | null {
+   return null
+ }
+ 
+-export function getResultMode(result: WorkspaceResultLike): RequiredMode | null {
++function getResultMode(result: WorkspaceResultLike): RequiredMode | null {
+   return (
+     normalizeResultMode(result.state?.analysis?.mode)
+     ?? normalizeResultMode(result.meta)
+diff --git a/src/utils/tarkReportTables.ts b/src/utils/tarkReportTables.ts
+index 9007fd8..1d94bc0 100644
+--- a/src/utils/tarkReportTables.ts
++++ b/src/utils/tarkReportTables.ts
+@@ -44,7 +44,7 @@ export interface TarkDiagramResults {
+   measurementResults: Record<string, { loading?: number; weight?: number }>
+ }
+ 
+-export const TARK_USER_FILL_CELL = '\u200B'
++const TARK_USER_FILL_CELL = '\u200B'
+ 
+ const OMITTED_TABLE_KEYS = new Set([
+   'method',
+diff --git a/src/utils/themeAccent.ts b/src/utils/themeAccent.ts
+index a6c1ac0..4a603c0 100644
+--- a/src/utils/themeAccent.ts
++++ b/src/utils/themeAccent.ts
+@@ -5,11 +5,11 @@ export const DEFAULT_DARK_ON_ACCENT = '#181818'
+ export const DEFAULT_LIGHT_ACCENT_COLOR = '#87976B'
+ export const DEFAULT_LIGHT_ACCENT_RGB = '135 151 107'
+ export const DEFAULT_LIGHT_ON_ACCENT = '#10150B'
+-export const DEFAULT_ACCENT_COLOR = DEFAULT_DARK_ACCENT_COLOR
++const DEFAULT_ACCENT_COLOR = DEFAULT_DARK_ACCENT_COLOR
+ export const METIS_PREF_ACCENT_COLOR_KEY = 'metis:prefs:accentColor'
+ export const LEGACY_PREF_ACCENT_COLOR_KEY = 'pls:prefs:accentColour'
+ 
+-export const LEGACY_DEFAULT_ACCENT_COLORS = [DEFAULT_DARK_ACCENT_COLOR, DEFAULT_LIGHT_ACCENT_COLOR] as const
++const LEGACY_DEFAULT_ACCENT_COLORS = [DEFAULT_DARK_ACCENT_COLOR, DEFAULT_LIGHT_ACCENT_COLOR] as const
+ 
+ export interface AccentOption {
+   label: string
+@@ -27,7 +27,7 @@ const DEFAULT_ACCENT_OPTION: AccentOption = {
+   onAccent: DEFAULT_DARK_ON_ACCENT,
+ }
+ 
+-export const APP_ACCENT_OPTIONS: Record<string, AccentOption> = {
++const APP_ACCENT_OPTIONS: Record<string, AccentOption> = {
+   '#2F8FB3': { label: 'Sea blue', value: '#2F8FB3', color: '#2F8FB3', rgb: '47 143 179', onAccent: '#FFFFFF' },
+   '#7C5CFF': { label: 'Violet', value: '#7C5CFF', color: '#7C5CFF', rgb: '124 92 255', onAccent: '#FFFFFF' },
+   '#E46F61': { label: 'Coral', value: '#E46F61', color: '#E46F61', rgb: '228 111 97', onAccent: '#181818' },

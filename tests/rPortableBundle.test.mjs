@@ -4,13 +4,14 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import JSZip from 'jszip'
-import { REQUIRED_R_PACKAGES, syncRPortableZip } from '../scripts/sync-r-portable-zip.mjs'
+import { REQUIRED_R_PACKAGES, REQUIRED_R_RUNTIME_FILES, syncRPortableZip } from '../scripts/sync-r-portable-zip.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = path.resolve(__dirname, '..')
 
 const requiredPackages = ['jsonlite', 'Matrix', 'plumber', 'readxl', 'seminr', 'seminrExtras', 'semPower']
 const requiredPackageVersions = {
+  seminr: '2.5.0',
   seminrExtras: '1.0.0',
 }
 
@@ -18,6 +19,18 @@ assert.deepEqual(
   REQUIRED_R_PACKAGES,
   requiredPackages,
   'The bundle verifier should guard every R package required by the backend.'
+)
+
+assert.deepEqual(
+  REQUIRED_R_RUNTIME_FILES.map((entry) => entry.label),
+  ['Rblas.dll'],
+  'The bundle verifier should guard the BLAS runtime binary so optimized math ships in R-Portable.zip.'
+)
+
+assert.equal(
+  requiredPackageVersions.seminr,
+  '2.5.0',
+  'Bundle builds should require SEMinR 2.5.0 so prediction supports all interaction methods.'
 )
 
 assert.equal(
@@ -52,14 +65,21 @@ for (const packageName of requiredPackages) {
     'utf8'
   )
 }
+const sourceRblasPath = path.join(sourceDir, 'App', 'R-Portable', 'bin', 'x64', 'Rblas.dll')
+const optimizedRblasBytes = Buffer.from('optimized-rblas')
+await fs.mkdir(path.dirname(sourceRblasPath), { recursive: true })
+await fs.writeFile(sourceRblasPath, optimizedRblasBytes)
 
 const staleZip = new JSZip()
 for (const packageName of requiredPackages) {
   staleZip.file(
     `R-Portable/App/R-Portable/library/${packageName}/DESCRIPTION`,
-    `Package: ${packageName}\nVersion: ${packageName === 'seminrExtras' ? '0.9.0' : requiredPackageVersions[packageName] ?? '1.0.0'}\n`
+    `Package: ${packageName}\nVersion: ${
+      packageName === 'seminr' ? '2.4.2' : packageName === 'seminrExtras' ? '0.9.0' : requiredPackageVersions[packageName] ?? '1.0.0'
+    }\n`
   )
 }
+staleZip.file('R-Portable/App/R-Portable/bin/x64/Rblas.dll', Buffer.from('reference-rblas'))
 await fs.writeFile(zipPath, await staleZip.generateAsync({ type: 'nodebuffer' }))
 
 const logs = []
@@ -90,6 +110,16 @@ for (const packageName of requiredPackages) {
   }
 }
 
+const rblasEntry = zip.file('R-Portable/App/R-Portable/bin/x64/Rblas.dll')
+assert.ok(rblasEntry, 'R-Portable.zip should include Rblas.dll.')
+assert.deepEqual(
+  await rblasEntry.async('nodebuffer'),
+  optimizedRblasBytes,
+  'R-Portable.zip should refresh Rblas.dll from the extracted source runtime.'
+)
+
+assert.match(logs.join('\n'), /seminr 2\.5\.0/, 'Verification output should name the required SEMinR version explicitly.')
 assert.match(logs.join('\n'), /seminrExtras/, 'Verification output should name seminrExtras explicitly.')
+assert.match(logs.join('\n'), /Rblas\.dll/, 'Verification output should name stale BLAS runtime binaries explicitly.')
 
 console.log('PASS R portable bundle coverage')

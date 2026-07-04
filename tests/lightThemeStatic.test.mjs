@@ -18,7 +18,7 @@ const electronMain = await readSource('electron/main.ts')
 assert.match(
   indexCss,
   /\[data-theme='light'\][\s\S]*--color-accent:\s*#87976B;/,
-  'Light theme should use the secondary green as the accent token.'
+  'Light theme Default accent should use olive green.'
 )
 
 assert.match(
@@ -35,14 +35,32 @@ assert.match(
 
 assert.match(
   prefsSource,
-  /localStorage\.setItem\('metis:prefs:theme', theme\)/,
-  'Preferences should persist the selected metis theme.'
+  /type ThemePreference = 'Dark' \| 'Light' \| 'Auto'/,
+  'Preferences should model Auto as a real theme preference.'
 )
 
 assert.match(
   prefsSource,
-  /onClick=\{\(\) => setTheme\('Light'\)\}/,
+  /localStorage\.setItem\('metis:prefs:theme', themePreference\)/,
+  'Preferences should persist the selected metis theme preference.'
+)
+
+assert.match(
+  prefsSource,
+  /onClick=\{\(\) => setThemeChoice\(item\.value\)\}/,
   'Light theme should be selectable in Preferences.'
+)
+
+assert.match(
+  appSource,
+  /type ThemePreference = AppTheme \| 'Auto'/,
+  'App should model Auto as a real theme preference.'
+)
+
+assert.match(
+  appSource,
+  /window\.matchMedia\('\(prefers-color-scheme: light\)'\)/,
+  'Auto theme should resolve from the system color scheme.'
 )
 
 assert.doesNotMatch(

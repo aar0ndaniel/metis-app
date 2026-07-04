@@ -6,6 +6,9 @@ export interface RunPlsConstruct {
   name: string
   type: MeasurementType
   indicators: string[]
+  is_higher_order?: boolean
+  higher_order_type?: 'reflective' | 'formative'
+  dimensions?: string[]
 }
 
 export interface RunPlsPath {
@@ -33,13 +36,13 @@ export interface RunPlsRequest {
   }
 }
 
-export interface RunPlsPathResult {
+interface RunPlsPathResult {
   from: string
   to: string
   coefficient: number
 }
 
-export interface RunPlsR2Result {
+interface RunPlsR2Result {
   construct: string
   r2: number | null
 }

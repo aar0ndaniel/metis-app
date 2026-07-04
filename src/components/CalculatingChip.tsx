@@ -51,18 +51,25 @@ export default function CalculatingChip() {
       : `${Math.round(a.progressPct)}%`
     return (
       <div
-        className="fixed bottom-4 right-4 z-[150] flex items-center gap-2 bg-neutral-900 text-neutral-100 rounded-full px-3 py-1.5 shadow-lg border border-neutral-800"
+        className="fixed bottom-4 right-4 z-[150] flex items-center gap-2 rounded-full px-3 py-1.5"
+        style={{
+          background: 'var(--color-panel-pop)',
+          color: 'var(--color-text-primary)',
+          border: '1px solid var(--color-border)',
+          boxShadow: 'var(--shadow-floating-panel)',
+        }}
         role="status"
         aria-live="polite"
         aria-label={`${labelForType(a.type)} running`}
       >
         <span className="inline-block w-2 h-2 rounded-full animate-pulse" style={{ background: 'var(--color-calculation-accent)' }} />
         <span className="text-xs font-medium">{labelForType(a.type)}</span>
-        <span className="text-xs text-neutral-400 tabular-nums">{progressText}</span>
+        <span className="text-xs tabular-nums" style={{ color: 'var(--color-text-secondary)' }}>{progressText}</span>
         <button
           type="button"
           aria-label="Expand calculation modal"
-          className="ml-1 p-1 rounded hover:bg-neutral-800"
+          className="ml-1 p-1 rounded"
+          style={{ color: 'var(--color-text-secondary)' }}
           onClick={() => dispatch({ type: 'expand' })}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 14v6h6M20 10V4h-6M14 10l6-6M10 14l-6 6" /></svg>
@@ -70,7 +77,8 @@ export default function CalculatingChip() {
         <button
           type="button"
           aria-label="Dismiss chip"
-          className="p-1 rounded hover:bg-neutral-800"
+          className="p-1 rounded"
+          style={{ color: 'var(--color-text-secondary)' }}
           onClick={() => dispatch({ type: 'dismissChip' })}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>

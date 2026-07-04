@@ -41,7 +41,7 @@ interface SelectOption {
   note?: string
 }
 
-const SECONDARY_GREEN = '#87976B'
+const MODAL_ACCENT = 'var(--color-accent)'
 
 function ModalSelect({
   value,
@@ -82,8 +82,8 @@ function ModalSelect({
           minHeight: 40,
           backgroundColor: 'var(--color-input, var(--color-elevated))',
           color: selected ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-          border: open ? `1px solid ${SECONDARY_GREEN}` : '1px solid var(--color-border)',
-          boxShadow: open ? '0 0 0 1px rgba(135,151,107,0.16)' : 'none',
+          border: open ? `1px solid ${MODAL_ACCENT}` : '1px solid var(--color-border)',
+          boxShadow: open ? '0 0 0 1px rgb(var(--color-accent-rgb) / 0.16)' : 'none',
           padding: '10px 12px',
           borderRadius: 6,
           fontSize: 13,
@@ -108,7 +108,7 @@ function ModalSelect({
         </span>
         <CaretDown
           size={12}
-          color={open ? SECONDARY_GREEN : 'var(--color-text-muted)'}
+          color={open ? MODAL_ACCENT : 'var(--color-text-muted)'}
           style={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.18s ease' }}
         />
       </button>
@@ -125,7 +125,7 @@ function ModalSelect({
             backgroundColor: 'var(--color-surface)',
             border: '1px solid var(--color-border)',
             borderRadius: 8,
-            boxShadow: '0 14px 32px rgba(0,0,0,0.34)',
+            boxShadow: 'var(--shadow-modal-popover)',
             padding: 6,
             maxHeight: 240,
             overflowY: 'auto',
@@ -149,9 +149,9 @@ function ModalSelect({
                   border: 'none',
                   borderRadius: 6,
                   backgroundColor: selectedOption
-                    ? 'rgba(135,151,107,0.18)'
+                    ? 'rgb(var(--color-accent-rgb) / 0.18)'
                     : hovered
-                      ? 'rgba(135,151,107,0.11)'
+                      ? 'rgb(var(--color-accent-rgb) / 0.11)'
                       : 'transparent',
                   color: selectedOption ? 'var(--color-success-text-light)' : 'var(--color-text-secondary)',
                   padding: option.note ? '9px 10px' : '8px 10px',
@@ -174,7 +174,7 @@ function ModalSelect({
                   )}
                 </span>
                 <span style={{ width: 14, display: 'flex', justifyContent: 'center', flexShrink: 0 }}>
-                  {selectedOption ? <Check size={12} color={SECONDARY_GREEN} weight="bold" /> : null}
+                  {selectedOption ? <Check size={12} color={MODAL_ACCENT} weight="bold" /> : null}
                 </span>
               </button>
             )
@@ -308,8 +308,8 @@ export default function AdvancedAnalysisModal({
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className="w-[520px] rounded-lg overflow-hidden border border-white/10 shadow-2xl"
-        style={{ backgroundColor: 'var(--color-elevated)', display: 'flex', flexDirection: 'column', borderColor: 'var(--color-border)' }}
+        className="w-[520px] rounded-lg overflow-hidden border border-white/10"
+        style={{ backgroundColor: 'var(--color-elevated)', display: 'flex', flexDirection: 'column', borderColor: 'var(--color-border)', boxShadow: 'var(--shadow-modal)' }}
       >
         <div
           style={{
@@ -382,7 +382,7 @@ export default function AdvancedAnalysisModal({
                           name="advanced-predecessor-scope"
                           checked={predecessorScope === option.value}
                           onChange={() => setPredecessorScope(option.value as 'all' | 'direct')}
-                          style={{ accentColor: SECONDARY_GREEN }}
+                          style={{ accentColor: MODAL_ACCENT }}
                         />
                         {option.label}
                       </label>
@@ -413,7 +413,7 @@ export default function AdvancedAnalysisModal({
                         const checked = event.target.checked
                         setAnalyses((previous) => ({ ...previous, [option.key]: checked }))
                       }}
-                      style={{ accentColor: SECONDARY_GREEN }}
+                      style={{ accentColor: MODAL_ACCENT }}
                     />
                     {option.label}
                     {option.key === 'cipma' && (

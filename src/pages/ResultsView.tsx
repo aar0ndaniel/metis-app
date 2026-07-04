@@ -64,19 +64,32 @@ import { getPanelDataFromResults } from '../results/panelData'
 import { classifyPanelEmptyState, getBaseModelReferenceLabel, rowsContainOnlyMessage } from '../results/panelDiagnostics'
 import { getExportSectionTitles, getModeResultsLabel, getPanelTitle } from '../results/panelExport'
 import { buildClipboardTableHtml, buildClipboardTableText, type ExportTableSection } from '../results/clipboardTables'
-import { deriveSpecificIndirectRows } from '../results/panelDerivedData'
+import {
+  buildModerationSlopeChartSvg,
+  deriveModerationSummaryRows,
+  deriveModerationSlopeRows,
+  deriveModerationR2ChangeRows,
+  deriveModerationBootstrapRows,
+  deriveSpecificIndirectRows,
+  hasModerationInteractions,
+  hasModerationSlopeCoefficients,
+} from '../results/panelDerivedData'
 import {
   buildConstructIndicatorLookup,
   buildMeasurementMatrix,
   extractPlsLmComparisonRows,
   extractQ2PredictRows,
   formatBottleneckDisplayValue,
+  formatBottleneckOutcomeLevel,
   formatPreciseNumber,
   getDefaultPanelTableView,
   getPanelTableViews,
+  isBottleneckMetaField,
+  isBottleneckOutcomeField,
   isBootstrapSignificancePanel,
   buildIndirectEffectPairLookup,
   buildTotalEffectPairLookup,
+  normalizeBottleneckRowsForDisplay,
   normalizeBootstrapSignificanceRows,
   normalizeIndexedTableLabel,
   shouldRenderBlankPanelCell,
@@ -90,6 +103,7 @@ import {
   readPlsPredictSettingsFromState,
   type PlsPredictSettings,
 } from '../utils/plsPredictSettings'
+import { buildPlsModelPayloadParts, type HocPathRole } from '../utils/plsModelPayload'
 import { useCalculationDispatch, useIsCalculating, type CalcPhase } from '../state/calculationContext'
 
 // ─── Display mode option lists (from Pencil ui.pen spec) ─────────────────────
@@ -140,6 +154,16 @@ interface ReliabilityRow {
   rhoCc: string
   ave: string
   status: 'pass' | 'neutral'
+}
+
+interface HOCResultRow {
+  hoc_construct: string
+  loc_construct: string
+  hoc_type: string
+  loc_type: string
+  loading: number | null
+  weight: number | null
+  vif: number | null
 }
 
 interface OuterLoadingRow {
@@ -244,8 +268,8 @@ const PANEL_ICON_OVERRIDES: Record<string, ElementType> = {
   'cipma-priorities': ListChecks,
 }
 
-function buildSidebarSections(mode: AnalysisMode): SidebarSection[] {
-  return getPanelSectionsForMode(mode).map((section) => ({
+function buildSidebarSections(mode: AnalysisMode, hasInteractions = false): SidebarSection[] {
+  return getPanelSectionsForMode(mode, { hasInteractions }).map((section) => ({
     ...section,
     items: section.items.map((item) => ({
       id: item.id,
@@ -264,6 +288,7 @@ function modelHasMediationPaths(savedModel: any): boolean {
   const outgoingBySource = new Map<string, Set<string>>()
 
   paths.forEach((path: any) => {
+    if (path?.kind === 'moderation') return
     const from = String(path?.from ?? '')
     const to = String(path?.to ?? '')
     if (!from || !to || from === to) return
@@ -292,6 +317,48 @@ function modelHasMediationPaths(savedModel: any): boolean {
 // ============================================================================
 // RESULT PARSERS  — extract real R/seminr data from analysisResults
 // ============================================================================
+
+function getDerivedModerationPanelData(
+  mode: AnalysisMode,
+  panelId: string,
+  savedModel: any,
+  analysisResults: any,
+): any | null {
+  if (mode === 'pls-sem') {
+    if (panelId === 'moderation-summary') return deriveModerationSummaryRows(savedModel, analysisResults)
+    if (panelId === 'moderation-slopes') return deriveModerationSlopeRows(savedModel, analysisResults)
+    if (panelId === 'moderation-slope-chart') return deriveModerationSlopeRows(savedModel, analysisResults)
+    if (panelId === 'moderation-r2-change') return deriveModerationR2ChangeRows(savedModel, analysisResults)
+  }
+
+  if (mode === 'bootstrap' && panelId === 'moderation-bootstrap') {
+    return deriveModerationBootstrapRows(savedModel, analysisResults)
+  }
+
+  return null
+}
+
+function mergeRSquareRowsWithModeration(
+  rows: Array<Record<string, unknown>>,
+  moderationR2Rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  if (!moderationR2Rows.length) return rows
+
+  const moderationByDv = new Map(
+    moderationR2Rows.map((row) => [String(row.DV ?? row.dv ?? ''), row])
+  )
+  return rows.map((row) => {
+    const construct = String(row.construct ?? row.Construct ?? row.row_name ?? row.Row ?? '')
+    const moderation = moderationByDv.get(construct)
+    if (!moderation) return row
+    return {
+      ...row,
+      delta_r2: moderation.delta_r2,
+      f2_interaction: moderation.f2_interaction,
+      effect_size: moderation.effect_size,
+    }
+  })
+}
 
 function getDecimals() {
   const d = readSharedStorageValue('prefs:decimalPlaces')
@@ -420,7 +487,7 @@ function formatMetricValue(value: unknown): string {
 
 function isTStatisticHeader(header: string): boolean {
   const compact = normalizeMetricKey(header)
-  return compact === 'tstat' || compact === 'tstatistic' || compact === 'tvalue' || compact === 'tvalues'
+  return compact === 'tstat' || compact === 'tstatistic' || compact.startsWith('tstatistics') || compact === 'tvalue' || compact === 'tvalues'
 }
 
 function findPValueCell(row: Record<string, unknown> | null | undefined): unknown {
@@ -438,7 +505,7 @@ function findTStatisticCell(row: Record<string, unknown> | null | undefined): un
     if (isRowField(key)) continue
     if (isTStatisticHeader(key)) return value
   }
-  return findMetricValue(row, ['t stat', 't statistic', 't value', 't_value', 'tstatistic', 't_values'])
+  return findMetricValue(row, ['t stat', 't statistic', 't statistics', 't statistics ostdev', 't value', 't_value', 'tstatistic', 't_values'])
 }
 
 function findEstimateCell(row: Record<string, unknown> | null | undefined): unknown {
@@ -447,6 +514,9 @@ function findEstimateCell(row: Record<string, unknown> | null | undefined): unkn
     'coef',
     'original est',
     'original estimate',
+    'original sample',
+    'original sample o',
+    'path coefficient',
     'original_estimate',
     'original coefficient',
     'bootstrap mean',
@@ -1025,7 +1095,7 @@ function normalizeAnalysisFailureMessage(error: unknown): string {
 function buildDiagramResults(
   ar: any,
   canvasConstructs?: CanvasConstruct[],
-  canvasPaths?: Array<{ from: string; to: string }>,
+  canvasPaths?: Array<{ from: string; to: string; kind?: 'direct' | 'moderation' }>,
   fallbackAr?: any,
 ): import('../components/PathDiagram').DiagramResults {
   const constructScores: Record<string, any> = {}
@@ -1218,6 +1288,7 @@ function buildDiagramResults(
           const cor = sda > 0 && sdb > 0 ? cov / (sda * sdb) : NaN
 
           const isModelEdge = (canvasPaths ?? []).some((p) => {
+            if (p.kind === 'moderation') return false
             const fromName = nameById.get(p.from) ?? p.from
             const toName = nameById.get(p.to) ?? p.to
             return fromName === from && toName === to
@@ -1263,10 +1334,11 @@ function formatDisplayValue(
   cellContext?: PanelCellDisplayContext
 ): string {
   if (shouldRenderBlankPanelCell(selectedPanel, header, value, cellContext)) return ''
-  if (value == null) return '—'
   if (selectedPanel === 'bottleneck-table' && !isRowField(header ?? '')) {
+    if (isBottleneckOutcomeField(header)) return formatBottleneckOutcomeLevel(value)
     return formatBottleneckDisplayValue(value)
   }
+  if (value == null) return '—'
   if (header && isPValueHeader(header)) return formatPValueDisplay(value)
 
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -1301,6 +1373,256 @@ function formatDisplayValue(
     return trimmed
   }
   return String(value)
+}
+
+const ADVANCED_RESULT_TABLE_PANELS = new Set([
+  'priority-map',
+  'construct-table',
+  'necessity-check',
+  'bottleneck-table',
+  'cipma-priorities',
+])
+
+function normalizeAdvancedHeader(header?: string): string {
+  return String(header ?? '').trim().replace(/[\s_.()-]+/g, '').toLowerCase()
+}
+
+function normalizeBottleneckConstructHeader(header?: string): string {
+  return String(header ?? '').trim().replace(/[\s_.()%/-]+/g, '').toLowerCase()
+}
+
+function isAdvancedResultTablePanel(analysisMode?: string, selectedPanel?: string): boolean {
+  return analysisMode === 'advanced' && !!selectedPanel && ADVANCED_RESULT_TABLE_PANELS.has(selectedPanel)
+}
+
+function getAdvancedTargetConstruct(analysisResults: any): string {
+  return String(
+    analysisResults?.meta?.analysis_settings?.advanced?.targetConstruct ??
+    analysisResults?.algorithm?.settings?.target_construct ??
+    analysisResults?.algorithm?.settings?.targetConstruct ??
+    ''
+  ).trim()
+}
+
+function isBottleneckTargetConditionColumn(header: string, targetConstruct?: string): boolean {
+  if (!targetConstruct) return false
+  if (isBottleneckOutcomeField(header) || isBottleneckMetaField(header) || isRowField(header)) return false
+  return normalizeBottleneckConstructHeader(header) === normalizeBottleneckConstructHeader(targetConstruct)
+}
+
+function getBottleneckTableHeaders(
+  allHeaders: string[],
+  targetConstruct?: string,
+  includeMetaColumns = false
+): string[] {
+  const metaHeaders = includeMetaColumns
+    ? ['Method', 'Ceiling'].filter((header) => allHeaders.includes(header))
+    : []
+  const dataHeaders = allHeaders.filter((header) =>
+    !isBottleneckMetaField(header) &&
+    !isRowField(header) &&
+    !isBottleneckTargetConditionColumn(header, targetConstruct)
+  )
+  const levelHeader = dataHeaders.find((header) => isBottleneckOutcomeField(header))
+  const conditionHeaders = levelHeader
+    ? dataHeaders.filter((header) => header !== levelHeader)
+    : dataHeaders
+
+  return levelHeader
+    ? [...metaHeaders, levelHeader, ...conditionHeaders]
+    : [...metaHeaders, ...conditionHeaders]
+}
+
+function isAdvancedSemanticHeader(header?: string): boolean {
+  const normalized = normalizeAdvancedHeader(header)
+  return [
+    'priority',
+    'highimportance',
+    'necessary',
+    'sufficient',
+    'important',
+    'importantdriver',
+    'driver',
+  ].includes(normalized)
+}
+
+function isAdvancedBooleanLabel(value: string): boolean {
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'true' || normalized === 'false' || normalized === 'yes' || normalized === 'no'
+}
+
+function shouldRenderAdvancedPriorityPill(header: string, displayValue: string, isLastColumn: boolean): boolean {
+  if (isAdvancedBooleanLabel(displayValue)) return false
+  const normalizedHeader = normalizeAdvancedHeader(header)
+  const normalizedValue = displayValue.trim().toLowerCase()
+  return normalizedHeader === 'priority' || (
+    isLastColumn &&
+    (
+      normalizedValue.includes('low priority') ||
+      normalizedValue.includes('important driver')
+    )
+  )
+}
+
+function isAdvancedNcaEffectHeader(header?: string): boolean {
+  const normalized = normalizeAdvancedHeader(header)
+  return normalized === 'ncad' || normalized === 'd' || normalized === 'effectsize'
+}
+
+function parseAdvancedCellNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  const match = String(value ?? '').trim().match(/-?\d+(?:\.\d+)?/)
+  const parsed = match ? Number(match[0]) : NaN
+  return Number.isFinite(parsed) ? parsed : NaN
+}
+
+function getNcaEffectLevel(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 0.3) return 'medium'
+  if (abs >= 0.1) return 'small'
+  return 'weak'
+}
+
+function getAdvancedEffectTextColor(value: number): string {
+  const abs = Math.abs(value)
+  if (abs >= 0.5) return 'var(--color-success)'
+  if (abs >= 0.3) return 'var(--color-warning)'
+  if (abs >= 0.1) return 'var(--color-danger)'
+  return 'var(--color-text-muted)'
+}
+
+type AdvancedSemanticTone = 'high' | 'moderate' | 'low' | 'neutral'
+
+function classifyAdvancedSemanticTone(value: string): AdvancedSemanticTone {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized || normalized === '—') return 'neutral'
+  if (
+    normalized === 'false' ||
+    normalized === 'no' ||
+    normalized.includes('not necessary') ||
+    normalized.includes('low') ||
+    normalized.includes('weak') ||
+    normalized.includes('concentrate') ||
+    normalized.includes('must improve')
+  ) {
+    return 'low'
+  }
+  if (
+    normalized === 'true' ||
+    normalized === 'yes' ||
+    normalized.includes('high') ||
+    normalized.includes('important driver') ||
+    normalized.includes('keep up') ||
+    normalized.includes('necessary')
+  ) {
+    return 'high'
+  }
+  if (
+    normalized.includes('moderate') ||
+    normalized.includes('medium') ||
+    normalized.includes('standard')
+  ) {
+    return 'moderate'
+  }
+  return 'neutral'
+}
+
+function getAdvancedPriorityBadgeStyle(priority: string) {
+  const tone = classifyAdvancedSemanticTone(priority)
+  if (tone === 'high') {
+    return {
+      color: 'var(--color-success)',
+      background: 'rgb(var(--color-success-rgb) / 0.13)',
+      border: '1px solid rgb(var(--color-success-rgb) / 0.22)',
+    }
+  }
+  if (tone === 'moderate') {
+    return {
+      color: 'var(--color-warning)',
+      background: 'color-mix(in srgb, var(--color-warning) 14%, transparent)',
+      border: '1px solid color-mix(in srgb, var(--color-warning) 26%, transparent)',
+    }
+  }
+  if (tone === 'low') {
+    return {
+      color: 'var(--color-danger)',
+      background: 'rgb(var(--color-danger-rgb) / 0.12)',
+      border: '1px solid rgb(var(--color-danger-rgb) / 0.22)',
+    }
+  }
+  return {
+    color: 'var(--color-text-secondary)',
+    background: 'rgb(var(--color-hover-rgb) / 0.45)',
+    border: '1px solid var(--color-border)',
+  }
+}
+
+function renderAdvancedResultCell({
+  header,
+  rawValue,
+  displayValue,
+  isLastColumn = false,
+}: {
+  header: string
+  rawValue: unknown
+  displayValue: string
+  isLastColumn?: boolean
+}) {
+  if (shouldRenderAdvancedPriorityPill(header, displayValue, isLastColumn)) {
+    return (
+      <span
+        style={{
+          ...getAdvancedPriorityBadgeStyle(displayValue),
+          display: 'inline-flex',
+          alignItems: 'center',
+          minHeight: 22,
+          padding: '0 8px',
+          borderRadius: 999,
+          fontSize: 11,
+          fontWeight: 700,
+          lineHeight: '22px',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {displayValue}
+      </span>
+    )
+  }
+
+  if (isAdvancedSemanticHeader(header)) {
+    return (
+      <span
+        style={{
+          color: getAdvancedPriorityBadgeStyle(displayValue).color,
+          fontWeight: 700,
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {displayValue}
+      </span>
+    )
+  }
+
+  if (isAdvancedNcaEffectHeader(header)) {
+    const value = parseAdvancedCellNumber(rawValue)
+    const hasLabel = /[a-z]/i.test(displayValue)
+    const content = Number.isFinite(value) && !hasLabel
+      ? `${formatPreciseNumber(value, 3)} ${getNcaEffectLevel(value)}`
+      : displayValue
+    return (
+      <span
+        className="tabular-nums"
+        style={{
+          color: Number.isFinite(value) ? getAdvancedEffectTextColor(value) : 'var(--color-text-secondary)',
+          fontWeight: 700,
+        }}
+      >
+        {content}
+      </span>
+    )
+  }
+
+  return displayValue
 }
 
 function normalizeRowFields(row: Record<string, unknown>): Record<string, unknown> {
@@ -1339,18 +1661,29 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
-const EXPORT_CONSTRUCT_COLOR = '#87976B'
-const EXPORT_CONSTRUCT_STROKE_COLOR = '#65744F'
-const EXPORT_INDICATOR_COLOR = '#C6A24B'
-const EXPORT_INDICATOR_STROKE_COLOR = '#9B7A2E'
 const EXPORT_DIAGRAM_TEXT_COLOR = '#1A1F2B'
 const EXPORT_DIAGRAM_MUTED_COLOR = '#5F6978'
 const EXPORT_DIAGRAM_BORDER_COLOR = '#D7DDE6'
 const EXPORT_DIAGRAM_SURFACE_COLOR = '#FFFFFF'
 
+interface ExportAccent {
+  color: string
+  rgb: string
+  onAccent: string
+}
+
+function getCurrentExportAccent(): ExportAccent {
+  const styles = typeof window !== 'undefined' ? window.getComputedStyle(document.documentElement) : null
+  const color = styles?.getPropertyValue('--color-accent').trim() || '#2F8FB3'
+  const rgb = styles?.getPropertyValue('--color-accent-rgb').trim() || '47 143 179'
+  const onAccent = styles?.getPropertyValue('--color-on-accent').trim() || '#FFFFFF'
+  return { color, rgb, onAccent }
+}
+
 function buildPathDiagramSvg(
   model: { constructs: CanvasConstruct[]; paths: CanvasPath[] } | null,
   diagramResults: import('../components/PathDiagram').DiagramResults,
+  exportAccent: ExportAccent,
 ): string {
   if (!model?.constructs?.length) {
     return `<div style="padding:24px;color:${EXPORT_DIAGRAM_MUTED_COLOR}">No saved path diagram available.</div>`
@@ -1359,34 +1692,38 @@ function buildPathDiagramSvg(
   const constructs = model.constructs
   const paths = model.paths ?? []
   const byId = Object.fromEntries(constructs.map(c => [c.id, c]))
+  const pathById = Object.fromEntries(paths.map(p => [p.id, p]))
 
   const indicatorEntries: Array<{
     constructId: string
     constructName: string
+    constructColor: string
     name: string
     ix: number
     iy: number
     labelW: number
+    labelH: number
+    labelT?: number
   }> = []
 
   constructs.forEach((c) => {
     if (c.folded) return
     c.indicators.forEach((ind, i) => {
-      const { ix, iy, labelW } = getResultsIndicatorLayout(c, ind, i)
-      indicatorEntries.push({ constructId: c.id, constructName: c.name, name: ind.name, ix, iy, labelW })
+      const { ix, iy, labelW, labelH } = getResultsIndicatorLayout(c, ind, i)
+      indicatorEntries.push({ constructId: c.id, constructName: c.name, constructColor: c.color, name: ind.name, ix, iy, labelW, labelH, labelT: ind.labelT })
     })
   })
 
   const allX = [
-    ...constructs.map(c => c.x - c.radius - 5),
-    ...constructs.map(c => c.x + c.radius + 5),
+    ...constructs.map(c => c.x - getResultsConstructRadii(c).rx - 5),
+    ...constructs.map(c => c.x + getResultsConstructRadii(c).rx + 5),
     ...indicatorEntries.flatMap(i => [i.ix - i.labelW / 2, i.ix + i.labelW / 2]),
   ]
   const allY = [
-    ...constructs.map(c => c.y - c.radius - 5),
-    ...constructs.map(c => c.y + c.radius + 5),
-    ...indicatorEntries.map(i => i.iy - RESULTS_INDICATOR_LABEL_H / 2),
-    ...indicatorEntries.map(i => i.iy + RESULTS_INDICATOR_LABEL_H / 2),
+    ...constructs.map(c => c.y - getResultsConstructRadii(c).ry - 5),
+    ...constructs.map(c => c.y + getResultsConstructRadii(c).ry + 5),
+    ...indicatorEntries.map(i => i.iy - i.labelH / 2),
+    ...indicatorEntries.map(i => i.iy + i.labelH / 2),
   ]
   const PAD = 80
   const vbMinX = Math.min(...allX) - PAD
@@ -1397,28 +1734,34 @@ function buildPathDiagramSvg(
   const markerDefs = `
     <defs>
       <marker id="exp-arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-        <polygon points="0 0,8 3,0 6" fill="${EXPORT_CONSTRUCT_COLOR}"></polygon>
+        <polygon points="0 0,8 3,0 6" fill="${exportAccent.color}"></polygon>
       </marker>
       <marker id="exp-arr-measure" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
-        <polygon points="0 0,8 3,0 6" fill="${EXPORT_INDICATOR_COLOR}"></polygon>
+        <polygon points="0 0,8 3,0 6" fill="context-stroke"></polygon>
+      </marker>
+      <marker id="exp-arr-mod" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+        <polygon points="0 0,8 3,0 6" fill="${exportAccent.color}"></polygon>
       </marker>
     </defs>
   `
 
   // Draws a split arrow with a gap for the label
-  const arrowPathSplit = (from: CanvasConstruct, to: CanvasConstruct, gap = 32): [string, string, {x: number, y: number}] => {
+  const arrowPathSplit = (from: CanvasConstruct, to: CanvasConstruct, gap = 32, labelT = 0.5): [string, string, {x: number, y: number}] => {
     const dx = to.x - from.x
     const dy = to.y - from.y
     const dist = Math.sqrt(dx * dx + dy * dy)
     if (dist < 1) return ['', '', {x: 0, y: 0}]
     const ux = dx / dist
     const uy = dy / dist
-    const startX = from.x + ux * from.radius
-    const startY = from.y + uy * from.radius
-    const endX = to.x - ux * to.radius
-    const endY = to.y - uy * to.radius
-    const midX = (startX + endX) / 2
-    const midY = (startY + endY) / 2
+    const start = getResultsConstructEdgePoint(from, to.x, to.y)
+    const end = getResultsConstructEdgePoint(to, from.x, from.y)
+    const startX = start.x
+    const startY = start.y
+    const endX = end.x
+    const endY = end.y
+    const t = clampResultsLabelT(labelT)
+    const midX = startX + (endX - startX) * t
+    const midY = startY + (endY - startY) * t
     // Move gap/2 away from midpoint in both directions
     const gapUx = ux * (gap / 2)
     const gapUy = uy * (gap / 2)
@@ -1471,6 +1814,27 @@ function buildPathDiagramSvg(
     }
   }
 
+  const splitLineAtT = (startX: number, startY: number, endX: number, endY: number, labelT = 0.5, gap = 34) => {
+    const dx = endX - startX
+    const dy = endY - startY
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1
+    const t = clampResultsLabelT(labelT)
+    const x = startX + dx * t
+    const y = startY + dy * t
+    const gapUx = (dx / dist) * (gap / 2)
+    const gapUy = (dy / dist) * (gap / 2)
+    return {
+      path1: `M${startX},${startY} L${x - gapUx},${y - gapUy}`,
+      path2: `M${x + gapUx},${y + gapUy} L${endX},${endY}`,
+      x,
+      y,
+    }
+  }
+
+  const constructEdgePoint = (construct: CanvasConstruct, x: number, y: number) => {
+    return getResultsConstructEdgePoint(construct, x, y)
+  }
+
   const measurementMap = diagramResults.measurementResults ?? {}
 
   const measurementSvg = indicatorEntries.map((ind) => {
@@ -1482,20 +1846,22 @@ function buildPathDiagramSvg(
     const uy = ind.iy - c.y
     const dist = Math.sqrt(ux * ux + uy * uy)
     if (dist < 1) return ''
-    const r = c.radius
-    const startX = c.x + (ux / dist) * r
-    const startY = c.y + (uy / dist) * r
+    const start = getResultsConstructEdgePoint(c, ind.ix, ind.iy)
+    const startX = start.x
+    const startY = start.y
     let ix = ind.ix, iy = ind.iy
-    if      (dir === 'top')    iy += RESULTS_INDICATOR_LABEL_H / 2
-    else if (dir === 'bottom') iy -= RESULTS_INDICATOR_LABEL_H / 2
+    if      (dir === 'top')    iy += ind.labelH / 2
+    else if (dir === 'bottom') iy -= ind.labelH / 2
     else if (dir === 'left')   ix += ind.labelW / 2
     else if (dir === 'right')  ix -= ind.labelW / 2
     // Split at midpoint for label
-    const midX = (startX + ix) / 2
-    const midY = (startY + iy) / 2
+    const labelT = clampResultsLabelT(ind.labelT)
+    const midX = startX + (ix - startX) * labelT
+    const midY = startY + (iy - startY) * labelT
     const gap = 24
-    const gapUx = (ix - startX) / dist * (gap / 2)
-    const gapUy = (iy - startY) / dist * (gap / 2)
+    const pathDist = Math.sqrt((ix - startX) ** 2 + (iy - startY) ** 2) || 1
+    const gapUx = (ix - startX) / pathDist * (gap / 2)
+    const gapUy = (iy - startY) / pathDist * (gap / 2)
     const seg1X = midX - gapUx
     const seg1Y = midY - gapUy
     const seg2X = midX + gapUx
@@ -1503,39 +1869,66 @@ function buildPathDiagramSvg(
     const path1 = `M${startX},${startY} L${seg1X},${seg1Y}`
     const path2 = `M${seg2X},${seg2Y} L${ix},${iy}`
     const val = measurementMap[`${c.name}::${ind.name}`]?.loading
-    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="9" fill="${EXPORT_INDICATOR_STROKE_COLOR}">${(val as number).toFixed(getDecimals())}</text>` : ''
-    return `<g><path d="${path1}" stroke="${EXPORT_INDICATOR_COLOR}" stroke-width="1.2" fill="none"></path><path d="${path2}" stroke="${EXPORT_INDICATOR_COLOR}" stroke-width="1.2" fill="none" marker-end="url(#exp-arr-measure)"></path>${txt}</g>`
+    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="9" fill="${exportAccent.color}">${(val as number).toFixed(getDecimals())}</text>` : ''
+    return `<g><path d="${path1}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none"></path><path d="${path2}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none" marker-end="url(#exp-arr-measure)"></path>${txt}</g>`
   }).join('')
 
   const pathSvg = paths.map((p) => {
+    if (p.kind === 'moderation') {
+      const targetPathId = p.targetPathId
+      const targetPath = targetPathId ? pathById[targetPathId] : null
+      const moderator = byId[p.from]
+      const iv = targetPath ? byId[targetPath.from] : null
+      const dv = targetPath ? byId[targetPath.to] : null
+      if (!targetPath || targetPath.kind === 'moderation' || !moderator || !iv || !dv) return ''
+
+      const targetMid = { x: (iv.x + dv.x) / 2, y: (iv.y + dv.y) / 2 }
+      const start = constructEdgePoint(moderator, targetMid.x, targetMid.y)
+      const split = splitLineAtT(start.x, start.y, targetMid.x, targetMid.y, p.labelT)
+      // Moderation labels use the IV*Moderator interaction coefficient returned by seminr.
+      const interactionName = `${iv.name}*${moderator.name}`
+      const pathVal = diagramResults.pathResults?.[`${interactionName}-${dv.name}`]?.coef
+      const txt = Number.isFinite(pathVal as number)
+        ? `<text x="${split.x}" y="${split.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${exportAccent.color}">${(pathVal as number).toFixed(getDecimals())}</text>`
+        : ''
+      return `<g><path d="${split.path1}" stroke="${exportAccent.color}" stroke-width="1.8" stroke-dasharray="5 4" fill="none"></path><path d="${split.path2}" stroke="${exportAccent.color}" stroke-width="1.8" stroke-dasharray="5 4" fill="none" marker-end="url(#exp-arr-mod)"></path><circle cx="${targetMid.x}" cy="${targetMid.y}" r="3.4" fill="${exportAccent.color}"></circle>${txt}</g>`
+    }
+
     const from = byId[p.from]
     const to = byId[p.to]
     if (!from || !to) return ''
-    const [path1, path2, mid] = arrowPathSplit(from, to, 40)
+    const [path1, path2, mid] = arrowPathSplit(from, to, 40, p.labelT)
     const pathVal = diagramResults.pathResults?.[`${from.name}-${to.name}`]?.coef
-    const txt = Number.isFinite(pathVal as number) ? `<text x="${mid.x}" y="${mid.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${EXPORT_CONSTRUCT_STROKE_COLOR}">${(pathVal as number).toFixed(getDecimals())}</text>` : ''
-    return `<g><path d="${path1}" stroke="${EXPORT_CONSTRUCT_COLOR}" stroke-width="1.8" fill="none"></path><path d="${path2}" stroke="${EXPORT_CONSTRUCT_COLOR}" stroke-width="1.8" fill="none" marker-end="url(#exp-arr)"></path>${txt}</g>`
+    const txt = Number.isFinite(pathVal as number) ? `<text x="${mid.x}" y="${mid.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${exportAccent.color}">${(pathVal as number).toFixed(getDecimals())}</text>` : ''
+    return `<g><path d="${path1}" stroke="${exportAccent.color}" stroke-width="1.8" fill="none"></path><path d="${path2}" stroke="${exportAccent.color}" stroke-width="1.8" fill="none" marker-end="url(#exp-arr)"></path>${txt}</g>`
   }).join('')
 
   const constructSvg = constructs.map((c) => {
-    const hasIncoming = paths.some((path) => path.to === c.id)
+    const hasIncoming = paths.some((path) => path.kind !== 'moderation' && path.to === c.id)
     const r2 = diagramResults.constructScores?.[c.name]?.r2
+    const { rx, ry } = getResultsConstructRadii(c)
+    const normalizedShape = normalizeResultsConstructShape(c.shape)
+    const shapeSvg = normalizedShape === 'rectangle'
+      ? `<rect x="${c.x - rx}" y="${c.y - ry}" width="${rx * 2}" height="${ry * 2}" rx="8" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></rect>`
+      : normalizedShape === 'oval'
+        ? `<ellipse cx="${c.x}" cy="${c.y}" rx="${rx}" ry="${ry}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></ellipse>`
+        : `<circle cx="${c.x}" cy="${c.y}" r="${c.radius}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></circle>`
     const r2Text = hasIncoming && Number.isFinite(r2 as number)
       ? `<text x="${c.x}" y="${c.y + 6}" text-anchor="middle" font-size="13" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(r2 as number).toFixed(getDecimals())}</text>`
       : ''
     return `
       <g>
-        <circle cx="${c.x}" cy="${c.y}" r="${c.radius}" fill="${EXPORT_CONSTRUCT_COLOR}" stroke="${EXPORT_CONSTRUCT_STROKE_COLOR}" stroke-width="2"></circle>
+        ${shapeSvg}
         ${r2Text}
-        <text x="${c.x}" y="${c.y + c.radius + 18}" text-anchor="middle" font-size="12" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(c.name)}</text>
+        <text x="${c.x}" y="${c.y + ry + 18}" text-anchor="middle" font-size="12" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(c.name)}</text>
       </g>
     `
   }).join('')
 
   const indicatorBoxes = indicatorEntries.map((ind) => `
     <g>
-      <rect x="${ind.ix - ind.labelW / 2}" y="${ind.iy - RESULTS_INDICATOR_LABEL_H / 2}" width="${ind.labelW}" height="${RESULTS_INDICATOR_LABEL_H}" rx="4" fill="${EXPORT_INDICATOR_COLOR}" stroke="${EXPORT_INDICATOR_STROKE_COLOR}" stroke-width="1"></rect>
-      <text x="${ind.ix}" y="${ind.iy + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(ind.name)}</text>
+      <rect x="${ind.ix - ind.labelW / 2}" y="${ind.iy - ind.labelH / 2}" width="${ind.labelW}" height="${ind.labelH}" rx="4" fill="${ind.constructColor}24" stroke="${ind.constructColor}" stroke-width="1"></rect>
+      <text x="${ind.ix}" y="${ind.iy + 4}" text-anchor="middle" font-size="11" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}" textLength="${Math.max(8, ind.labelW - 10)}" lengthAdjust="spacingAndGlyphs">${escapeHtml(ind.name)}</text>
     </g>
   `).join('')
 
@@ -1555,23 +1948,50 @@ function formatResultTableHeader(header: string, selectedPanel?: string): string
   if (selectedPanel === 'necessity-check' && normalizedHeader === 'd') {
     return 'Effect size (d)'
   }
+  if (selectedPanel === 'bottleneck-table') {
+    if (isBottleneckOutcomeField(header)) return 'Level (%)'
+    if (normalizedHeader === 'ceiling') return 'Ceiling line'
+    if (!isBottleneckMetaField(header) && normalizedHeader !== 'row') return `${String(header ?? '').replace(/_/g, ' ')} required (%)`
+  }
   if (normalizedHeader === 'row') {
     return 'Row'
   }
+  if (normalizedHeader === 'betainteraction') return 'β interaction'
+  if (normalizedHeader === 'tstat') return 'T-stat'
+  if (normalizedHeader === 'pvalue') return 'p-value'
+  if (normalizedHeader === 'f2') return 'f²'
+  if (normalizedHeader === 'f2interaction') return 'f² interaction'
+  if (normalizedHeader === 'deltar2') return 'ΔR²'
+  if (normalizedHeader === 'r2withinteraction') return 'R² with interaction'
+  if (normalizedHeader === 'r2withoutinteraction') return 'R² without interaction'
+  if (normalizedHeader === 'moderatorlevel') return 'Moderator level'
+  if (normalizedHeader === 'simpleslope') return 'Simple slope'
+  if (normalizedHeader === 'cisupper' || normalizedHeader === 'ciupper') return 'CI upper'
+  if (normalizedHeader === 'cislower' || normalizedHeader === 'cilower') return 'CI lower'
+  if (normalizedHeader === 'bccilower') return 'BC CI lower'
+  if (normalizedHeader === 'bcciupper') return 'BC CI upper'
+  if (normalizedHeader === 'bcacilower') return 'BCa CI lower'
+  if (normalizedHeader === 'bcaciupper') return 'BCa CI upper'
   return String(header ?? '').replace(/_/g, ' ')
 }
 
 function buildExportTableHtml(
   rows: Array<Record<string, unknown>>,
   selectedPanel?: string,
-  getCellContext?: (row: Record<string, unknown>) => PanelCellDisplayContext | undefined
+  getCellContext?: (row: Record<string, unknown>) => PanelCellDisplayContext | undefined,
+  options: { bottleneckTargetConstruct?: string; includeBottleneckMetaColumns?: boolean } = {}
 ): string {
   if (!rows.length) {
     return '<div class="empty">No data available for this section.</div>'
   }
-  const normalizedRows = rows.map((row) => normalizeRowFields(row))
+  const sourceRows = selectedPanel === 'bottleneck-table'
+    ? normalizeBottleneckRowsForDisplay(rows)
+    : rows
+  const normalizedRows = sourceRows.map((row) => normalizeRowFields(row))
   const headers = Array.from(new Set(normalizedRows.flatMap((row) => Object.keys(row))))
-  const orderedHeaders = headers.includes('row') ? ['row', ...headers.filter((h) => h !== 'row')] : headers
+  const orderedHeaders = selectedPanel === 'bottleneck-table'
+    ? getBottleneckTableHeaders(headers, options.bottleneckTargetConstruct, options.includeBottleneckMetaColumns === true)
+    : headers.includes('row') ? ['row', ...headers.filter((h) => h !== 'row')] : headers
   const thead = `<thead><tr>${orderedHeaders.map((h) => `<th>${escapeHtml(formatResultTableHeader(h, selectedPanel))}</th>`).join('')}</tr></thead>`
   const tbody = `<tbody>${normalizedRows.map((row) => {
     const cellContext = getCellContext?.(row)
@@ -1656,15 +2076,19 @@ function SidebarSectionComponent({
 // CANVAS TYPES (match ModelCanvas structure, used for localStorage bridge)
 // ============================================================================
 
+type CanvasConstructShape = 'circle' | 'oval' | 'rectangle' | 'square'
+
 interface CanvasConstruct {
   id: string; name: string; type: 'Reflective' | 'Formative'
   color: string; x: number; y: number; radius: number
-  indicators: { name: string; loading: number; ox?: number; oy?: number }[]
+  ovalWidth?: number; ovalHeight?: number; shape?: CanvasConstructShape
+  indicators: { name: string; loading: number; ox?: number; oy?: number; labelT?: number }[]
   indicatorDirection?: 'top' | 'right' | 'bottom' | 'left'
   indicatorAlignment?: 'top' | 'right' | 'bottom' | 'left'
   folded?: boolean
+  isHigherOrder?: boolean
 }
-interface CanvasPath { id: string; from: string; to: string }
+interface CanvasPath { id: string; from: string; to: string; kind?: 'direct' | 'moderation'; targetPathId?: string; hocRole?: HocPathRole; labelT?: number }
 
 const METIS_STORAGE_PREFIX = 'metis:'
 const LEGACY_STORAGE_PREFIX = 'pls:'
@@ -1672,6 +2096,11 @@ const RESULTS_INDICATOR_STEP = 60
 const RESULTS_INDICATOR_EDGE_GAP = 60
 const RESULTS_INDICATOR_LABEL_H = 22
 const RESULTS_MIN_INDICATOR_LABEL_W = 44
+const RESULTS_MIN_LABEL_T = 0.12
+const RESULTS_MAX_LABEL_T = 0.88
+const RESULTS_OVAL_RX_SCALE = 1.35
+const RESULTS_OVAL_RY_SCALE = 0.82
+const RESULTS_MIN_OVAL_DIMENSION = 40
 
 function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
@@ -1706,11 +2135,70 @@ function resetResultsIndicatorLayout(construct: CanvasConstruct, nextAlignment: 
   }
 }
 
+function clampResultsLabelT(value: number | undefined): number {
+  if (!Number.isFinite(value)) return 0.5
+  return Math.max(RESULTS_MIN_LABEL_T, Math.min(RESULTS_MAX_LABEL_T, value as number))
+}
+
+function normalizeResultsConstructShape(shape?: CanvasConstructShape): 'circle' | 'oval' | 'rectangle' {
+  return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function getResultsDefaultOvalDimensions(radius: number): { width: number; height: number } {
+  return {
+    width: Math.round(radius * RESULTS_OVAL_RX_SCALE * 2),
+    height: Math.round(radius * RESULTS_OVAL_RY_SCALE * 2),
+  }
+}
+
+function getResultsConstructRadii(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { rx: number; ry: number } {
+  if (normalizeResultsConstructShape(construct.shape) !== 'circle') {
+    const defaults = getResultsDefaultOvalDimensions(construct.radius)
+    return {
+      rx: Math.max(RESULTS_MIN_OVAL_DIMENSION, construct.ovalWidth ?? defaults.width) / 2,
+      ry: Math.max(RESULTS_MIN_OVAL_DIMENSION, construct.ovalHeight ?? defaults.height) / 2,
+    }
+  }
+  return { rx: construct.radius, ry: construct.radius }
+}
+
+function getResultsConstructEdgeOffset(construct: Pick<CanvasConstruct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, ux: number, uy: number): number {
+  const { rx, ry } = getResultsConstructRadii(construct)
+  if (normalizeResultsConstructShape(construct.shape) === 'rectangle') {
+    const tx = Math.abs(ux) > 0.0001 ? rx / Math.abs(ux) : Number.POSITIVE_INFINITY
+    const ty = Math.abs(uy) > 0.0001 ? ry / Math.abs(uy) : Number.POSITIVE_INFINITY
+    return Math.min(tx, ty)
+  }
+  return 1 / Math.sqrt((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry))
+}
+
+function getResultsConstructEdgePoint(construct: CanvasConstruct, x: number, y: number): { x: number; y: number } {
+  const dx = x - construct.x
+  const dy = y - construct.y
+  const dist = Math.sqrt(dx * dx + dy * dy) || 1
+  const ux = dx / dist
+  const uy = dy / dist
+  const offset = getResultsConstructEdgeOffset(construct, ux, uy)
+  return {
+    x: construct.x + ux * offset,
+    y: construct.y + uy * offset,
+  }
+}
+
+function getResultsIndicatorDimensions(indicator: { name: string }): { labelW: number; labelH: number } {
+  return {
+    labelW: Math.max(RESULTS_MIN_INDICATOR_LABEL_W, indicator.name.length * 7 + 16),
+    labelH: RESULTS_INDICATOR_LABEL_H,
+  }
+}
+
 function getResultsIndicatorLayout(construct: CanvasConstruct, indicator: { name: string; ox?: number; oy?: number }, index: number, includeOffsets = true) {
   const dir = construct.indicatorAlignment || construct.indicatorDirection || 'bottom'
-  const labelW = Math.max(RESULTS_MIN_INDICATOR_LABEL_W, indicator.name.length * 7 + 16)
+  const { labelW, labelH } = getResultsIndicatorDimensions(indicator)
+  const { rx, ry } = getResultsConstructRadii(construct)
+  const edgeRadius = dir === 'left' || dir === 'right' ? rx : ry
   const offset = (index - (construct.indicators.length - 1) / 2) * RESULTS_INDICATOR_STEP
-  const centerGap = construct.radius + RESULTS_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : RESULTS_INDICATOR_LABEL_H / 2)
+  const centerGap = edgeRadius + RESULTS_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
 
   let ix = construct.x
   let iy = construct.y
@@ -1733,7 +2221,7 @@ function getResultsIndicatorLayout(construct: CanvasConstruct, indicator: { name
     iy += indicator.oy || 0
   }
 
-  return { ix, iy, labelW, labelH: RESULTS_INDICATOR_LABEL_H, dir }
+  return { ix, iy, labelW, labelH, dir }
 }
 
 function readModelSnapshotFromWorkspaceCache(modelId?: string): { constructs: CanvasConstruct[]; paths: CanvasPath[] } | null {
@@ -1844,6 +2332,8 @@ function DiagramCanvas({
   type DiagramInteraction =
     | { type: 'drag'; startX: number; startY: number; items: DiagramDragItem[] }
     | { type: 'resize'; id: string; centerX: number; centerY: number }
+    | { type: 'pathLabel'; pathId: string }
+    | { type: 'indicatorLabel'; constructId: string; indicatorName: string }
 
   const interactionRef = useRef<DiagramInteraction | null>(null)
   const isPanning  = useRef(false)
@@ -1993,10 +2483,14 @@ function DiagramCanvas({
     }))
   }, [])
 
-  const commitModelChange = useCallback((updater: (constructs: CanvasConstruct[]) => CanvasConstruct[]) => {
+  const commitModelChange = useCallback((
+    updater: (constructs: CanvasConstruct[]) => CanvasConstruct[],
+    pathUpdater?: (paths: CanvasPath[]) => CanvasPath[],
+  ) => {
     if (!onModelChange) return
     const nextConstructs = updater(cloneConstructs(canvasConstructs))
-    const nextPaths = (canvasPaths ?? []).map((path) => ({ ...path }))
+    const clonedPaths = (canvasPaths ?? []).map((path) => ({ ...path }))
+    const nextPaths = pathUpdater ? pathUpdater(clonedPaths) : clonedPaths
     onModelChange({ constructs: nextConstructs, paths: nextPaths })
   }, [canvasConstructs, canvasPaths, cloneConstructs, onModelChange])
 
@@ -2197,6 +2691,22 @@ function DiagramCanvas({
     document.body.style.cursor = 'nwse-resize'
   }, [canvasConstructs])
 
+  const handlePathLabelMouseDown = useCallback((pathId: string, e: React.MouseEvent<SVGGElement>) => {
+    if (e.button === 2) return
+    e.preventDefault()
+    e.stopPropagation()
+    interactionRef.current = { type: 'pathLabel', pathId }
+    document.body.style.cursor = 'grabbing'
+  }, [])
+
+  const handleIndicatorLabelMouseDown = useCallback((constructId: string, indicatorName: string, e: React.MouseEvent<SVGGElement>) => {
+    if (e.button === 2) return
+    e.preventDefault()
+    e.stopPropagation()
+    interactionRef.current = { type: 'indicatorLabel', constructId, indicatorName }
+    document.body.style.cursor = 'grabbing'
+  }, [])
+
   useEffect(() => {
     const handleMove = (e: MouseEvent) => {
       const interaction = interactionRef.current
@@ -2241,6 +2751,74 @@ function DiagramCanvas({
           return
         }
 
+        if (interaction.type === 'pathLabel') {
+          const path = (canvasPaths ?? []).find((item) => item.id === interaction.pathId)
+          if (!path) return
+
+          const from = (canvasConstructs ?? []).find((item) => item.id === path.from)
+          let startX = from?.x ?? 0
+          let startY = from?.y ?? 0
+          let endX = 0
+          let endY = 0
+
+          if (path.kind === 'moderation') {
+            const targetPath = (canvasPaths ?? []).find((item) => item.id === path.targetPathId && item.kind !== 'moderation')
+            const targetFrom = (canvasConstructs ?? []).find((item) => item.id === targetPath?.from)
+            const targetTo = (canvasConstructs ?? []).find((item) => item.id === targetPath?.to)
+            if (!from || !targetPath || !targetFrom || !targetTo) return
+            endX = (targetFrom.x + targetTo.x) / 2
+            endY = (targetFrom.y + targetTo.y) / 2
+            const ux = endX - from.x
+            const uy = endY - from.y
+            const dist = Math.sqrt(ux * ux + uy * uy) || 1
+            startX = from.x + (ux / dist) * from.radius
+            startY = from.y + (uy / dist) * from.radius
+          } else {
+            const to = (canvasConstructs ?? []).find((item) => item.id === path.to)
+            if (!from || !to) return
+            endX = to.x
+            endY = to.y
+          }
+
+          const dx = endX - startX
+          const dy = endY - startY
+          const lengthSq = dx * dx + dy * dy
+          const nextT = lengthSq > 0
+            ? clampResultsLabelT(((point.x - startX) * dx + (point.y - startY) * dy) / lengthSq)
+            : 0.5
+          commitModelChange(
+            (constructs) => constructs,
+            (paths) => paths.map((item) => item.id === interaction.pathId ? { ...item, labelT: nextT } : item),
+          )
+          return
+        }
+
+        if (interaction.type === 'indicatorLabel') {
+          const construct = (canvasConstructs ?? []).find((item) => item.id === interaction.constructId)
+          const indicatorIndex = construct?.indicators.findIndex((item) => item.name === interaction.indicatorName) ?? -1
+          const indicator = construct && indicatorIndex >= 0 ? construct.indicators[indicatorIndex] : null
+          if (!construct || !indicator) return
+          const layout = getResultsIndicatorLayout(construct, indicator, indicatorIndex)
+          const dx = layout.ix - construct.x
+          const dy = layout.iy - construct.y
+          const lengthSq = dx * dx + dy * dy
+          const nextT = lengthSq > 0
+            ? clampResultsLabelT(((point.x - construct.x) * dx + (point.y - construct.y) * dy) / lengthSq)
+            : 0.5
+          commitModelChange((constructs) => constructs.map((item) => (
+            item.id === interaction.constructId
+              ? {
+                  ...item,
+                  indicators: item.indicators.map((candidate) => (
+                    candidate.name === interaction.indicatorName ? { ...candidate, labelT: nextT } : candidate
+                  )),
+                }
+              : item
+          )))
+          return
+        }
+
+        if (interaction.type !== 'resize') return
         const nextRadius = Math.max(26, Math.min(140, Math.hypot(point.x - interaction.centerX, point.y - interaction.centerY)))
         commitModelChange((constructs) => constructs.map((construct) => (
           construct.id === interaction.id
@@ -2269,7 +2847,7 @@ function DiagramCanvas({
       document.removeEventListener('mousemove', handleMove)
       document.removeEventListener('mouseup', handleUp)
     }
-  }, [commitModelChange, getSvgPoint, onPanChange])
+  }, [canvasConstructs, canvasPaths, commitModelChange, getSvgPoint, onPanChange])
 
   // Wheel: Ctrl/pinch = zoom, plain = pan
   useEffect(() => {
@@ -2324,6 +2902,8 @@ function DiagramCanvas({
           hoveredConstructId={hoveredConstructId}
           onConstructMouseDown={handleConstructMouseDown}
           onIndicatorMouseDown={handleIndicatorMouseDown}
+          onPathLabelMouseDown={handlePathLabelMouseDown}
+          onIndicatorLabelMouseDown={handleIndicatorLabelMouseDown}
           onResizeMouseDown={handleResizeMouseDown}
           onConstructContextMenu={handleConstructContextMenu}
           onConstructHover={setHoveredConstructId}
@@ -2464,44 +3044,48 @@ function PathCoefficientTable({ rows, view }: { rows: PathRow[]; view: ResultsTa
   const { cols, matRows } = buildCrossMatrix(rows)
 
   if (view === 'matrix') {
+    const table = (
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-primary/20">
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10"
+              style={{ minWidth: 70 }}>
+              From \ To
+            </th>
+            {cols.map(col => (
+              <th key={col} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
+                {col}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matRows.map((row, idx) => (
+            <tr key={row.id} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 font-semibold text-text-primary border-b border-border/40 sticky left-0 z-10"
+                style={resultsTableRowStyle(idx)}>
+                {row.id}
+              </td>
+              {cols.map(col => {
+                const val = row.data[col]
+                const matchRow = rows.find(r => r.path === `${row.id} → ${col}`)
+                return (
+                  <td key={col} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
+                    {val !== null
+                      ? <span className="font-medium" style={{ color: coefColorFromP(matchRow?.pValue) }}>{formatPreciseNumber(val, getDecimals())}</span>
+                      : <span className="text-text-muted/30">—</span>}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+
     return (
       <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-primary/20">
-              <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10"
-                style={{ minWidth: 70 }}>
-                From \ To
-              </th>
-              {cols.map(col => (
-                <th key={col} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
-                  {col}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matRows.map((row, idx) => (
-              <tr key={row.id} style={resultsTableRowStyle(idx)}>
-                <td className="px-4 py-2 font-semibold text-text-primary border-b border-border/40 sticky left-0 z-10"
-                  style={resultsTableRowStyle(idx)}>
-                  {row.id}
-                </td>
-                {cols.map(col => {
-                  const val = row.data[col]
-                  const matchRow = rows.find(r => r.path === `${row.id} → ${col}`)
-                  return (
-                    <td key={col} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
-                      {val !== null
-                        ? <span className="font-medium" style={{ color: coefColorFromP(matchRow?.pValue) }}>{formatPreciseNumber(val, getDecimals())}</span>
-                        : <span className="text-text-muted/30">—</span>}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {table}
       </div>
     )
   }
@@ -2536,26 +3120,44 @@ function PathCoefficientTable({ rows, view }: { rows: PathRow[]; view: ResultsTa
   )
 }
 
-function RSquareTable({ rows }: { rows: RSquareRow[] }) {
+function RSquareTable({ rows, moderationRows = [] }: { rows: RSquareRow[]; moderationRows?: Array<Record<string, unknown>> }) {
   if (!rows.length) return <EmptyTableState />
+  const moderationByDv = new Map(moderationRows.map((row) => [String(row.DV ?? ''), row]))
+  const showModerationColumns = moderationRows.length > 0
   return (
     <table className="w-full text-xs">
       <thead>
         <tr className="bg-primary/20">
-          {['Construct','R²','R² Adjusted','Assessment'].map(h => (
+          {[
+            'Construct',
+            'R²',
+            'R² Adjusted',
+            ...(showModerationColumns ? ['ΔR²', 'f² interaction', 'Effect size'] : []),
+            'Assessment',
+          ].map(h => (
             <th key={h} className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">{h}</th>
           ))}
         </tr>
       </thead>
       <tbody>
-        {rows.map((row, idx) => (
-          <tr key={idx} style={resultsTableRowStyle(idx)}>
-            <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40">{row.construct}</td>
-            <td className={`px-4 py-2 border-b border-border/40 tabular-nums ${getStatusColor(row.status)}`}>{fmtNum(row.r2)}</td>
-            <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{fmtNum(row.r2Adjusted)}</td>
-            <td className="px-4 py-2 text-text-secondary border-b border-border/40">{row.assessment}</td>
-          </tr>
-        ))}
+        {rows.map((row, idx) => {
+          const moderation = moderationByDv.get(row.construct)
+          return (
+            <tr key={idx} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40">{row.construct}</td>
+              <td className={`px-4 py-2 border-b border-border/40 tabular-nums ${getStatusColor(row.status)}`}>{fmtNum(row.r2)}</td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{fmtNum(row.r2Adjusted)}</td>
+              {showModerationColumns && (
+                <>
+                  <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{moderation ? fmtNum(moderation.delta_r2) : '—'}</td>
+                  <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{moderation ? fmtNum(moderation.f2_interaction) : '—'}</td>
+                  <td className="px-4 py-2 text-text-secondary border-b border-border/40">{moderation ? String(moderation.effect_size ?? '—') : '—'}</td>
+                </>
+              )}
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40">{row.assessment}</td>
+            </tr>
+          )
+        })}
       </tbody>
     </table>
   )
@@ -2590,6 +3192,107 @@ function ReliabilityTable({ rows }: { rows: ReliabilityRow[] }) {
   )
 }
 
+function parseHOCResults(ar: any): HOCResultRow[] {
+  return ar?.final_results?.hoc_results ?? []
+}
+
+function HOCResultsTable({ rows }: { rows: HOCResultRow[] }) {
+  if (!rows || !rows.length) return null
+
+  return (
+    <div className="overflow-x-auto mb-6 border border-border/40 rounded-lg">
+      <div className="border-b border-border/40 px-4 py-3 bg-primary/5">
+        <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider">Higher-Order Constructs</h3>
+        <p className="text-[10px] text-text-muted mt-0.5">Outer measurement model results for hierarchical components</p>
+      </div>
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-primary/20">
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Higher-Order Construct
+            </th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Lower-Order Dimension
+            </th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              HOC Type
+            </th>
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              LOC Type
+            </th>
+            <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Loading
+            </th>
+            <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              Weight
+            </th>
+            <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+              VIF
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, idx) => (
+            <tr key={idx} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40">
+                {row.hoc_construct}
+              </td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40 font-medium">
+                {row.loc_construct}
+              </td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40">
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${
+                  row.hoc_type === 'formative'
+                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                    : 'bg-primary/10 text-primary border border-primary/20'
+                }`}>
+                  {row.hoc_type}
+                </span>
+              </td>
+              <td className="px-4 py-2 text-text-secondary border-b border-border/40">
+                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${
+                  row.loc_type === 'formative'
+                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
+                    : 'bg-primary/10 text-primary border border-primary/20'
+                }`}>
+                  {row.loc_type}
+                </span>
+              </td>
+              <td className="px-4 py-2 text-right border-b border-border/40 tabular-nums">
+                {row.loading != null && !isNaN(row.loading) ? (
+                  <span className="font-semibold" style={{ color: getOuterLoadingColor(row.loading, 'var(--color-text-secondary)') }}>
+                    {fmtNum(row.loading)}
+                  </span>
+                ) : (
+                  <span className="text-text-muted/30">—</span>
+                )}
+              </td>
+              <td className="px-4 py-2 text-right border-b border-border/40 tabular-nums">
+                {row.weight != null && !isNaN(row.weight) ? (
+                  <span className="font-semibold text-text-secondary">
+                    {fmtNum(row.weight)}
+                  </span>
+                ) : (
+                  <span className="text-text-muted/30">—</span>
+                )}
+              </td>
+              <td className="px-4 py-2 text-right border-b border-border/40 tabular-nums">
+                {row.vif != null && !isNaN(row.vif) ? (
+                  <span className={`font-semibold ${row.vif >= 5 ? 'text-rose-500' : row.vif >= 3 ? 'text-amber-500' : 'text-text-secondary'}`}>
+                    {fmtNum(row.vif)}
+                  </span>
+                ) : (
+                  <span className="text-text-muted/30">—</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function OuterLoadingsTable({
   rows,
   label,
@@ -2611,46 +3314,50 @@ function OuterLoadingsTable({
 
   if (view === 'matrix') {
     const { cols, matRows } = buildMeasurementMatrix(sortedRows)
+    const table = (
+      <table className="w-full text-xs border-collapse">
+        <thead>
+          <tr className="bg-primary/20">
+            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
+              Indicator
+            </th>
+            {cols.map((construct) => (
+              <th key={construct} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[96px]">
+                {construct}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {matRows.map((row, idx) => (
+            <tr key={row.id} style={resultsTableRowStyle(idx)}>
+              <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
+                style={resultsTableRowStyle(idx)}>
+                {row.id}
+              </td>
+              {cols.map((construct) => {
+                const val = row.data[construct]
+                return (
+                  <td key={construct} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
+                    {val == null ? (
+                      <span className="text-text-muted/30">—</span>
+                    ) : (
+                      <span className="font-medium" style={{ color: getOuterLoadingColor(val, 'var(--color-text-secondary)') }}>
+                        {fmtNum(val)}
+                      </span>
+                    )}
+                  </td>
+                )
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+
     return (
       <div className="overflow-x-auto">
-        <table className="w-full text-xs border-collapse">
-          <thead>
-            <tr className="bg-primary/20">
-              <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
-                Indicator
-              </th>
-              {cols.map((construct) => (
-                <th key={construct} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[96px]">
-                  {construct}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {matRows.map((row, idx) => (
-              <tr key={row.id} style={resultsTableRowStyle(idx)}>
-                <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
-                  style={resultsTableRowStyle(idx)}>
-                  {row.id}
-                </td>
-                {cols.map((construct) => {
-                  const val = row.data[construct]
-                  return (
-                    <td key={construct} className="px-4 py-2 text-center border-b border-border/40 tabular-nums">
-                      {val == null ? (
-                        <span className="text-text-muted/30">—</span>
-                      ) : (
-                        <span className="font-medium" style={{ color: getOuterLoadingColor(val, 'var(--color-text-secondary)') }}>
-                          {fmtNum(val)}
-                        </span>
-                      )}
-                    </td>
-                  )
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        {table}
       </div>
     )
   }
@@ -2859,55 +3566,59 @@ function CrossLoadingsTable({ ar }: { ar: any }) {
   const allKeys = Array.from(new Set(raw.flatMap((r: any) => Object.keys(r))))
   const constructs = allKeys.filter(k => k !== 'row_name' && k !== 'indicator' && k !== 'Indicator')
 
+  const table = (
+    <table className="w-full text-xs border-collapse">
+      <thead>
+        <tr className="bg-primary/20">
+          <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
+            Indicator
+          </th>
+          {constructs.map(c => (
+            <th key={c} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
+              {c}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {raw.map((r: any, idx: number) => {
+          const indicator = String(r.row_name ?? r.indicator ?? r.Indicator ?? '')
+          // Find max absolute loading to highlight the primary construct
+          const vals = constructs.map(c => toNum(r[c], NaN)).filter(v => Number.isFinite(v))
+          const maxAbs = vals.length > 0 ? Math.max(...vals.map(Math.abs)) : NaN
+
+          return (
+            <tr key={idx} style={resultsTableRowStyle(idx)}>
+              <td
+                className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
+                style={resultsTableRowStyle(idx)}
+              >
+                {indicator}
+              </td>
+              {constructs.map(c => {
+                const val = toNum(r[c], NaN)
+                const isPrimary = Number.isFinite(val) && Number.isFinite(maxAbs) && Math.abs(Math.abs(val) - maxAbs) < 0.0001
+                const primaryColor = getOuterLoadingColor(val, 'var(--color-text-secondary)')
+                return (
+                  <td
+                    key={c}
+                    className={`px-4 py-2 text-center border-b border-border/40 tabular-nums ${isPrimary ? 'font-semibold' : 'text-text-secondary'}`}
+                    style={isPrimary ? { color: primaryColor } : undefined}
+                  >
+                    {Number.isFinite(val) ? fmtNum(val) : '—'}
+                  </td>
+                )
+              })}
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+
   return (
     <div className="overflow-x-auto">
-      <table className="w-full text-xs border-collapse">
-        <thead>
-          <tr className="bg-primary/20">
-            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border sticky left-0 z-10 bg-page">
-              Indicator
-            </th>
-            {constructs.map(c => (
-              <th key={c} className="px-4 py-2.5 text-center text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border min-w-[90px]">
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {raw.map((r: any, idx: number) => {
-            const indicator = String(r.row_name ?? r.indicator ?? r.Indicator ?? '')
-            // Find max absolute loading to highlight the primary construct
-            const vals = constructs.map(c => toNum(r[c], NaN)).filter(v => Number.isFinite(v))
-            const maxAbs = vals.length > 0 ? Math.max(...vals.map(Math.abs)) : NaN
-
-            return (
-              <tr key={idx} style={resultsTableRowStyle(idx)}>
-                <td
-                  className="px-4 py-2 text-text-primary font-medium border-b border-border/40 sticky left-0 z-10"
-                  style={resultsTableRowStyle(idx)}
-                >
-                  {indicator}
-                </td>
-                {constructs.map(c => {
-                  const val = toNum(r[c], NaN)
-                  const isPrimary = Number.isFinite(val) && Number.isFinite(maxAbs) && Math.abs(Math.abs(val) - maxAbs) < 0.0001
-                  const primaryColor = getOuterLoadingColor(val, 'var(--color-text-secondary)')
-                  return (
-                    <td
-                      key={c}
-                      className={`px-4 py-2 text-center border-b border-border/40 tabular-nums ${isPrimary ? 'font-semibold' : 'text-text-secondary'}`}
-                      style={isPrimary ? { color: primaryColor } : undefined}
-                    >
-                      {Number.isFinite(val) ? fmtNum(val) : '—'}
-                    </td>
-                  )
-                })}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+      {table}
       <div className="px-4 py-2 text-[10px] text-text-muted">
         Highlighted values indicate the highest loading for each indicator. For reflective constructs, each indicator should load highest on its own construct.
       </div>
@@ -3077,18 +3788,104 @@ function ExecutionLogPanel({ log }: { log: string }) {
   )
 }
 
+function BottleneckDataTable({ rows, targetConstruct }: { rows: Array<Record<string, unknown>>; targetConstruct?: string }) {
+  const normalizedRows = normalizeBottleneckRowsForDisplay(rows).map((row) => normalizeRowFields(row))
+  const groupedRows = new Map<string, Array<Record<string, unknown>>>()
+
+  normalizedRows.forEach((row) => {
+    const ceiling = String(row.Ceiling ?? row.ceiling ?? 'Bottleneck').trim() || 'Bottleneck'
+    const rowsForCeiling = groupedRows.get(ceiling) ?? []
+    rowsForCeiling.push(row)
+    groupedRows.set(ceiling, rowsForCeiling)
+  })
+
+  const ceilingGroups = Array.from(groupedRows.entries()).sort(([a], [b]) => {
+    const rank = (label: string) => /ce[\s_-]*fdh/i.test(label) ? 0 : /cr[\s_-]*fdh/i.test(label) ? 1 : 2
+    return rank(a) - rank(b) || a.localeCompare(b)
+  })
+  const [activeCeiling, setActiveCeiling] = useState(ceilingGroups[0]?.[0] ?? '')
+
+  if (!groupedRows.size) {
+    return <EmptyTableState label="No bottleneck table available for this run." />
+  }
+
+  const activeGroup = ceilingGroups.find(([ceiling]) => ceiling === activeCeiling) ?? ceilingGroups[0]
+  const [ceiling, ceilingRows] = activeGroup
+  const allHeaders = Array.from(new Set(ceilingRows.flatMap((row) => Object.keys(row))))
+  const headers = getBottleneckTableHeaders(allHeaders, targetConstruct, false)
+
+  return (
+    <div className="space-y-3">
+      {ceilingGroups.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-1 border-b border-border/60 px-3 pt-2">
+          {ceilingGroups.map(([groupCeiling]) => {
+            const active = groupCeiling === ceiling
+            return (
+              <button
+                key={groupCeiling}
+                type="button"
+                onClick={() => setActiveCeiling(groupCeiling)}
+                aria-pressed={active}
+                className="px-3 py-2 text-[11px] font-semibold transition-colors"
+                style={{
+                  color: active ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+                  borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent',
+                }}
+              >
+                {groupCeiling}
+              </button>
+            )
+          })}
+        </div>
+      ) : null}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-primary/20">
+              {headers.map((header) => (
+                <th key={header} className="px-4 py-2 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  {formatResultTableHeader(header, 'bottleneck-table')}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {ceilingRows.map((row, rowIndex) => (
+              <tr key={`${ceiling}-${rowIndex}`} style={resultsTableRowStyle(rowIndex)}>
+                {headers.map((header) => {
+                  const value = formatDisplayValue(row[header], header, 'bottleneck-table')
+                  return (
+                    <td key={`${ceiling}-${rowIndex}-${header}`} className="px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words">
+                      {value}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="px-4 pb-3 text-[11px] leading-relaxed text-text-muted">
+        Note. Values represent the minimum level of each condition required to achieve a given level of the outcome. NN means not necessary. Values are expressed as percentages of the observed range.
+      </p>
+    </div>
+  )
+}
+
 function GenericDataTable({
   data,
   analysisMode,
   selectedPanel,
   emptyLabel,
   savedModel,
+  analysisResults,
 }: {
   data: any
   analysisMode?: string
   selectedPanel?: string
   emptyLabel?: string
   savedModel?: any
+  analysisResults?: any
 }) {
   const rawRows = rowsFromData(data)
   if (!rawRows.length) {
@@ -3100,7 +3897,15 @@ function GenericDataTable({
     )
   }
 
-  const rows = rawRows.map((row) => normalizeRowFields(row))
+  if (selectedPanel === 'bottleneck-table') {
+    const advancedTargetConstruct = analysisMode === 'advanced' ? getAdvancedTargetConstruct(analysisResults) : ''
+    return <BottleneckDataTable rows={rawRows} targetConstruct={advancedTargetConstruct} />
+  }
+
+  const sourceRows = selectedPanel === 'bottleneck-table'
+    ? normalizeBottleneckRowsForDisplay(rawRows)
+    : rawRows
+  const rows = sourceRows.map((row) => normalizeRowFields(row))
 
   const otherHeaders = Array.from(new Set(rows.flatMap((row) => Object.keys(row)).filter((h) => h !== 'row')))
   const hasRowHeader = rows.some((row) => 'row' in row)
@@ -3116,6 +3921,7 @@ function GenericDataTable({
   const totalEffectPairs = selectedPanel === 'total-effects'
     ? buildTotalEffectPairLookup(savedModel)
     : null
+  const isAdvancedTable = isAdvancedResultTablePanel(analysisMode, selectedPanel)
 
   return (
     <div className="overflow-x-auto">
@@ -3135,7 +3941,7 @@ function GenericDataTable({
 
             return (
               <tr key={rowIndex} style={resultsTableRowStyle(rowIndex)}>
-                {headers.map((header) => {
+                {headers.map((header, headerIndex) => {
                   const isPCol = isPValueHeader(header)
                   const isEffectCell = isSignificanceEffectHeader(header)
                   const significanceColorClass = isBootstrapSignificancePanel && (isPCol || isEffectCell) && pTone
@@ -3146,10 +3952,22 @@ function GenericDataTable({
                     ? { rowLabel: row.row, indirectEffectPairs, totalEffectPairs }
                     : undefined
                   const value = formatDisplayValue(row[header], header, selectedPanel, cellContext)
+                  const isModerationInteractionCell = selectedPanel?.startsWith('moderation') && normalizeMetricKey(header) === 'interaction'
                   
                   return (
                     <td key={`${rowIndex}-${header}`} className={`px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words ${significanceColorClass || rowClass}`}>
-                      {value}
+                      {isAdvancedTable
+                        ? renderAdvancedResultCell({ header, rawValue: row[header], displayValue: value, isLastColumn: headerIndex === headers.length - 1 })
+                        : isModerationInteractionCell
+                          ? (
+                            <span className="inline-flex items-center gap-2">
+                              <span>{value}</span>
+                              <span className="rounded-full border border-primary/20 bg-primary/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">
+                                Interaction
+                              </span>
+                            </span>
+                          )
+                          : value}
                     </td>
                   )
                 })}
@@ -3162,13 +3980,44 @@ function GenericDataTable({
   )
 }
 
+function ModerationSlopeChartPanel({
+  savedModel,
+  analysisResults,
+  rows,
+  label,
+}: {
+  savedModel: any
+  analysisResults: any
+  rows: Array<Record<string, unknown>>
+  label?: string
+}) {
+  const chartSvg = buildModerationSlopeChartSvg(savedModel, analysisResults)
+  if (!chartSvg || !rows.length) return <EmptyTableState label={label} />
+
+  return (
+    <div className="space-y-3">
+      <div
+        className="overflow-hidden rounded-lg border border-border/50 bg-white p-3"
+        dangerouslySetInnerHTML={{ __html: chartSvg }}
+      />
+      <GenericDataTable
+        data={rows}
+        selectedPanel="moderation-slopes"
+        emptyLabel={label}
+        savedModel={savedModel}
+        analysisResults={analysisResults}
+      />
+    </div>
+  )
+}
+
 // ============================================================================
 // TABLE PANEL
 // ============================================================================
 
 type AdvancedPanelViewMode = 'table' | 'chart'
 
-const SUPPORTED_PANELS = ['path-coef','r-square','reliability','outer-loadings','outer-weights','cross-loadings','vif','discriminant','model-fit','q2-predict','pls-lm-comparison','execution-log']
+const SUPPORTED_PANELS = ['path-coef','r-square','reliability','outer-loadings','outer-weights','cross-loadings','vif','discriminant','model-fit','q2-predict','pls-lm-comparison','execution-log','moderation-slope-chart']
 const ADVANCED_INLINE_CHART_PANELS = new Set([
   'path-coef',
   'priority-map',
@@ -3269,9 +4118,13 @@ function TablePanel({
   // Derive real data from analysisResults
   const pathRows      = parsePathCoefficients(analysisResults)
   const rSquareRows   = parseRSquare(analysisResults)
+  const moderationR2Rows = analysisMode === 'pls-sem'
+    ? deriveModerationR2ChangeRows(savedModel, analysisResults)
+    : []
   const reliRows      = parseReliability(analysisResults)
   const loadingRows   = parseOuterLoadings(analysisResults)
   const weightRows    = parseOuterWeights(analysisResults)
+  const hocRows       = parseHOCResults(analysisResults)
   const vifSections   = parseVIF(analysisResults, savedModel)
   const modelFitRows  = parseModelFit(analysisResults)
   const execLog       = parseExecutionLog(analysisResults)
@@ -3315,6 +4168,7 @@ function TablePanel({
     ? deriveSpecificIndirectRows(savedModel, analysisResults)
     : []
   const panelRows = rowsFromData(panelData)
+  const modelHasInteractions = hasModerationInteractions(savedModel, analysisResults)
   const cvpatPlaceholderRows = rowsContainOnlyMessage(panelRows)
   const cvpatRequested = readPlsPredictSettingsFromResults(analysisResults).cvpatEnabled
   const cvpatStatus = String((analysisResults as any)?.meta?.cvpat_status ?? '').trim().toLowerCase()
@@ -3331,6 +4185,11 @@ function TablePanel({
     panelId: selectedPanel,
     hasRows: panelRows.length > 0 && !cvpatPlaceholderRows,
     hasMediationPaths: modelHasMediationPaths(savedModel),
+    hasInteractions: modelHasInteractions,
+    hasInteractionCoefficients:
+      (selectedPanel === 'moderation-slopes' || selectedPanel === 'moderation-slope-chart') && modelHasInteractions
+        ? hasModerationSlopeCoefficients(savedModel, analysisResults)
+        : undefined,
     hasFormativeWeights: Array.isArray(savedModel?.constructs)
       ? savedModel.constructs.some((construct: any) => String(construct?.type || '').toLowerCase() === 'formative')
       : undefined,
@@ -3657,17 +4516,37 @@ function TablePanel({
                 ? <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
                 : <PathCoefficientTable rows={pathRows} view={tableView} />
             )}
-            {selectedPanel === 'r-square'       && <RSquareTable rows={rSquareRows} />}
+            {selectedPanel === 'r-square'       && <RSquareTable rows={rSquareRows} moderationRows={moderationR2Rows} />}
             {selectedPanel === 'reliability'    && <ReliabilityTable rows={reliRows} />}
             {analysisMode === 'bootstrap' ? (
               <>
-                {selectedPanel === 'outer-loadings' && <BootstrapLoadingTable rows={bootLoadingRows} label={emptyStateLabel} view={bootstrapIntervalView} />}
-                {selectedPanel === 'outer-weights'  && <BootstrapLoadingTable rows={bootWeightRows} label={emptyStateLabel} view={bootstrapIntervalView} />}
+                {selectedPanel === 'outer-loadings' && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <BootstrapLoadingTable rows={bootLoadingRows} label={emptyStateLabel} view={bootstrapIntervalView} />
+                  </>
+                )}
+                {selectedPanel === 'outer-weights'  && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <BootstrapLoadingTable rows={bootWeightRows} label={emptyStateLabel} view={bootstrapIntervalView} />
+                  </>
+                )}
               </>
             ) : (
               <>
-                {selectedPanel === 'outer-loadings' && <OuterLoadingsTable rows={loadingRows} view={tableView} />}
-                {selectedPanel === 'outer-weights'  && <OuterLoadingsTable rows={weightRows} label={emptyStateLabel} mode="outer-weights" view={tableView} />}
+                {selectedPanel === 'outer-loadings' && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <OuterLoadingsTable rows={loadingRows} view={tableView} />
+                  </>
+                )}
+                {selectedPanel === 'outer-weights'  && (
+                  <>
+                    <HOCResultsTable rows={hocRows} />
+                    <OuterLoadingsTable rows={weightRows} label={emptyStateLabel} mode="outer-weights" view={tableView} />
+                  </>
+                )}
               </>
             )}
             {selectedPanel === 'cross-loadings' && <CrossLoadingsTable ar={analysisResults} />}
@@ -3675,11 +4554,19 @@ function TablePanel({
             {selectedPanel === 'discriminant'   && <DiscriminantValidityPanel ar={analysisResults} />}
             {selectedPanel === 'model-fit'      && <ModelFitTable rows={modelFitRows} label={emptyStateLabel} />}
             {selectedPanel === 'execution-log'  && <ExecutionLogPanel log={execLog} />}
+            {selectedPanel === 'moderation-slope-chart' && (
+              <ModerationSlopeChartPanel
+                savedModel={savedModel}
+                analysisResults={analysisResults}
+                rows={panelRows}
+                label={emptyStateLabel}
+              />
+            )}
             {analysisMode === 'bootstrap' && ['total-indirect', 'specific-indirect', 'total-effects'].includes(selectedPanel) && (
               <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
             )}
             {!SUPPORTED_PANELS.includes(selectedPanel) && !(analysisMode === 'bootstrap' && isBootstrapSignificancePanel(selectedPanel)) && (
-              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} />
+              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} analysisResults={analysisResults} />
             )}
             </>
           ) : null
@@ -3695,7 +4582,7 @@ function TablePanel({
               <ExecutionLogPanel log={execLog} />
             )}
             {!['q2-predict', 'pls-lm-comparison', 'execution-log', 'plsem-mv-error-hist', 'plsem-lv-error-hist'].includes(selectedPanel) && (
-              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} />
+              <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} analysisResults={analysisResults} />
             )}
           </>
         )}
@@ -3832,7 +4719,11 @@ export default function ResultsView() {
     }
   }, [savedModel])
 
-  const sidebarData = useMemo(() => buildSidebarSections(analysisMode), [analysisMode])
+  const moderationAvailable = useMemo(
+    () => hasModerationInteractions(savedModel, analysisResults),
+    [savedModel, analysisResults],
+  )
+  const sidebarData = useMemo(() => buildSidebarSections(analysisMode, moderationAvailable), [analysisMode, moderationAvailable])
 
   useEffect(() => {
     const availablePanels = sidebarData.flatMap((section) => section.items.map((item) => item.id))
@@ -3845,7 +4736,8 @@ export default function ResultsView() {
     setTableViewPreferences({})
   }, [analysisMode, analysisResults])
 
-  const panelData = getPanelDataFromResults(analysisMode, selectedPanel, analysisResults)
+  const derivedModerationPanelData = getDerivedModerationPanelData(analysisMode, selectedPanel, savedModel, analysisResults)
+  const panelData = derivedModerationPanelData ?? getPanelDataFromResults(analysisMode, selectedPanel, analysisResults)
   const tableViewKey = `${analysisMode}:${selectedPanel}`
   const tableViewOptions = getPanelTableViews(selectedPanel, analysisMode)
   const tableView = tableViewOptions.length
@@ -3983,26 +4875,15 @@ export default function ResultsView() {
       return null
     }
 
-    const constructs = model.constructs
-      .map((construct) => ({
-        name: construct.name,
-        type: construct.type,
-        indicators: construct.indicators.map((indicator) => indicator.name).filter(Boolean),
-      }))
-      .filter((construct) => construct.indicators.length > 0)
+    const payloadParts = buildPlsModelPayloadParts(model.constructs, model.paths)
+    const constructs = payloadParts.constructs
 
     if (!constructs.length) {
       dispatchToast('warning', 'No constructs', 'No construct indicators found in saved model state.')
       return null
     }
 
-    const constructNameById = new Map(model.constructs.map((construct) => [construct.id, construct.name]))
-    const paths = model.paths
-      .map((path) => ({
-        from: constructNameById.get(path.from) || path.from,
-        to: constructNameById.get(path.to) || path.to,
-      }))
-      .filter((path) => !!path.from && !!path.to && path.from !== path.to)
+    const paths = payloadParts.paths
 
     if (!paths.length) {
       dispatchToast('warning', 'No structural paths', 'No valid structural paths found in saved model state.')
@@ -4015,6 +4896,7 @@ export default function ResultsView() {
       datasetPath,
       constructs,
       paths,
+      interactions: payloadParts.interactions,
       algorithm: algorithm === 'consistent' ? 'consistent' : 'standard',
     }
   }, [analysisResults, modelId, resolveWorkspaceContext, savedModel])
@@ -4322,10 +5204,47 @@ export default function ResultsView() {
     }
   }, [generateRScript, modelId])
 
+function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
+  if (!hocRows || !hocRows.length) return ''
+  const rowsHtml = hocRows.map((row) => `
+    <tr>
+      <td>${escapeHtml(row.hoc_construct)}</td>
+      <td>${escapeHtml(row.loc_construct)}</td>
+      <td><span class="badge ${row.hoc_type}">${escapeHtml(row.hoc_type)}</span></td>
+      <td><span class="badge ${row.loc_type}">${escapeHtml(row.loc_type)}</span></td>
+      <td style="text-align: right;">${row.loading != null && !isNaN(row.loading) ? fmtNum(row.loading) : '—'}</td>
+      <td style="text-align: right;">${row.weight != null && !isNaN(row.weight) ? fmtNum(row.weight) : '—'}</td>
+      <td style="text-align: right;">${row.vif != null && !isNaN(row.vif) ? fmtNum(row.vif) : '—'}</td>
+    </tr>
+  `).join('')
+
+  return `
+    <div style="margin-bottom: 24px;">
+      <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #f0f0f5; text-transform: uppercase; letter-spacing: 0.5px;">Higher-Order Constructs</h3>
+      <table class="result-table">
+        <thead>
+          <tr>
+            <th style="text-align: left;">Higher-Order Construct</th>
+            <th style="text-align: left;">Lower-Order Dimension</th>
+            <th style="text-align: left;">HOC Type</th>
+            <th style="text-align: left;">LOC Type</th>
+            <th style="text-align: right;">Loading</th>
+            <th style="text-align: right;">Weight</th>
+            <th style="text-align: right;">VIF</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `
+}
+
   const handleExportHtml = useCallback(async () => {
     try {
       const electronAPI = (window as any).electronAPI
-      if (!electronAPI?.writeFile || !electronAPI?.getDataPath || !electronAPI?.openPath) {
+      if (!electronAPI?.writeFile || !electronAPI?.getStoragePaths || !electronAPI?.openPath) {
         dispatchToast('error', 'Export HTML is available in the Electron desktop app only.')
         return
       }
@@ -4351,7 +5270,8 @@ export default function ResultsView() {
       ]
 
       const diagramResults = buildDiagramResults(analysisResults, savedModel?.constructs, savedModel?.paths)
-      const pathDiagramHtml = buildPathDiagramSvg(savedModel, diagramResults)
+      const exportAccent = getCurrentExportAccent()
+      const pathDiagramHtml = buildPathDiagramSvg(savedModel, diagramResults, exportAccent)
 
       const navHtml = tabSections.map((section) => {
         const heading = section.title ? `<div class="group-title">${escapeHtml(section.title)}</div>` : ''
@@ -4366,7 +5286,8 @@ export default function ResultsView() {
           return `<section id="sec-${item.id}" class="result-section"><div class="section-head"><h2>${escapeHtml(item.label)}</h2></div>${pathDiagramHtml}</section>`
         }
 
-        const data = getPanelDataFromResults(analysisMode, item.id, analysisResults)
+        const derivedModerationRows = getDerivedModerationPanelData(analysisMode, item.id, savedModel, analysisResults)
+        const data = derivedModerationRows ?? getPanelDataFromResults(analysisMode, item.id, analysisResults)
         const rows = rowsFromData(data)
         const derivedRows = analysisMode === 'pls-sem' && item.id === 'specific-indirect' && !rows.length
           ? deriveSpecificIndirectRows(savedModel, analysisResults)
@@ -4376,6 +5297,12 @@ export default function ResultsView() {
           : derivedRows.length
             ? derivedRows
             : rows
+        const moderationR2Rows = analysisMode === 'pls-sem'
+          ? deriveModerationR2ChangeRows(savedModel, analysisResults)
+          : []
+        const exportDisplayRows = item.id === 'r-square'
+          ? mergeRSquareRowsWithModeration(displayRows, moderationR2Rows)
+          : displayRows
         const indirectEffectPairs = item.id === 'total-indirect'
           ? buildIndirectEffectPairLookup(savedModel)
           : null
@@ -4384,12 +5311,21 @@ export default function ResultsView() {
           : null
         const exportTableView = tableViewPreferences[`${analysisMode}:${item.id}`] ?? getDefaultPanelTableView(item.id)
         let tableHtml = buildExportTableHtml(
-          displayRows,
+          exportDisplayRows,
           item.id,
           indirectEffectPairs || totalEffectPairs
             ? (row) => ({ rowLabel: row.row, indirectEffectPairs, totalEffectPairs })
-            : undefined
+            : undefined,
+          {
+            bottleneckTargetConstruct: analysisMode === 'advanced' && item.id === 'bottleneck-table'
+              ? getAdvancedTargetConstruct(analysisResults)
+              : '',
+          }
         )
+        if (item.id === 'moderation-slope-chart') {
+          const chartSvg = buildModerationSlopeChartSvg(savedModel, analysisResults)
+          tableHtml = `${chartSvg ? `<div class="chart-wrap">${chartSvg}</div>` : ''}${tableHtml}`
+        }
 
         if (item.id === 'path-coef') {
           const exportPathRows = parsePathCoefficients(analysisResults)
@@ -4455,9 +5391,13 @@ export default function ResultsView() {
             ]),
           )
         }
+        const exportHocRows = parseHOCResults(analysisResults)
+        const hocExportHtml = (item.id === 'outer-loadings' || item.id === 'outer-weights') && exportHocRows.length > 0
+          ? buildExportHocTableHtml(exportHocRows)
+          : ''
         const body = item.id === 'execution-log'
           ? `<pre class="exec-log">${escapeHtml(parseExecutionLog(analysisResults))}</pre>`
-          : tableHtml
+          : `${hocExportHtml}${tableHtml}`
         const copyButton = /<table[\s>]/i.test(body)
           ? `<button type="button" class="copy-table-button" title="Copy table for Word" aria-label="Copy ${escapeHtml(item.label)} table">${EXPORT_COPY_ICON_SVG}</button>`
           : ''
@@ -4471,7 +5411,7 @@ export default function ResultsView() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>metis Results - ${escapeHtml(modelName)}</title>
   <style>
-    :root { --bg:#F4F6F8; --card:#FFFFFF; --line:#D7DDE6; --text:#1A1F2B; --muted:#5F6978; --brand:#87976B; --indicator:#C6A24B; --color-page:#F4F6F8; --color-page-rgb:244 246 248; --color-surface:#FFFFFF; --color-surface-rgb:255 255 255; --color-elevated:#FFFFFF; --color-elevated-rgb:255 255 255; --color-border:#D7DDE6; --color-border-rgb:215 221 230; --color-text-primary:#1A1F2B; --color-text-primary-rgb:26 31 43; --color-text-secondary:#5F6978; --color-text-secondary-rgb:95 105 120; --color-text-muted:#8A94A5; --color-text-muted-rgb:138 148 165; --color-on-accent:#181818; --color-accent:#87976B; --color-accent-rgb:135 151 107; --color-success:#87976B; --color-warning:#9B7A2E; --color-danger:#C65D44; }
+    :root { --bg:#F4F6F8; --card:#FFFFFF; --line:#D7DDE6; --text:#1A1F2B; --muted:#5F6978; --brand:${exportAccent.color}; --indicator:${exportAccent.color}; --color-page:#F4F6F8; --color-page-rgb:244 246 248; --color-surface:#FFFFFF; --color-surface-rgb:255 255 255; --color-elevated:#FFFFFF; --color-elevated-rgb:255 255 255; --color-border:#D7DDE6; --color-border-rgb:215 221 230; --color-text-primary:#1A1F2B; --color-text-primary-rgb:26 31 43; --color-text-secondary:#5F6978; --color-text-secondary-rgb:95 105 120; --color-text-muted:#8A94A5; --color-text-muted-rgb:138 148 165; --color-on-accent:${exportAccent.onAccent}; --color-accent:${exportAccent.color}; --color-accent-rgb:${exportAccent.rgb}; --color-success:${exportAccent.color}; --color-warning:#C65D44; --color-danger:#C65D44; }
     * { box-sizing: border-box; }
     body { margin:0; font-family: Inter, Segoe UI, Arial, sans-serif; background: var(--bg); color: var(--text); }
     .app { display:flex; height:100vh; overflow:hidden; }
@@ -4483,7 +5423,7 @@ export default function ResultsView() {
     .model-name { color:var(--muted); font-size:12px; margin:4px 0 16px 38px; word-break:break-word; }
     .group-title { margin:14px 8px 6px; color:var(--muted); font-size:11px; text-transform:uppercase; font-weight:700; letter-spacing:.5px; }
     .nav-item { display:block; width:100%; text-align:left; border:0; background:transparent; color:var(--color-on-accent); border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; margin:2px 0; text-decoration:none; }
-    .nav-item:hover { background:rgba(135,151,107,0.08); }
+    .nav-item:hover { background:rgb(var(--color-accent-rgb) / 0.08); }
     .nav-item.active { background:rgb(var(--color-accent-rgb) / 0.16); color:var(--color-on-accent); font-weight:700; }
     .content { flex:1; padding:18px; overflow:auto; height:100vh; }
     .result-section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; scroll-margin-top:10px; }
@@ -4491,8 +5431,8 @@ export default function ResultsView() {
     h2 { margin:0; font-size:18px; flex:1; }
     .copy-table-button { width:30px; height:30px; display:grid; place-items:center; border:1px solid var(--line); border-radius:8px; background:#FFFFFF; color:var(--muted); cursor:pointer; transition:background .15s ease,color .15s ease,border-color .15s ease; }
     .copy-table-button svg { width:15px; height:15px; display:block; }
-    .copy-table-button:hover { color:var(--text); background:rgba(135,151,107,0.08); border-color:rgba(135,151,107,0.35); }
-    .copy-table-button.copied { color:var(--brand); border-color:rgba(135,151,107,0.55); background:rgba(135,151,107,0.12); }
+    .copy-table-button:hover { color:var(--text); background:rgb(var(--color-accent-rgb) / 0.08); border-color:rgb(var(--color-accent-rgb) / 0.35); }
+    .copy-table-button.copied { color:var(--brand); border-color:rgb(var(--color-accent-rgb) / 0.55); background:rgb(var(--color-accent-rgb) / 0.12); }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:10px; }
     table { border-collapse: collapse; width:100%; font-size:12px; }
     th, td { border-bottom:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
@@ -4500,6 +5440,9 @@ export default function ResultsView() {
     tr:nth-child(even) td { background:#F8FAFC; }
     .empty { color:var(--muted); font-size:13px; padding:12px; border:1px dashed var(--line); border-radius:10px; background:#FFFFFF; }
     .exec-log { margin:0; background:#F8FAFC; border:1px solid var(--line); border-radius:10px; padding:12px; font-size:12px; white-space:pre-wrap; }
+    .badge { display:inline-block; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge.reflective { background: rgb(var(--color-accent-rgb) / 0.15); color: var(--brand); border: 1px solid rgb(var(--color-accent-rgb) / 0.3); }
+    .badge.formative { background: rgb(var(--color-accent-rgb) / 0.15); color: var(--indicator); border: 1px solid rgb(var(--color-accent-rgb) / 0.3); }
   </style>
 </head>
 <body>
@@ -4734,12 +5677,13 @@ export default function ResultsView() {
 </body>
 </html>`
 
-      const dataPathResult = await electronAPI.getDataPath()
-      const dataPath = dataPathResult?.path || dataPathResult?.dataPath
-      if (!dataPath) throw new Error('Could not resolve app data path for export')
+      const storagePathsResult = await electronAPI.getStoragePaths()
+      const exportPath = storagePathsResult?.exportPath || storagePathsResult?.dataPath
+      if (!exportPath) throw new Error('Could not resolve app export path')
 
       const safeModel = String(modelName).replace(/[^a-zA-Z0-9-_]+/g, '_').slice(0, 40) || 'model'
-      const filePath = `${String(dataPath).replace(/\\/g, '/')}/exports/metis-${safeModel}-${Date.now()}.html`
+      const exportRoot = String(exportPath).replace(/\\/g, '/').replace(/\/+$/, '')
+      const filePath = `${exportRoot}/metis-${safeModel}-${Date.now()}.html`
 
       const writeRes = await electronAPI.writeFile({
         filePath,

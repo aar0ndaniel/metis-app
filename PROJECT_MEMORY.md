@@ -4,6 +4,185 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-06-02 — macOS native menu and active model titlebar update
+
+- `2026-06-02T17:15:10+00:00` — User clarified the macOS reference in `s.pen`: the Pencil traffic-light treatment represents Apple's native traffic lights, not custom renderer traffic lights, and the macOS menu should match the Metis app menu template.
+- `2026-06-02T17:15:10+00:00` — Updated `electron/main.ts` so the native macOS menu bar is scoped to `metis`, `File`, `Edit`, `View`, `Analysis`, `Tark it`, and `Help`, with the label children explicitly matching the React titlebar menu labels/actions.
+- `2026-06-02T17:15:10+00:00` — Native macOS menu child actions now mirror the renderer actions: workspace/model creation, open workspace/recent, save/save as, imports, export R script, close model, edit operations, preferences, view toggles, analysis actions, Tark report creation, documentation, tour, feedback, bug report, citation, and about.
+- `2026-06-02T17:15:10+00:00` — Updated the main `BrowserWindow` chrome so macOS uses a native frame with `titleBarStyle: 'hidden'`, preserving Apple's native traffic lights; non-macOS platforms remain frameless for the custom renderer window controls.
+- `2026-06-02T17:15:10+00:00` — Updated `src/App.tsx` and `src/components/TitleBar.tsx` so the app derives the active model name from canvas, results, and Tark preview routes, then shows that model name centered in the macOS titlebar only.
+- `2026-06-02T17:15:10+00:00` — Updated `tests/macTitleBarNativeMenuStatic.test.mjs` to lock the native macOS menu template, native traffic-light window-frame behavior, and macOS active-model title contract.
+- `2026-06-02T17:15:10+00:00` — Verification passed: `node tests\macTitleBarNativeMenuStatic.test.mjs`, `node tests\titleBarMenuChrome.test.mjs`, `node tests\modelCanvasUiLayout.test.mjs`, `node tests\resultsViewWorkspaceShell.test.mjs`, `node tests\tarkLaunchStatic.test.mjs`, and `cmd /c npm run typecheck`. Direct `npm run typecheck` in PowerShell was blocked by the local execution policy, so `cmd /c` was used instead.
+
+## 2026-06-02 — v0.0.2 rollout, landing-page sync, and roadmap direction
+
+- `2026-06-02T05:57:16+00:00` — Reviewed the current Metis app repo state for the public rollout sync. Repo was on branch `next-rollout`, clean, synced with `buildlog/next-rollout`, and seven commits ahead of `origin/main`.
+- `2026-06-02T05:57:16+00:00` — Current rollout head was `580c590 Prepare next rollout desktop builds`. The current pushed rollout work ahead of `origin/main` was:
+  - `580c590` Prepare next rollout desktop builds.
+  - `2fcc5db` Bump GitHub Actions to Node.js 24-compatible versions, using Node 22 LTS.
+  - `60f15ef` Add `--publish never` to Electron Builder scripts to prevent implicit CI publishing.
+  - `350383f` Skip icon regeneration when output files already exist, removing PyQt5 as a normal-build dependency.
+  - `1158433` Prepare next rollout macOS build.
+  - `ccb6b21` Checkpoint current rollout work.
+  - `dd42228` Prepare next rollout build.
+- `2026-06-02T05:57:16+00:00` — Public release context to preserve: v0.0.2 is the current rollout line, Windows and macOS downloads are part of the public download story, macOS builds are represented for Apple Silicon ARM64 and Intel x64 users, and Linux remains in development rather than current availability.
+- `2026-06-02T05:57:16+00:00` — Product capabilities that should stay visible in release and landing copy: higher-order constructs, easier HOC drawing and linking, explicit HOC/LOC measurement-path handling, HOC direction-conflict warnings, HOC dimension results tables, accent color selection, improved preference mode, storage/font-scale/appearance polish, faster default bootstrap runs, bounded local bootstrap core planning, PLS core caching, and clearer timing metadata.
+- `2026-06-02T05:57:16+00:00` — Roadmap direction captured from user feedback: Linux packaging is in development; signing/notarization should not be framed as active roadmap work; planned analysis direction should emphasize MGA, MICOM and permutation MGA, segmentation workflows such as FIMIX-PLS and PLS-POS, nonlinear effects, endogeneity checks, Gaussian copula workflows, higher-order construct examples, and advanced exports.
+- `2026-06-02T05:57:16+00:00` — Landing page sync completed in `C:\Users\aaron\dev\landingpage`: docs, updates/release notes, roadmap, download, index, navigation, and styling were updated to reflect the current v0.0.2 rollout.
+- `2026-06-02T05:57:16+00:00` — Landing page details preserved: system requirements use a mobile accordion instead of horizontal table scrolling, internet requirement says only `Needed for download only.`, macOS installer selection is explicit for ARM64 and x64 DMGs, macOS cards do not show fixed build-size labels, Linux appears in development, signing/notarization roadmap wording was removed, and the index wall promotion was replaced with benchmarking against SmartPLS, ADANCO, AMOS, Analyva, and other PLS applications.
+- `2026-06-02T05:57:16+00:00` — Landing verification completed: `node --check script.js`, `git diff --check` with only line-ending warnings, stale-copy sweep for old Windows-only/macOS-size/notarization text, and static HTML script/local-anchor checks for `index.html`, `docs.html`, `updates.html`, `roadmap.html`, and `download.html`.
+
+## 2026-05-27 — Higher-order construct modal planning
+
+- `2026-05-27T19:48:31+00:00` — User requested that the Facebook second-order construct question be solved in Metis, beginning with a Pencil redesign of the construct modal before implementation.
+- `2026-05-27T19:48:31+00:00` — Product direction to preserve: constructs remain lower-order by default; the construct modal should add a checkbox/toggle to mark the selected construct as a higher-order construct (HOC).
+- `2026-05-27T19:48:31+00:00` — When HOC mode is enabled, the user still selects the HOC measurement type as Reflective or Formative. The connected lower-order construct/sub-dimension relationship then determines whether the model is reflective-reflective, reflective-formative, formative-reflective, or formative-formative.
+- `2026-05-27T19:48:31+00:00` — Important UX conflict: if a user selects Reflective for the HOC but draws LOC-to-HOC arrows that imply Formative, Metis should not silently rewrite the model. The preferred flow to explore is a warning that explains the selected measurement type conflicts with the current path direction and asks the user to either keep the selected type or switch to the implied type.
+- `2026-05-27T19:48:31+00:00` — Alternative flow to explore in the Pencil modal: when HOC mode is active, let the user select LOCs/sub-dimensions directly and have Metis draw the correct arrows automatically. Concern recorded: this may add friction because users may not remember every LOC already present on the canvas.
+- `2026-05-27T19:48:31+00:00` — Status: completed. Redesign is approved, HOC/LOC data model is specified, warning/arrow-correction behavior is implemented, and the full Metis implementation plus verification are complete and type checked.
+- `2026-05-28T17:10:00+00:00` — Integrated SEMinR-native higher-order construct (HOC) calculation and reporting into Metis (PLSLogic) using the two-stage approach (`seminr::higher_composite()`).
+  - *What was intended*: Enable HOC definitions on the canvas, dynamically identify HOC-LOC links as measurement paths rather than structural paths, send constructs with HOC metadata to Plumber R backend, invoke `higher_composite` for estimation, extract loadings/weights/VIF, display HOC dimensions tables in ResultsView, and include them in exported HTML reports.
+  - *What actually happened*: Successfully implemented all intended parts.
+    - Updated `ModelCanvas.tsx` to enrich analysis payloads with HOC metadata (`is_higher_order`, `higher_order_type`, `dimensions`) and separate HOC-LOC measurement links from structural paths. Added warning modal in UI for HOC path direction conflicts.
+    - Updated `plumber.R` `build_measurement()` to handle HOCs via `seminr::higher_composite()`, and added `extract_hoc_results()` helper to safely extract outer loadings, outer weights, and collinearity VIF values for formative HOCs.
+    - Updated `ResultsView.tsx` with a premium HOC results component (`HOCResultsTable`) and embedded it into "Outer Loadings" and "Outer Weights" tabs. Added custom HTML generation for HOC tables inside shareable reports exported from ResultsView.
+    - Fixed a block-scoped duplicate variable declaration slop in `ModelCanvas.tsx`'s `buildAnalysisPayload()` and ensured it returns `hocDimensions` correctly.
+    - Verified all features via typescript compiler (`npx tsc --noEmit` passing successfully) and automated test suite coverage (`node tests/modelCanvasHocStatic.test.mjs` and related tests passing successfully).
+- `2026-05-29T04:38:23+00:00` — Reviewed and fixed the HOC/second-order plumbing across ModelCanvas, ResultsView, and Plumber.
+  - *What was intended*: Confirm that the two-way HOC drawing UX works, make all analysis entry points send correct HOC metadata, prevent HOC measurement links from being swallowed as structural paths or vice versa, validate HOC dimensions server-side, report HOC loadings/weights/VIF in results, and check security/performance risks.
+  - *What actually happened*: Completed and verified.
+    - Added shared `src/utils/plsModelPayload.ts` so canvas realtime runs, standard analysis, Bootstrap, PLSpredict, Advanced Analysis, and ResultsView reruns all build the same HOC-aware payload.
+    - Added explicit HOC path roles (`measurement` vs `structural`) so HOC-to-LOC links become lower-order dimensions only when intended. New HOC/non-HOC paths ask for the role first; legacy unmarked paths can be corrected from path settings.
+    - Updated `r-api/plumber.R` validation so HOCs may omit indicators but must declare valid lower-order dimensions, cannot reference themselves, cannot reference unknown constructs, and cannot use another HOC as a dimension.
+    - Verified `seminr::higher_composite()` two-stage estimation with an R smoke test on `seminr::mobi`; HOC loadings, weights, and VIF values were returned for the lower-order dimensions.
+    - Fixed HOC VIF extraction to read `summary_obj$validity$vif_items`.
+    - Updated dependency security: production audit and full audit now report `found 0 vulnerabilities`. `tmp` is resolved to `0.2.7`, `uuid` is pinned via override to exact `11.1.1`, non-forced audit fixes updated compatible tooling packages, and Electron is pinned to exact `40.10.2` rather than jumping to the latest major.
+    - Fixed the ResultsView/TitleBar divider regression caught by `tests/resultsViewWorkspaceShell.test.mjs`.
+  - *Verification*: `node tests\hocPayloadContract.test.mjs`, `node tests\rApiHocStatic.test.mjs`, `node tests\modelCanvasHocStatic.test.mjs`, `node tests\modelCanvasLightPopups.test.mjs`, `node tests\securityHardening.test.mjs`, `node tests\resultsViewWorkspaceShell.test.mjs`, `node tests\rApiBootstrapStatic.test.mjs`, `node tests\rApiCvpatStatic.test.mjs`, R HOC smoke test through `Rscript.exe`, `cmd /c npm run typecheck`, `cmd /c npm audit --audit-level=moderate`, `cmd /c npm audit --omit=dev --audit-level=high`, and `git diff --check`.
+- `2026-05-27T19:48:31+00:00` — Supporting pending note exists at `docs/superpowers/specs/2026-05-27-hoc-loc-construct-modal-design.md`; it is a project-memory/design note, not an implementation record.
+
+## 2026-05-23 — ModelCanvas performance and title-bar support menu updates
+
+- `2026-05-23T20:43:29.2817805+00:00` — User reported Metis was slow in dev mode and provided repeated `workspace:save` logs. Investigation found `ModelCanvas` was doing expensive workspace `.ada` saves too often during canvas edits, while real-time calculation was resolving dataset paths before its debounce.
+- `2026-05-23T20:43:29.2817805+00:00` — Implemented a focused `ModelCanvas` performance fix: local recovery drafts are debounced at 300 ms, full workspace `.ada` writes after canvas commits are debounced at 2 seconds, manual/save-before-navigation behavior remains immediate, and real-time calculation now resolves dataset paths only after its debounce fires.
+- `2026-05-23T20:43:29.2817805+00:00` — Added `tests/modelCanvasPerformanceStatic.test.mjs` to lock in the canvas performance contract.
+- `2026-05-23T20:43:29.2817805+00:00` — User requested a top-level `Tark it` tab before Help, Help menu entries for Feedback and Report a Bug, and replacement of the old `PLS-SEM Reference` placeholder with citation guidance based on the landing page.
+- `2026-05-23T20:43:29.2817805+00:00` — Checked the landing page and used the existing public URLs: `https://metis.emend.it.com/submit-feedback.html` for feedback, `https://github.com/aar0ndaniel/metis-app/issues/new?labels=bug` for bug reports, and `https://metis.emend.it.com/how-to-cite.html` for Metis citation guidance.
+- `2026-05-23T20:43:29.2817805+00:00` — Updated `src/components/TitleBar.tsx` so `Tark it` is a top-level menu immediately before Help, Help contains Documentation, Getting Started, Feedback, Report a Bug, Cite Metis, and About, and the old right-side `Tark it` and `Feedback` buttons near the window controls were removed.
+- `2026-05-23T20:43:29.2817805+00:00` — Updated `src/App.tsx` global actions so `open-feedback`, `open-report-bug`, and `open-cite-metis` open the public support/citation URLs through the existing external-link helper.
+- `2026-05-23T20:43:29.2817805+00:00` — Updated onboarding so Tark targets the new top-level `Tark it` menu tab and feedback guidance points users to Help > Feedback instead of the removed title-bar feedback button.
+- `2026-05-23T20:43:29.2817805+00:00` — Verification passed: `cmd /c npm run typecheck`, `node tests\modelCanvasPerformanceStatic.test.mjs`, `node tests\modelCanvasUiLayout.test.mjs`, `node tests\numberInputDrafting.test.mjs`, `node tests\codeModelBuilderStatic.test.mjs`, `node tests\helpExternalLinksStatic.test.mjs`, `node tests\tarkLaunchStatic.test.mjs`, and `node tests\titleBarMenuChrome.test.mjs`.
+- `2026-05-23T20:43:29.2817805+00:00` — `node tests\calculatingModalPlanStatic.test.mjs` was not used as final verification because it currently fails on an unrelated existing `r-api/plumber.R` analysis-core policy assertion before reaching the title-bar assertions.
+- `2026-05-23T20:50:31.1838895+00:00` — User requested hover effects for individual child items inside the title-bar tab menus. Added a shared `titlebar-menu-row` hover/focus treatment for dropdown child rows only, keeping top-level title-bar tabs transparent.
+- `2026-05-23T20:50:31.1838895+00:00` — Verification passed for the dropdown-hover update: `node tests\titleBarMenuChrome.test.mjs`, `node tests\helpExternalLinksStatic.test.mjs`, `node tests\tarkLaunchStatic.test.mjs`, and `cmd /c npm run typecheck`.
+
+## 2026-05-19 — Timestamped chat memory policy and recent Metis work log
+
+### Memory Capture Metadata
+- `2026-05-19T10:33:16+00:00` — User requested that everything said and done in this chat be added to project memory with dates and timestamps.
+- `2026-05-19T10:33:16+00:00` — Added this project-memory entry as a backfill for the recent chat and as the new standing memory practice.
+- `2026-05-19T10:33:16+00:00` — Exact per-message timestamps from the prior chat turns were not available in the local workspace transcript; the entries below preserve the known session dates and the memory-capture timestamp rather than inventing unavailable message times.
+
+### Standing Memory Practice
+- `2026-05-19T10:33:16+00:00` — For future Metis work sessions, meaningful product decisions, implementation changes, verification results, unresolved questions, and user direction should be added to `PROJECT_MEMORY.md` with the local date and timestamp.
+- `2026-05-19T10:33:16+00:00` — Memory entries should distinguish user decisions from implemented code, and should note verification commands and warnings when relevant.
+
+### 2026-05-18 Session Decisions
+- `2026-05-19T10:33:16+00:00` — The R-heavy user flow should be treated as a first-class builder path, not a secondary import-only feature.
+- `2026-05-19T10:33:16+00:00` — The R script entry point should use a shorter label than `Code Model Builder`; the later working vocabulary in the chat settled around `R Builder`.
+- `2026-05-19T10:33:16+00:00` — R Builder should use Monaco editor, app-matched light and dark themes, VS Code-style code font behavior, and pleasing syntax colors for punctuation such as `{`, `[`, `(`, `;`, `:`, `,`, and `<`.
+- `2026-05-19T10:33:16+00:00` — R Builder should save one draft per workspace inside the `.ada` workspace file as a workspace child, not as loose files.
+- `2026-05-19T10:33:16+00:00` — R Builder should keep `Export .R` as an optional escape hatch for users who want scripts outside Metis.
+- `2026-05-19T10:33:16+00:00` — R Builder should expose `Save Draft`, `Export .R`, and `Build Canvas`; `Save As` was explicitly removed.
+- `2026-05-19T10:33:16+00:00` — R Builder should autosave every 10 seconds and support local recovery snapshots for crash recovery.
+- `2026-05-19T10:33:16+00:00` — On app reopen, if a local recovery snapshot is newer than the workspace draft, the app should show a recovered draft state with `Restore` and `Discard`.
+- `2026-05-19T10:33:16+00:00` — Every visual model canvas should be openable in R Builder so users can move between visual editing and code editing.
+- `2026-05-19T10:33:16+00:00` — R Builder should show the active/working dataset for the workspace, show `No dataset` if absent, and show a resizable/collapsible terminal-like dataset preview after a dataset is added.
+- `2026-05-19T10:33:16+00:00` — The R Builder dataset preview should use an off-white surface in light theme and a slightly darker surface in dark theme so it is visually distinct from the code editor.
+- `2026-05-19T10:33:16+00:00` — The R Builder dataset preview should show all columns because the column names are the indicators users need when writing code.
+- `2026-05-19T10:33:16+00:00` — Workspace Home folders should be closed by default on app launch to avoid overwhelming users who have many folders and children.
+- `2026-05-19T10:33:16+00:00` — Workspace Home should show a single dataset name when only one dataset exists, and `Dataset N` only when multiple datasets exist.
+- `2026-05-19T10:33:16+00:00` — Saved results should follow the same tidiness rule: show the result name when there is one, and use grouped count behavior when there are multiple saved results.
+- `2026-05-19T10:33:16+00:00` — Clicking the dataset count/name in Workspace Home should open Dataset Manager.
+- `2026-05-19T10:33:16+00:00` — Dataset Manager should mark the active dataset with only an `Active` badge; earlier heavier styling such as accent border, left rail, and check icon was considered too visually noisy.
+- `2026-05-19T10:33:16+00:00` — Title-bar tab hover should not add a tab background color; hover should only show preview behavior, and inactive child text in title-bar tab menus should be grey/off-white rather than white or tan.
+
+### 2026-05-18 Advanced Results Decisions
+- `2026-05-19T10:33:16+00:00` — Advanced-analysis charts and tables should visually align with the reference screenshots while using the app's own theme colors in light and dark mode instead of the old indigo look.
+- `2026-05-19T10:33:16+00:00` — Priority map, construct table, and cIPMA table should share the same ResultsView table shell; the construct table is mainly differentiated by standard importance fields.
+- `2026-05-19T10:33:16+00:00` — Priority/driver labels need clearer semantic colors: green for important/high/true, warning color for false/low, and gold for moderate.
+- `2026-05-19T10:33:16+00:00` — Boolean `true`/`false` values should not get pill background and border styling unless they are in the final priority-style column; visible pills are reserved for labels such as `low priority` and `important driver`.
+- `2026-05-19T10:33:16+00:00` — Ceiling-line charts must visibly draw both dots and lines.
+- `2026-05-19T10:33:16+00:00` — Bottleneck heatmaps should be shown as two separate charts, one for `CE-FDH` and one for `CR-FDH`.
+- `2026-05-19T10:33:16+00:00` — Bottleneck heatmaps should use constructs on the vertical axis and target/outcome levels on the horizontal axis.
+- `2026-05-19T10:33:16+00:00` — Bottleneck table parsing must preserve `NN` as `NN`; `NN` must never be converted to `0.00` because `NN` means not necessary while `0.00` means zero percent required.
+- `2026-05-19T10:33:16+00:00` — Bottleneck rows should identify the level values `0, 10, 20, ... 100` as the target level context, not as the first construct's required value.
+- `2026-05-19T10:33:16+00:00` — Because the table already uses `CE-FDH` / `CR-FDH` tabs and all rows are NCA bottleneck rows, the visible table should not repeat `Method` and `Ceiling` columns.
+- `2026-05-19T10:33:16+00:00` — The selected outcome construct should not appear as a condition column in the bottleneck table.
+- `2026-05-19T10:33:16+00:00` — The bottleneck table should use `Level (%)` as the row-context header rather than adding an `Outcome` construct column.
+- `2026-05-19T10:33:16+00:00` — The explanatory bottleneck note should read: `Note. Values represent the minimum level of each condition required to achieve a given level of the outcome. NN means not necessary. Values are expressed as percentages of the observed range.`
+- `2026-05-19T10:33:16+00:00` — Additional note language approved for bottleneck outputs: `NN = not necessary. The dash symbol indicates that no feasible bottleneck value was returned for that level. If ATT is the selected outcome, ATT is removed from condition columns in new bottleneck runs.`
+
+### 2026-05-18 Implemented Changes
+- `2026-05-19T10:33:16+00:00` — `src/pages/RCodeViewer.tsx` was expanded into the R Builder experience with Monaco, theme-aware editor behavior, draft saving, recovery, export, build-canvas flow, and dataset preview work.
+- `2026-05-19T10:33:16+00:00` — `src/utils/rBuilderDraft.ts`, workspace child types, `WorkspaceHome`, `ModelCanvas`, and app routing were updated to support R Builder drafts inside the workspace system.
+- `2026-05-19T10:33:16+00:00` — Workspace Home dataset/result grouping was adjusted so single items show names while grouped counts remain available for multiple children.
+- `2026-05-19T10:33:16+00:00` — Dataset Manager active-state styling was simplified to use the `Active` badge without heavy accent border/rail/check-icon treatment.
+- `2026-05-19T10:33:16+00:00` — `r-api/plumber.R` bottleneck normalization was updated to infer misplaced outcome-level columns, preserve `NN`, label `CE-FDH`/`CR-FDH`, and remove the target construct from new bottleneck condition columns.
+- `2026-05-19T10:33:16+00:00` — `src/results/panelTableData.ts` gained bottleneck display normalization, `NN`-safe formatting, outcome-level formatting, and meta/outcome field helpers.
+- `2026-05-19T10:33:16+00:00` — `src/components/ResultsCharts.tsx` was updated so advanced priority maps, NCA ceiling charts, and bottleneck heatmaps use app colors and clearer chart geometry.
+- `2026-05-19T10:33:16+00:00` — `src/pages/ResultsView.tsx` was updated so advanced result tables share the standard ResultsView table shell while adding semantic cell coloring where appropriate.
+- `2026-05-19T10:33:16+00:00` — `src/pages/ResultsView.tsx` now renders bottleneck tables through grouped `CE-FDH` / `CR-FDH` tabs, hides repeated Method/Ceiling columns, labels the row context as `Level (%)`, and filters the selected target construct out of condition columns.
+- `2026-05-19T10:33:16+00:00` — Static and helper tests were added or updated for R Builder, workspace home behavior, bottleneck parsing, advanced result visuals, R API bottleneck normalization, and chart export behavior.
+
+### Verification Logged From The Session
+- `2026-05-19T10:33:16+00:00` — `node tests\resultsAdvancedVisualStatic.test.mjs` passed.
+- `2026-05-19T10:33:16+00:00` — `node tests\panelTableData.test.mjs` passed.
+- `2026-05-19T10:33:16+00:00` — `node tests\resultsChartConfig.test.mjs` passed.
+- `2026-05-19T10:33:16+00:00` — `node tests\rApiBootstrapStatic.test.mjs` passed earlier in the advanced-results pass.
+- `2026-05-19T10:33:16+00:00` — `cmd /c npm run typecheck` passed.
+- `2026-05-19T10:33:16+00:00` — `cmd /c npm run audit:high` passed with `found 0 vulnerabilities`.
+- `2026-05-19T10:33:16+00:00` — `cmd /c npx vite build` passed; existing warnings remained for large chunks and `new URL(".", import.meta.url)` runtime resolution.
+- `2026-05-19T10:33:16+00:00` — Full `cmd /c npm run build` timed out during the Electron packaging chain, so Vite production build and TypeScript checks were used as the verified frontend build signal for the final patch state.
+
+### 2026-05-19 PLS-SEM Tark-Style Results Table Pass
+- `2026-05-19T10:53:00+00:00` — User asked to make ResultsView tables look like Tark tables, starting with `PLS-SEM` only and waiting for team acceptance before applying the style to other result modes.
+- `2026-05-19T10:53:00+00:00` — Design decision: apply a scoped `PLS-SEM` table skin rather than changing shared table rendering globally, so Bootstrap, PLSpredict, and Advanced Analysis remain untouched.
+- `2026-05-19T10:53:00+00:00` — The PLS-SEM table skin borrows Tark's compact report-table language: bordered surface, `DM Sans`, no tinted header row, two-pixel top and bottom header rules, first column left-aligned, data columns right-aligned, compact cell padding, and a strong final bottom rule.
+- `2026-05-19T10:53:00+00:00` — Updated `src/index.css` with the `.pls-sem-tark-table`, `.pls-sem-tark-note`, and `.pls-sem-tark-section-label` styles.
+- `2026-05-19T10:53:00+00:00` — Updated `src/pages/ResultsView.tsx` so the PLS-SEM mode passes the Tark skin to path coefficients, R-square, reliability, outer loadings, outer weights, cross-loadings, VIF, discriminant validity, model fit, and generic PLS-SEM panels such as f-square.
+- `2026-05-19T10:53:00+00:00` — Added `tests/resultsPlsSemTarkTables.test.mjs` to assert that the Tark-style skin is scoped to PLS-SEM and that the CSS preserves the intended table rules.
+- `2026-05-19T10:53:00+00:00` — Updated `tests/resultsViewWorkspaceShell.test.mjs` so it still verifies default row alternation while allowing Tark-skinned tables to opt out of alternating row backgrounds.
+- `2026-05-19T10:53:00+00:00` — Verification passed: `node tests\resultsPlsSemTarkTables.test.mjs`, `node tests\resultsViewWorkspaceShell.test.mjs`, `node tests\resultsClipboardApa.test.mjs`, and `cmd /c npm run typecheck`.
+- `2026-05-19T10:53:00+00:00` — `cmd /c npx vite build` passed. Existing warnings remained for large chunks and `new URL(".", import.meta.url)` runtime resolution.
+- `2026-05-19T13:08:12+00:00` — User requested that individual body row lines be removed from the PLS-SEM Tark-style tables, leaving only the three strong table rules: header top, header bottom, and the final rule after the last row.
+- `2026-05-19T13:08:12+00:00` — Updated `.pls-sem-tark-table td` so body cells no longer draw per-row `border-bottom` lines, while preserving the `tbody tr:last-child td` final bottom rule.
+- `2026-05-19T13:08:12+00:00` — Softened the PLS-SEM Tark table container border to `rgb(var(--color-border-rgb) / 0.22)` so the wrapper does not visually compete with the table's three solid rules.
+- `2026-05-19T13:08:12+00:00` — Updated `tests/resultsPlsSemTarkTables.test.mjs` to lock the no-row-line and quieter-container-border behavior.
+- `2026-05-19T13:08:12+00:00` — Verification passed: `node tests\resultsPlsSemTarkTables.test.mjs`, `cmd /c npm run typecheck`, and `cmd /c npx vite build`. Existing Vite warnings remained for large chunks and `new URL(".", import.meta.url)` runtime resolution.
+- `2026-05-19T13:45:05+00:00` — User requested a subtle colored border on the PLS-SEM ResultsView table wrapper div.
+- `2026-05-19T13:45:05+00:00` — Updated `.pls-sem-tark-table` so its outer wrapper border uses `rgb(var(--color-accent-rgb) / 0.18)`, keeping the border app-colored but quiet enough not to compete with the header and final table rules.
+- `2026-05-19T13:45:05+00:00` — Updated `tests/resultsPlsSemTarkTables.test.mjs` to lock the subtle app-colored PLS-SEM table wrapper border.
+- `2026-05-19T13:45:05+00:00` — Verification passed: `node tests\resultsPlsSemTarkTables.test.mjs`, `cmd /c npm run typecheck`, and `cmd /c npx vite build`. Existing Vite warnings remained for large chunks and `new URL(".", import.meta.url)` runtime resolution.
+
+### 2026-05-19 Modal Shadow Polish
+- `2026-05-19T13:23:16+00:00` — User requested that modal/component shadows be reduced and made subtle in both light and dark mode.
+- `2026-05-19T13:23:16+00:00` — Added shared theme tokens `--shadow-modal` and `--shadow-modal-popover` in `src/index.css`, with separate restrained values for dark and light themes.
+- `2026-05-19T13:23:16+00:00` — Replaced old heavy modal literals and `shadow-2xl` usage on dialog surfaces across app-level quit confirmation, workspace/model creation, calculation dialogs, analysis setup modals, Dataset Manager, Preferences, Tark, import, data-view exit confirmation, onboarding, and Model Canvas dialogs.
+- `2026-05-19T13:23:16+00:00` — Updated modal dropdown/popover shadows inside modal flows to use `--shadow-modal-popover` where the old popover shadows were visually heavy.
+- `2026-05-19T13:23:16+00:00` — Added `tests/modalShadowSubtle.test.mjs` to lock the new light/dark modal shadow tokens and prevent the old heavy modal shadow literals from returning.
+- `2026-05-19T13:23:16+00:00` — Verification passed: `node tests\modalShadowSubtle.test.mjs`, `node tests\modelCanvasUiLayout.test.mjs`, `node tests\advancedAnalysisModalLayout.test.mjs`, `node tests\bootstrapModalLayout.test.mjs`, `node tests\plsPredictModalLayout.test.mjs`, `node tests\onboardingTourTheme.test.mjs`, `cmd /c npm run typecheck`, and `cmd /c npx vite build`. Existing Vite warnings remained for large chunks and `new URL(".", import.meta.url)` runtime resolution.
+
+### 2026-05-19 Title Bar And Dataset View Theme Polish
+- `2026-05-19T13:39:56+00:00` — User requested title-bar dropdown text to be dark grey when usable in light theme and grey when inactive/unusable, plus more refined DataView row/column highlights, context-menu hover states, and unsaved dataset exit dialog styling.
+- `2026-05-19T13:39:56+00:00` — Added dedicated title-bar dropdown text tokens in `src/index.css`: `--color-title-menu-text`, `--color-title-menu-muted`, and `--color-title-menu-disabled`, with light-theme usable text set to dark grey and disabled text set to grey.
+- `2026-05-19T13:39:56+00:00` — Updated `src/components/TitleBar.tsx` so dropdown items use the new title-menu tokens and disabled items no longer borrow the harsher general dim token.
+- `2026-05-19T13:39:56+00:00` — Updated `src/pages/DataView.tsx` so selected/highlighted rows and columns use very transparent `--color-accent-rgb`, which maps to the app's primary color in both light and dark themes.
+- `2026-05-19T13:39:56+00:00` — Added DataView context-menu hover classes so append and compute actions get a subtle theme-primary hover fill in both themes.
+- `2026-05-19T13:39:56+00:00` — Restyled the unsaved dataset exit modal: removed the red filled title bar, used a neutral elevated grey/dark-grey header, moved the warning emphasis to the icon/title text, changed `Discard` to the app warning color, and changed the save action to an outline `Save changes` button.
+- `2026-05-19T13:39:56+00:00` — Added `tests/dataViewThemeChrome.test.mjs` and updated `tests/titleBarMenuChrome.test.mjs` to lock the theme-specific title-bar and DataView chrome behavior.
+- `2026-05-19T13:39:56+00:00` — Verification passed: `node tests\titleBarMenuChrome.test.mjs`, `node tests\dataViewThemeChrome.test.mjs`, `node tests\dataViewCore.test.mjs`, `node tests\modelCanvasUiLayout.test.mjs`, `cmd /c npm run typecheck`, and `cmd /c npx vite build`. Existing Vite warnings remained for large chunks and `new URL(".", import.meta.url)` runtime resolution.
+
 ## 2026-05-16 — Version, font scale, zoom, and panel polish
 
 ### Queries & User Requests

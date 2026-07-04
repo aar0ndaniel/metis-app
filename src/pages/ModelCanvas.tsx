@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   MathOperations,
   Cursor,
-  PlusCircle,
   ArrowRight,
   Trash,
   Shuffle,
@@ -29,6 +28,7 @@ import {
   X,
   CaretDown,
   WarningCircle,
+  Check,
   Copy,
   Scissors,
   Clipboard, // New import for the context menu paste icon
@@ -38,7 +38,9 @@ import {
   ArrowsVertical,
   CornersOut,
   BezierCurve,
-  ArrowElbowRight
+  ArrowElbowRight,
+  TreeStructure,
+  Hand
 } from '@phosphor-icons/react'
 import BootstrapModal from '../components/BootstrapModal'
 import DraftNumberInput from '../components/DraftNumberInput'
@@ -65,6 +67,7 @@ import {
   readPlsPredictSettingsFromState,
   type PlsPredictSettings,
 } from '../utils/plsPredictSettings'
+import { buildPlsModelPayloadParts, type HocPathRole } from '../utils/plsModelPayload'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -83,20 +86,25 @@ interface Indicator {
   oy?: number
 }
 
+type ConstructShape = 'circle' | 'oval' | 'rectangle' | 'square'
+type MeasurementType = 'Reflective' | 'Formative'
+
 interface Construct {
   id: string
   name: string
-  type: 'Reflective' | 'Formative'
+  type: MeasurementType
   color: string
   x: number
   y: number
   radius: number
+  ovalWidth?: number
+  ovalHeight?: number
   indicators: Indicator[]
   labelColor: string
   labelBold: boolean
   labelItalic: boolean
   labelSize: number
-  shape?: 'circle' | 'square'
+  shape?: ConstructShape
   indicatorDirection?: 'top' | 'right' | 'bottom' | 'left'
   captionInReport?: string
   weightingMode?: string
@@ -104,6 +112,7 @@ interface Construct {
   sortOrder?: string
   margin?: number
   folded?: boolean
+  isHigherOrder?: boolean
 }
 
 interface Path {
@@ -112,9 +121,28 @@ interface Path {
   to: string
   kind?: 'direct' | 'moderation'
   targetPathId?: string
+  hocRole?: HocPathRole
   style?: 'straight' | 'curved' | 'rightangle'
   curvature?: number
   joints?: { x: number; y: number }[]
+}
+
+interface HocPathConflict {
+  id: string
+  from: string
+  to: string
+  hocId: string
+  locId: string
+  currentType: MeasurementType
+  suggestedType: MeasurementType
+}
+
+interface HocPathRoleChoice {
+  id: string
+  from: string
+  to: string
+  hocId: string
+  locId: string
 }
 
 interface Snapshot {
@@ -130,7 +158,7 @@ interface GuideLine {
   label?: string
 }
 
-type ResizeHandle = 'tl' | 'tr' | 'bl' | 'br'
+type ResizeHandle = 'tl' | 'tr' | 'bl' | 'br' | 'left' | 'right' | 'top' | 'bottom'
 
 interface SelectionBounds {
   minX: number
@@ -156,6 +184,8 @@ type GroupResizeItem =
       x: number
       y: number
       radius: number
+      ovalWidth?: number
+      ovalHeight?: number
     }
   | {
       id: string
@@ -179,8 +209,21 @@ interface ModelDraftState {
   paths: Path[]
 }
 
+interface PersistCanvasSnapshotOptions {
+  workspaceSave?: 'immediate' | 'debounced'
+}
+
 const METIS_STORAGE_PREFIX = 'metis:'
 const LEGACY_STORAGE_PREFIX = 'pls:'
+const HOC_PATH_PROMPT_PREF_SUFFIX = 'prefs:showHocPathPrompt'
+const STRUCTURAL_PATH_STROKE_WIDTH = 2.4
+const SELECTED_PATH_STROKE_WIDTH = 3.2
+const INDICATOR_PATH_STROKE_WIDTH = 1.8
+
+function indicatorArrowMarkerId(constructId: string): string {
+  return `indicator-arrow-${constructId.replace(/[^A-Za-z0-9_-]/g, '_')}`
+}
+
 function buildStorageKey(prefix: string, suffix: string): string {
   return `${prefix}${suffix}`
 }
@@ -193,6 +236,15 @@ function readSharedStorageValue(suffix: string): string | null {
 function writeSharedStorageValue(suffix: string, value: string) {
   localStorage.setItem(buildStorageKey(METIS_STORAGE_PREFIX, suffix), value)
   localStorage.setItem(buildStorageKey(LEGACY_STORAGE_PREFIX, suffix), value)
+}
+
+function readShowHocPathPromptPreference(): boolean {
+  const saved = readSharedStorageValue(HOC_PATH_PROMPT_PREF_SUFFIX)
+  return saved === null ? true : saved === 'true'
+}
+
+function writeShowHocPathPromptPreference(value: boolean) {
+  writeSharedStorageValue(HOC_PATH_PROMPT_PREF_SUFFIX, String(value))
 }
 
 function readAutosaveDraft(modelId?: string | null): ModelDraftState | null {
@@ -232,18 +284,103 @@ function clearAutosaveDraft(modelId?: string | null) {
 // ─── Static data ──────────────────────────────────────────────────────────────
 
 const SWATCH_COLORS = ['#87976B', '#A78BFA', '#60A5FA', '#F97316']
+const HOC_SWATCH_COLORS = ['#D94141', '#BE185D', '#0E7490', '#52525B']
 const DEFAULT_CONSTRUCT_RADIUS = 42
+const OVAL_RX_SCALE = 1.35
+const OVAL_RY_SCALE = 0.82
+const MIN_CONSTRUCT_RADIUS = 20
+const MIN_OVAL_DIMENSION = 40
+const DRAFT_WRITE_DEBOUNCE_MS = 300
+const WORKSPACE_SAVE_DEBOUNCE_MS = 2_000
 const DEFAULT_INDICATOR_STEP = 60
 const DEFAULT_INDICATOR_EDGE_GAP = 60
 const INDICATOR_LABEL_HEIGHT = 22
 const MIN_INDICATOR_LABEL_WIDTH = 44
 
+function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' | 'rectangle' {
+  return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function getDefaultOvalDimensions(radius = DEFAULT_CONSTRUCT_RADIUS): { width: number; height: number } {
+  return {
+    width: Math.round(radius * OVAL_RX_SCALE * 2),
+    height: Math.round(radius * OVAL_RY_SCALE * 2),
+  }
+}
+
+function getConstructDimensions(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { width: number; height: number } {
+  if (normalizeConstructShape(construct.shape) !== 'circle') {
+    const defaults = getDefaultOvalDimensions(construct.radius)
+    return {
+      width: Math.max(MIN_OVAL_DIMENSION, construct.ovalWidth ?? defaults.width),
+      height: Math.max(MIN_OVAL_DIMENSION, construct.ovalHeight ?? defaults.height),
+    }
+  }
+
+  const diameter = construct.radius * 2
+  return { width: diameter, height: diameter }
+}
+
+function getConstructRadii(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>): { rx: number; ry: number } {
+  const { width, height } = getConstructDimensions(construct)
+  return { rx: width / 2, ry: height / 2 }
+}
+
+function getConstructEdgeOffset(construct: Pick<Construct, 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, ux: number, uy: number): number {
+  const { rx, ry } = getConstructRadii(construct)
+  if (normalizeConstructShape(construct.shape) === 'rectangle') {
+    const tx = Math.abs(ux) > 0.0001 ? rx / Math.abs(ux) : Number.POSITIVE_INFINITY
+    const ty = Math.abs(uy) > 0.0001 ? ry / Math.abs(uy) : Number.POSITIVE_INFINITY
+    return Math.min(tx, ty)
+  }
+  return 1 / Math.sqrt((ux * ux) / (rx * rx) + (uy * uy) / (ry * ry))
+}
+
+function isPointInConstruct(construct: Pick<Construct, 'x' | 'y' | 'radius' | 'shape' | 'ovalWidth' | 'ovalHeight'>, x: number, y: number, padding = 0): boolean {
+  const { rx, ry } = getConstructRadii(construct)
+  const paddedRx = rx + padding
+  const paddedRy = ry + padding
+  if (normalizeConstructShape(construct.shape) === 'rectangle') {
+    return Math.abs(x - construct.x) <= paddedRx && Math.abs(y - construct.y) <= paddedRy
+  }
+  return ((x - construct.x) ** 2) / (paddedRx ** 2) + ((y - construct.y) ** 2) / (paddedRy ** 2) <= 1
+}
+
+function buildConstructShapePatch(current: Construct, patch: Partial<Construct>): Construct {
+  const next = applyIndicatorAlignmentDefaults(current, patch)
+  const nextShape = normalizeConstructShape(next.shape)
+  const currentShape = normalizeConstructShape(current.shape)
+
+  if (nextShape !== 'circle') {
+    const currentDimensions = currentShape !== 'circle'
+      ? getConstructDimensions(current)
+      : getDefaultOvalDimensions(current.radius)
+    return {
+      ...next,
+      ovalWidth: next.ovalWidth ?? currentDimensions.width,
+      ovalHeight: next.ovalHeight ?? currentDimensions.height,
+    }
+  }
+
+  if (patch.shape === 'circle' && currentShape !== 'circle') {
+    const { width, height } = getConstructDimensions(current)
+    return {
+      ...next,
+      radius: Math.max(MIN_CONSTRUCT_RADIUS, Math.round((width + height) / 4)),
+    }
+  }
+
+  return next
+}
+
 function getIndicatorLayout(construct: Construct, indicator: Indicator, index: number, includeOffsets = true): IndicatorLayout {
   const dir = construct.indicatorAlignment || construct.indicatorDirection || 'bottom'
+  const { rx, ry } = getConstructRadii(construct)
+  const edgeRadius = dir === 'left' || dir === 'right' ? rx : ry
   const labelW = Math.max(MIN_INDICATOR_LABEL_WIDTH, indicator.name.length * 7 + 16)
   const labelH = INDICATOR_LABEL_HEIGHT
   const offset = (index - (construct.indicators.length - 1) / 2) * DEFAULT_INDICATOR_STEP
-  const centerGap = construct.radius + DEFAULT_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
+  const centerGap = edgeRadius + DEFAULT_INDICATOR_EDGE_GAP + (dir === 'left' || dir === 'right' ? labelW / 2 : labelH / 2)
 
   let ix = construct.x
   let iy = construct.y
@@ -318,11 +455,12 @@ function getSelectionBounds(constructs: Construct[], selectedIds: string[], padd
 
     const construct = constructs.find((item) => item.id === selectedId)
     if (!construct) return
+    const { rx, ry } = getConstructRadii(construct)
 
-    minX = Math.min(minX, construct.x - construct.radius)
-    minY = Math.min(minY, construct.y - construct.radius)
-    maxX = Math.max(maxX, construct.x + construct.radius)
-    maxY = Math.max(maxY, construct.y + construct.radius)
+    minX = Math.min(minX, construct.x - rx)
+    minY = Math.min(minY, construct.y - ry)
+    maxX = Math.max(maxX, construct.x + rx)
+    maxY = Math.max(maxY, construct.y + ry)
     foundAny = true
   })
 
@@ -477,6 +615,9 @@ function toLaymanErrorMessage(rawError: string): string {
   if (/r runtime|rscript|plumber/.test(msg)) {
     return 'The R analysis engine is missing or failed to start. Please restart the app and try again.'
   }
+  if (/dgesv|exactly singular|singular matrix|computationally singular/.test(msg)) {
+    return 'The model could not be estimated because the data or predictors are perfectly duplicated or collinear. Check duplicate indicators, constant columns, identical dataset columns, or predictors that move exactly together.'
+  }
 
   if (cleanedRaw && !/^unknown error$/i.test(cleanedRaw)) {
     return `The model could not be calculated. Backend detail: ${cleanedRaw}`
@@ -553,16 +694,8 @@ function arrowPath(from: Construct, to: Construct, path?: Path): string {
   if (dist < 1) return ''
   const ux = dx / dist, uy = dy / dist
   
-  const getOffset = (c: Construct, ux: number, uy: number) => {
-    if (c.shape === 'square') {
-      const scale = 1 / Math.max(Math.abs(ux), Math.abs(uy))
-      return c.radius * scale
-    }
-    return c.radius
-  }
-
-  const offF = getOffset(from, ux, uy)
-  const offT = getOffset(to, -ux, -uy)
+  const offF = getConstructEdgeOffset(from, ux, uy)
+  const offT = getConstructEdgeOffset(to, -ux, -uy)
 
   const sx = from.x + ux * offF
   const sy = from.y + uy * offF
@@ -605,12 +738,13 @@ function linePointDistance(px: number, py: number, x1: number, y1: number, x2: n
   return Math.hypot(px - cx, py - cy)
 }
 
-function indicatorPath(cX: number, cY: number, iX: number, iY: number, iW: number, iH: number, type: 'Reflective' | 'Formative', direction: string) {
-  const isHoriz = direction === 'top' || direction === 'bottom'
+function indicatorPath(construct: Construct, iX: number, iY: number, iW: number, iH: number, type: 'Reflective' | 'Formative', direction: string) {
   // Latent edge point
-  const ux = iX - cX, uy = iY - cY
+  const ux = iX - construct.x, uy = iY - construct.y
   const dist = Math.sqrt(ux*ux + uy*uy)
-  const lx = cX + (ux/dist) * 42, ly = cY + (uy/dist) * 42
+  if (dist < 1) return ''
+  const edgeOffset = getConstructEdgeOffset(construct, ux / dist, uy / dist)
+  const lx = construct.x + (ux/dist) * edgeOffset, ly = construct.y + (uy/dist) * edgeOffset
 
   // Indicator edge point
   let ix = iX, iy = iY
@@ -668,6 +802,8 @@ export default function ModelCanvas({
   const [dirtyModels, setDirtyModels] = useState<Record<string, boolean>>({})
   const modelDraftsRef = useRef<Record<string, ModelDraftState>>({})
   const loadedModelIdRef = useRef<string | null>(null)
+  const draftWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingDraftWriteRef = useRef<{ modelId: string; draft: ModelDraftState } | null>(null)
   const [showSaveAsDialog, setShowSaveAsDialog] = useState(false)
   const [isDatasetInfoHovered, setIsDatasetInfoHovered] = useState(false)
   const linkedDatasetId = (linkedDataset as any)?.id ?? null
@@ -691,6 +827,42 @@ export default function ModelCanvas({
       },
     })
   }, [activeWs?.id, activeWs?.name, linkedDatasetId, modelId])
+
+  const flushPendingDraftWrite = useCallback(() => {
+    if (draftWriteTimerRef.current) {
+      clearTimeout(draftWriteTimerRef.current)
+      draftWriteTimerRef.current = null
+    }
+
+    const pending = pendingDraftWriteRef.current
+    if (!pending) return
+
+    pendingDraftWriteRef.current = null
+    writeAutosaveDraft(pending.modelId, pending.draft)
+  }, [])
+
+  const cancelPendingDraftWrite = useCallback((targetModelId?: string) => {
+    if (draftWriteTimerRef.current) {
+      clearTimeout(draftWriteTimerRef.current)
+      draftWriteTimerRef.current = null
+    }
+
+    const pending = pendingDraftWriteRef.current
+    if (!pending || (targetModelId && pending.modelId !== targetModelId)) return
+    pendingDraftWriteRef.current = null
+  }, [])
+
+  const scheduleDraftWrite = useCallback((targetModelId: string, draft: ModelDraftState) => {
+    pendingDraftWriteRef.current = { modelId: targetModelId, draft }
+    if (draftWriteTimerRef.current) {
+      clearTimeout(draftWriteTimerRef.current)
+    }
+    draftWriteTimerRef.current = setTimeout(flushPendingDraftWrite, DRAFT_WRITE_DEBOUNCE_MS)
+  }, [flushPendingDraftWrite])
+
+  useEffect(() => {
+    return () => flushPendingDraftWrite()
+  }, [flushPendingDraftWrite])
 
   const canvasTabs = openModelTabs
     .map((tabModelId) => {
@@ -870,10 +1042,10 @@ export default function ModelCanvas({
   const [showExitModal, setShowExitModal] = useState(false)
   const [pendingCloseTabId, setPendingCloseTabId] = useState<string | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
-  const [activeTool, setActiveTool] = useState<'select' | 'construct' | 'connect' | 'delete'>('select')
+  const [activeTool, setActiveTool] = useState<'select' | 'construct' | 'connect' | 'pan' | 'delete'>('select')
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [isModalShaking, setIsModalShaking] = useState(false)
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false)
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(true)
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false)
   const [propertiesIndicatorsExpanded, setPropertiesIndicatorsExpanded] = useState(false)
   const [showLeftSidebar, setShowLeftSidebar] = useState(true)
@@ -890,6 +1062,8 @@ export default function ModelCanvas({
   const [isSpaceDown, setIsSpaceDown] = useState(false)
 
   const [selected, setSelected]     = useState<string[]>([])
+  const [highlightedConstructId, setHighlightedConstructId] = useState<string | null>(null)
+  const highlightedConstructTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [canvasBg, setCanvasBg]     = useState(C.page)
   const [showGrid, setShowGrid]     = useState(false)
   const [snapEnabled, setSnapEnabled] = useState(true)
@@ -912,6 +1086,9 @@ export default function ModelCanvas({
     centerX: number
     centerY: number
     startRadius: number
+    startWidth: number
+    startHeight: number
+    startShape: 'circle' | 'oval' | 'rectangle'
   } | null>(null)
   const [groupResizing, setGroupResizing] = useState<GroupResizeState | null>(null)
   const [activePathDrag, setActivePathDrag] = useState<{ id: string; tx: number; ty: number } | null>(null)
@@ -932,6 +1109,8 @@ export default function ModelCanvas({
     title: '',
     message: '',
   })
+  const [hocPathConflict, setHocPathConflict] = useState<HocPathConflict | null>(null)
+  const [hocPathRoleChoice, setHocPathRoleChoice] = useState<HocPathRoleChoice | null>(null)
   const [algoTab, setAlgoTab] = useState<'PLS setup' | 'Data'>('PLS setup')
   const [weightingScheme, setWeightingScheme] = useState<'Factor' | 'Path' | 'PCA'>('Path')
   const [plsAlgorithm, setPlsAlgorithm] = useState<'standard' | 'consistent'>('standard')
@@ -941,6 +1120,8 @@ export default function ModelCanvas({
   const [showDatasetManager, setShowDatasetManager] = useState(false)
   const [isCalculating, setIsCalculating] = useState(false)
   const [calculatingType, setCalculatingType] = useState<'bootstrap' | 'plspredict' | 'advanced' | 'pls' | null>(null)
+  const [showHocPathPrompt, setShowHocPathPrompt] = useState(() => readShowHocPathPromptPreference())
+  const [doNotShowHocPathPrompt, setDoNotShowHocPathPrompt] = useState(false)
   const calculationState = useCalculation()
   const calcDispatch = useCalculationDispatch()
   const isContextCalculating = useIsCalculating()
@@ -968,10 +1149,23 @@ export default function ModelCanvas({
   // Drag-and-drop / New Construct Modal
   const [showNewConstructModal, setShowNewConstructModal] = useState(false)
   const [newConstructName, setNewConstructName] = useState('')
-  const [newConstructColor, setNewConstructColor] = useState(C.secondary)
+  const [newConstructColor, setNewConstructColor] = useState(SWATCH_COLORS[0])
+  const [newConstructType, setNewConstructType] = useState<MeasurementType>('Reflective')
+  const [newConstructIsHigherOrder, setNewConstructIsHigherOrder] = useState(false)
   const [hoveredNewConstructColor, setHoveredNewConstructColor] = useState<string | null>(null)
   const [newConstructPos, setNewConstructPos] = useState({ x: 0, y: 0 })
   const [pendingVars, setPendingVars] = useState<string[]>([])
+  const newConstructPalette = newConstructIsHigherOrder ? HOC_SWATCH_COLORS : SWATCH_COLORS
+
+  const resetNewConstructModal = useCallback(() => {
+    setShowNewConstructModal(false)
+    setNewConstructName('')
+    setNewConstructColor(SWATCH_COLORS[0])
+    setNewConstructType('Reflective')
+    setNewConstructIsHigherOrder(false)
+    setHoveredNewConstructColor(null)
+    setPendingVars([])
+  }, [])
   
   const [settingsModalPos, setSettingsModalPos] = useState({ x: 0, y: 0 })
   const [showSettingsModal, setShowSettingsModal] = useState(false)
@@ -980,7 +1174,10 @@ export default function ModelCanvas({
   const [editingPathId, setEditingPathId] = useState<string | null>(null)
   const [pathSettingsPos, setPathSettingsPos] = useState({ x: 0, y: 0 })
   const [constructSizeDraft, setConstructSizeDraft] = useState('')
+  const [constructWidthDraft, setConstructWidthDraft] = useState('')
+  const [constructHeightDraft, setConstructHeightDraft] = useState('')
   const [constructSizeFocused, setConstructSizeFocused] = useState(false)
+  const [constructDimensionsFocused, setConstructDimensionsFocused] = useState(false)
 
   const canvasRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
@@ -1059,8 +1256,9 @@ export default function ModelCanvas({
         paths: cloneModelState(paths),
       }
       modelDraftsRef.current[modelId] = nextDraft
-      writeAutosaveDraft(modelId, nextDraft)
+      scheduleDraftWrite(modelId, nextDraft)
     } else {
+      cancelPendingDraftWrite(modelId)
       delete modelDraftsRef.current[modelId]
       clearAutosaveDraft(modelId)
     }
@@ -1077,7 +1275,7 @@ export default function ModelCanvas({
       delete next[modelId]
       return next
     })
-  }, [modelId, constructs, paths, isDirty])
+  }, [modelId, constructs, paths, isDirty, cancelPendingDraftWrite, scheduleDraftWrite])
 
   useEffect(() => {
     const handler = () => {
@@ -1091,9 +1289,16 @@ export default function ModelCanvas({
   }, [])
 
   useEffect(() => {
+    const handleHocPathPromptPreferenceUpdated = () => {
+      setShowHocPathPrompt(readShowHocPathPromptPreference())
+      setDoNotShowHocPathPrompt(false)
+    }
+    window.addEventListener('pls:preferences-updated', handleHocPathPromptPreferenceUpdated)
+    return () => window.removeEventListener('pls:preferences-updated', handleHocPathPromptPreferenceUpdated)
+  }, [])
+
+  useEffect(() => {
     if (!realtimeEnabled) return
-    const datasetFilePath = resolveDatasetFilePath()
-    if (!datasetFilePath) return
 
     const validConstructs = constructs.filter(c => c.indicators.length >= 1)
     if (!validConstructs.length || !paths.length) return
@@ -1101,24 +1306,14 @@ export default function ModelCanvas({
     if (liveCalcTimer.current) clearTimeout(liveCalcTimer.current)
 
     liveCalcTimer.current = setTimeout(async () => {
-      const payloadConstructs = constructs
-        .map(c => ({
-          name: c.name,
-          type: c.type,
-          indicators: c.indicators.map(i => i.name).filter(Boolean),
-        }))
-        .filter(c => c.indicators.length > 0)
+      const datasetFilePath = resolveDatasetFilePath()
+      if (!datasetFilePath) return
+
+      const payloadParts = buildPlsModelPayloadParts(constructs, paths)
+      const payloadConstructs = payloadParts.constructs
 
       if (!payloadConstructs.length) return
-
-      const mappedPaths = paths
-        .map(p => {
-          const fromC = constructs.find(c => c.id === p.from)
-          const toC = constructs.find(c => c.id === p.to)
-          if (!fromC || !toC) return null
-          return { from: fromC.name, to: toC.name }
-        })
-        .filter((p): p is { from: string; to: string } => p !== null)
+      const mappedPaths = payloadParts.paths
 
       if (!mappedPaths.length) return
 
@@ -1127,6 +1322,7 @@ export default function ModelCanvas({
           datasetPath: datasetFilePath,
           constructs: payloadConstructs,
           paths: mappedPaths,
+          interactions: payloadParts.interactions,
         })
 
         if (!result.success || !result.results) return
@@ -1197,6 +1393,7 @@ export default function ModelCanvas({
     try {
       if (!electronAPI?.saveWorkspace) {
         if (modelId) {
+          cancelPendingDraftWrite(modelId)
           delete modelDraftsRef.current[modelId]
           clearAutosaveDraft(modelId)
         }
@@ -1209,6 +1406,7 @@ export default function ModelCanvas({
       console.log('[ModelCanvas] saveWorkspace res:', res)
       if (res?.success) {
         if (modelId) {
+          cancelPendingDraftWrite(modelId)
           delete modelDraftsRef.current[modelId]
           clearAutosaveDraft(modelId)
           setDirtyModels(prev => {
@@ -1264,7 +1462,7 @@ export default function ModelCanvas({
       const newWsId = `ws-${Date.now()}`
       const newWorkspace = {
         id: newWsId,
-        name: `${newWsData.name}.ada`,
+        name: `${newWsData.name}.metisws`,
         color: newWsData.color,
         expanded: true,
         children: [],
@@ -1324,51 +1522,6 @@ export default function ModelCanvas({
       `${stripModelDisplayName(newModel.name)} is ready in ${stripWorkspaceDisplayName(targetWorkspace?.name ?? '') || 'the selected workspace'}`
     )
   }, [constructs, currentModel, electronAPI, onOpenModel, paths, setWorkspaces, workspaces])
-
-  const buildStructuralPayload = () => {
-    const constructNameById = new Map(constructs.map((construct) => [construct.id, construct.name]))
-
-    const directPaths = paths.filter((path) => path.kind !== 'moderation')
-    const moderationPaths = paths.filter((path) => path.kind === 'moderation' && path.targetPathId)
-
-    const mappedDirectPaths = directPaths
-      .map((path) => ({
-        from: constructNameById.get(path.from) || path.from,
-        to: constructNameById.get(path.to) || path.to,
-      }))
-      .filter((path) => !!path.from && !!path.to && path.from !== path.to)
-
-    const interactionRows: Array<{ iv: string; moderator: string; outcome: string }> = []
-    const interactionStructuralPaths: Array<{ from: string; to: string }> = []
-    const seenInteractions = new Set<string>()
-
-    moderationPaths.forEach((moderationPath) => {
-      const targetPath = directPaths.find((path) => path.id === moderationPath.targetPathId)
-      if (!targetPath) return
-
-      const iv = constructNameById.get(targetPath.from) || targetPath.from
-      const moderator = constructNameById.get(moderationPath.from) || moderationPath.from
-      const outcome = constructNameById.get(targetPath.to) || targetPath.to
-      if (!iv || !moderator || !outcome) return
-      if (iv === moderator || iv === outcome || moderator === outcome) return
-
-      const key = `${iv}|${moderator}|${outcome}`
-      if (seenInteractions.has(key)) return
-      seenInteractions.add(key)
-
-      const interactionName = `${iv}*${moderator}`
-      interactionRows.push({ iv, moderator, outcome })
-      interactionStructuralPaths.push({ from: interactionName, to: outcome })
-    })
-
-    const allPaths = [...mappedDirectPaths, ...interactionStructuralPaths]
-    
-    return {
-      mappedPaths: allPaths,
-      directPathCount: mappedDirectPaths.length,
-      interactions: interactionRows
-    }
-  }
 
   const persistSnapshotForAnalysis = useCallback((analysisState?: {
     mode: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced'
@@ -1473,6 +1626,7 @@ export default function ModelCanvas({
           status: result.status ?? null,
           error: result.error ?? null,
           normalizedMessage: msg,
+          ...bridgeDiagnosticDetails(result),
         })
         if (/dataset not found|no dataset|backend unavailable|cannot reach local pls backend|r runtime|rscript|plumber backend unavailable/i.test(msg)) {
           setCautionModal({
@@ -1559,22 +1713,15 @@ export default function ModelCanvas({
   // ─── Autosave Loop ──────────────────────────────────────────────────────────
   const constructsRef = useRef(constructs)
   const pathsRef = useRef(paths)
+  const workspaceSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingWorkspaceSnapshotRef = useRef<ModelDraftState | null>(null)
+  const workspaceSaveChainRef = useRef<Promise<void>>(Promise.resolve())
   useEffect(() => { constructsRef.current = constructs }, [constructs])
   useEffect(() => { pathsRef.current = paths }, [paths])
 
-  const persistCanvasSnapshot = useCallback(async (targetConstructs: Construct[], targetPaths: Path[]) => {
-    const snapshot = {
-      constructs: cloneModelState(targetConstructs),
-      paths: cloneModelState(targetPaths),
-    }
-
-    if (modelId) {
-      writeAutosaveDraft(modelId, snapshot)
-    }
-
-    writeSharedStorageValue('canvas-model', JSON.stringify(snapshot))
-
+  const writeWorkspaceSnapshot = useCallback(async (snapshot: ModelDraftState) => {
     if (!activeWs || !currentModel) return
+
     const nowIso = new Date().toISOString()
     const updatedModel = {
       ...currentModel,
@@ -1594,6 +1741,91 @@ export default function ModelCanvas({
       await (window as any).electronAPI.saveWorkspace(updatedWs)
     }
   }, [activeWs, currentModel, modelId, setWorkspaces, workspaces])
+
+  const runWorkspaceSnapshotSave = useCallback(async (snapshot: ModelDraftState) => {
+    const savePromise = workspaceSaveChainRef.current.then(() => writeWorkspaceSnapshot(snapshot))
+    workspaceSaveChainRef.current = savePromise.catch(() => undefined)
+    await savePromise
+  }, [writeWorkspaceSnapshot])
+
+  const flushQueuedWorkspaceSave = useCallback(async () => {
+    if (workspaceSaveTimerRef.current) {
+      clearTimeout(workspaceSaveTimerRef.current)
+      workspaceSaveTimerRef.current = null
+    }
+
+    const snapshot = pendingWorkspaceSnapshotRef.current
+    if (!snapshot) return
+
+    pendingWorkspaceSnapshotRef.current = null
+    await runWorkspaceSnapshotSave(snapshot)
+
+    if (pendingWorkspaceSnapshotRef.current) {
+      await flushQueuedWorkspaceSave()
+    }
+  }, [runWorkspaceSnapshotSave])
+
+  const queueWorkspaceSnapshotSave = useCallback((snapshot: ModelDraftState) => {
+    pendingWorkspaceSnapshotRef.current = snapshot
+    if (workspaceSaveTimerRef.current) {
+      clearTimeout(workspaceSaveTimerRef.current)
+    }
+    workspaceSaveTimerRef.current = setTimeout(() => {
+      void flushQueuedWorkspaceSave()
+    }, WORKSPACE_SAVE_DEBOUNCE_MS)
+  }, [flushQueuedWorkspaceSave])
+
+  useEffect(() => {
+    return () => {
+      if (workspaceSaveTimerRef.current) {
+        clearTimeout(workspaceSaveTimerRef.current)
+        workspaceSaveTimerRef.current = null
+      }
+      void flushQueuedWorkspaceSave()
+    }
+  }, [flushQueuedWorkspaceSave])
+
+  const persistCanvasSnapshot = useCallback(async (
+    targetConstructs: Construct[],
+    targetPaths: Path[],
+    options: PersistCanvasSnapshotOptions = {},
+  ) => {
+    const snapshot = {
+      constructs: cloneModelState(targetConstructs),
+      paths: cloneModelState(targetPaths),
+    }
+    const workspaceSave = options.workspaceSave ?? 'immediate'
+
+    if (modelId) {
+      modelDraftsRef.current[modelId] = snapshot
+      if (workspaceSave === 'debounced') {
+        scheduleDraftWrite(modelId, snapshot)
+      } else {
+        cancelPendingDraftWrite(modelId)
+        writeAutosaveDraft(modelId, snapshot)
+      }
+    }
+
+    writeSharedStorageValue('canvas-model', JSON.stringify(snapshot))
+
+    if (workspaceSave === 'debounced') {
+      queueWorkspaceSnapshotSave(snapshot)
+      return
+    }
+
+    pendingWorkspaceSnapshotRef.current = null
+    if (workspaceSaveTimerRef.current) {
+      clearTimeout(workspaceSaveTimerRef.current)
+      workspaceSaveTimerRef.current = null
+    }
+    await runWorkspaceSnapshotSave(snapshot)
+  }, [
+    cancelPendingDraftWrite,
+    modelId,
+    queueWorkspaceSnapshotSave,
+    runWorkspaceSnapshotSave,
+    scheduleDraftWrite,
+  ])
 
   useEffect(() => {
     const autosaveOn = readSharedStorageValue('prefs:autosaveOn') !== 'false'
@@ -1623,18 +1855,18 @@ export default function ModelCanvas({
       throw new Error('No dataset file path found. Please import dataset from file before calculation.')
     }
 
-    const constructSummaries = constructs.map((construct) => ({
-      name: construct.name,
-      type: construct.type,
-      indicators: construct.indicators.map((indicator) => indicator.name).filter(Boolean),
-    }))
-    const emptyConstructNames = constructSummaries
-      .filter((construct) => construct.indicators.length === 0)
+    const payloadParts = buildPlsModelPayloadParts(constructs, paths)
+    const mappedPaths = payloadParts.paths
+    const directPathCount = payloadParts.directPathCount
+    const interactions = payloadParts.interactions
+    const payloadConstructs = payloadParts.constructs
+
+    const emptyConstructNames = constructs
+      .filter((construct) => !construct.isHigherOrder && construct.indicators.length === 0)
       .map((construct) => construct.name)
-    const payloadConstructs = constructSummaries.filter((construct) => construct.indicators.length > 0)
 
     if (!payloadConstructs.length) {
-      recordDiagnostic('calculation', 'warn', `${getAnalysisLabel(analysisKind)} blocked: no constructs with indicators.`, {
+      recordDiagnostic('calculation', 'warn', `${getAnalysisLabel(analysisKind)} blocked: no constructs found.`, {
         analysisKind,
         constructCount: constructs.length,
       })
@@ -1649,7 +1881,7 @@ export default function ModelCanvas({
       throw new Error(`One or more constructs have no indicators: ${emptyConstructNames.join(', ')}`)
     }
 
-    const { mappedPaths, directPathCount, interactions } = buildStructuralPayload()
+
     if (!directPathCount) {
       recordDiagnostic('calculation', 'warn', `${getAnalysisLabel(analysisKind)} blocked: no structural paths.`, {
         analysisKind,
@@ -1733,6 +1965,7 @@ export default function ModelCanvas({
         type: 'bootstrap',
         title: `Bootstrapping ${totalNboot.toLocaleString()} samples`,
         progressMode: 'indeterminate',
+        subLabel: `${totalNboot.toLocaleString()} samples`,
         phases: [
           { id: 'prep', label: 'Preparing base model', status: 'pending' },
           { id: 'resample', label: 'Resampling', status: 'pending' },
@@ -2283,8 +2516,7 @@ export default function ModelCanvas({
     if (trimmed.length > 60) trimmed.shift()
     historyRef.current = trimmed
     setHistIdx(trimmed.length - 1)
-    // Immediately persist the latest state after any edit/move
-    persistCanvasSnapshot(newC, newP)
+    persistCanvasSnapshot(newC, newP, { workspaceSave: 'debounced' })
   }, [histIdx, persistCanvasSnapshot])
 
   // No status sync here anymore
@@ -2508,6 +2740,42 @@ export default function ModelCanvas({
 
   // ── Selected construct ────────────────────────────────────────────────────────
   const selectedConstruct = selected.length === 1 ? constructs.find(c => c.id === selected[0]) ?? null : null
+  const selectedHocLowerOrderConstructs = useMemo(() => {
+    if (!selectedConstruct?.isHigherOrder) return []
+
+    const locIds: string[] = []
+    paths.forEach((path) => {
+      if (path.kind === 'moderation') return
+      if (path.hocRole === 'structural') return
+      if (path.from === selectedConstruct.id) locIds.push(path.to)
+      if (path.to === selectedConstruct.id) locIds.push(path.from)
+    })
+
+    const seen = new Set<string>()
+    return locIds
+      .map((id) => constructs.find((construct) => construct.id === id))
+      .filter((construct): construct is Construct => Boolean(construct && !construct.isHigherOrder))
+      .filter((construct) => {
+        if (seen.has(construct.id)) return false
+        seen.add(construct.id)
+        return true
+      })
+  }, [constructs, paths, selectedConstruct])
+
+  const highlightConnectedConstruct = useCallback((constructId: string) => {
+    setHighlightedConstructId(constructId)
+    if (highlightedConstructTimerRef.current) clearTimeout(highlightedConstructTimerRef.current)
+    highlightedConstructTimerRef.current = setTimeout(() => {
+      setHighlightedConstructId((current) => current === constructId ? null : current)
+      highlightedConstructTimerRef.current = null
+    }, 1400)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (highlightedConstructTimerRef.current) clearTimeout(highlightedConstructTimerRef.current)
+    }
+  }, [])
 
   useEffect(() => {
     setPropertiesIndicatorsExpanded(false)
@@ -2515,7 +2783,7 @@ export default function ModelCanvas({
 
   const updateSelected = useCallback((patch: Partial<Construct>) => {
     if (!selectedConstruct) return
-    const newC = constructs.map(c => c.id === selectedConstruct.id ? applyIndicatorAlignmentDefaults(c, patch) : c)
+    const newC = constructs.map(c => c.id === selectedConstruct.id ? buildConstructShapePatch(c, patch) : c)
     setConstructs(newC); commit(newC, paths)
   }, [selectedConstruct, constructs, paths, commit])
 
@@ -2533,6 +2801,27 @@ export default function ModelCanvas({
     setConstructSizeFocused(false)
   }, [constructSizeDraft, selectedConstruct, updateSelected])
 
+  const commitConstructDimensionsDraft = useCallback(() => {
+    if (!selectedConstruct) return
+    const nextWidth = Number(constructWidthDraft)
+    const nextHeight = Number(constructHeightDraft)
+    const currentDimensions = getConstructDimensions(selectedConstruct)
+
+    if (!Number.isFinite(nextWidth) || !Number.isFinite(nextHeight) || nextWidth <= 0 || nextHeight <= 0) {
+      setConstructWidthDraft(String(Math.round(currentDimensions.width)))
+      setConstructHeightDraft(String(Math.round(currentDimensions.height)))
+      setConstructDimensionsFocused(false)
+      return
+    }
+
+    const width = Math.max(MIN_OVAL_DIMENSION, Math.round(nextWidth))
+    const height = Math.max(MIN_OVAL_DIMENSION, Math.round(nextHeight))
+    updateSelected({ ovalWidth: width, ovalHeight: height })
+    setConstructWidthDraft(String(width))
+    setConstructHeightDraft(String(height))
+    setConstructDimensionsFocused(false)
+  }, [constructHeightDraft, constructWidthDraft, selectedConstruct, updateSelected])
+
   // ── Floating Bar Action Handlers ──────────────────────────────────────────────
   const selectedConstructIds = selected.filter(id => !id.includes(':'))
   const activeSelectedConstructs = constructs.filter(c => selectedConstructIds.includes(c.id))
@@ -2541,6 +2830,25 @@ export default function ModelCanvas({
     if (constructSizeFocused) return
     setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
   }, [constructSizeFocused, selectedConstruct?.id, selectedConstruct?.radius])
+
+  useEffect(() => {
+    if (constructDimensionsFocused) return
+    if (!selectedConstruct) {
+      setConstructWidthDraft('')
+      setConstructHeightDraft('')
+      return
+    }
+    const { width, height } = getConstructDimensions(selectedConstruct)
+    setConstructWidthDraft(String(Math.round(width)))
+    setConstructHeightDraft(String(Math.round(height)))
+  }, [
+    constructDimensionsFocused,
+    selectedConstruct?.id,
+    selectedConstruct?.radius,
+    selectedConstruct?.ovalWidth,
+    selectedConstruct?.ovalHeight,
+    selectedConstruct?.shape,
+  ])
 
   const beginGroupResize = useCallback((e: React.MouseEvent, handle: ResizeHandle) => {
     e.stopPropagation()
@@ -2578,6 +2886,8 @@ export default function ModelCanvas({
         x: construct.x,
         y: construct.y,
         radius: construct.radius,
+        ovalWidth: getConstructDimensions(construct).width,
+        ovalHeight: getConstructDimensions(construct).height,
       })
     })
 
@@ -2635,7 +2945,16 @@ export default function ModelCanvas({
   }
 
   const handleAutoSizeSelected = () => {
-    const newC = constructs.map(c => selectedConstructIds.includes(c.id) ? { ...c, radius: DEFAULT_CONSTRUCT_RADIUS } : c)
+    const defaultOval = getDefaultOvalDimensions(DEFAULT_CONSTRUCT_RADIUS)
+    const newC = constructs.map(c => selectedConstructIds.includes(c.id)
+      ? {
+          ...c,
+          radius: DEFAULT_CONSTRUCT_RADIUS,
+          ...(normalizeConstructShape(c.shape) !== 'circle'
+            ? { ovalWidth: defaultOval.width, ovalHeight: defaultOval.height }
+            : {}),
+        }
+      : c)
     setConstructs(newC); commit(newC, paths)
   }
 
@@ -2679,6 +2998,7 @@ export default function ModelCanvas({
           case 'l': e.preventDefault(); setActiveTool('construct'); return
           case 'c': e.preventDefault(); setActiveTool('connect'); return
           case 'v': e.preventDefault(); setActiveTool('select'); return
+          case 'h': e.preventDefault(); setActiveTool('pan'); return
           case 'arrowup':    e.preventDefault(); nudge(0, -10); return
           case 'arrowdown':  e.preventDefault(); nudge(0,  10); return
           case 'arrowleft':  e.preventDefault(); nudge(-10, 0); return
@@ -2801,6 +3121,158 @@ export default function ModelCanvas({
     setShowPathSettings(false)
   }
 
+  const getHocPathConflict = useCallback((fromId: string, toId: string, pathId: string): HocPathConflict | null => {
+    const fromConstruct = constructs.find((construct) => construct.id === fromId)
+    const toConstruct = constructs.find((construct) => construct.id === toId)
+    if (!fromConstruct || !toConstruct) return null
+    if (Boolean(fromConstruct.isHigherOrder) === Boolean(toConstruct.isHigherOrder)) return null
+
+    const hoc = fromConstruct.isHigherOrder ? fromConstruct : toConstruct
+    const loc = fromConstruct.isHigherOrder ? toConstruct : fromConstruct
+    const currentType = hoc.type
+    const suggestedType = currentType === 'Reflective' ? 'Formative' : 'Reflective'
+    const expectedFrom = currentType === 'Reflective' ? hoc.id : loc.id
+    const expectedTo = currentType === 'Reflective' ? loc.id : hoc.id
+    if (fromId === expectedFrom && toId === expectedTo) return null
+
+    return {
+      id: pathId,
+      from: fromId,
+      to: toId,
+      hocId: hoc.id,
+      locId: loc.id,
+      currentType,
+      suggestedType,
+    }
+  }, [constructs])
+
+  const getHocPathRoleChoice = useCallback((fromId: string, toId: string, pathId: string): HocPathRoleChoice | null => {
+    const fromConstruct = constructs.find((construct) => construct.id === fromId)
+    const toConstruct = constructs.find((construct) => construct.id === toId)
+    if (!fromConstruct || !toConstruct) return null
+    if (Boolean(fromConstruct.isHigherOrder) === Boolean(toConstruct.isHigherOrder)) return null
+
+    const hoc = fromConstruct.isHigherOrder ? fromConstruct : toConstruct
+    const loc = fromConstruct.isHigherOrder ? toConstruct : fromConstruct
+    return {
+      id: pathId,
+      from: fromId,
+      to: toId,
+      hocId: hoc.id,
+      locId: loc.id,
+    }
+  }, [constructs])
+
+  const commitDirectPath = useCallback((
+    fromId: string,
+    toId: string,
+    pathId: string,
+    targetConstructs: Construct[] = constructs,
+    targetPaths: Path[] = paths,
+    hocRole?: HocPathRole,
+  ) => {
+    const existingPath = targetPaths.find((path) => path.kind !== 'moderation' && path.from === fromId && path.to === toId)
+    if (existingPath) {
+      const nextPaths = hocRole && existingPath.hocRole !== hocRole
+        ? targetPaths.map((path) => path.id === existingPath.id ? { ...path, hocRole } : path)
+        : targetPaths
+      setConstructs(targetConstructs)
+      setPaths(nextPaths)
+      commit(targetConstructs, nextPaths)
+      setSelectedPaths([existingPath.id])
+      setSelected([])
+      return
+    }
+
+    const newPath: Path = { id: pathId, from: fromId, to: toId, kind: 'direct', ...(hocRole ? { hocRole } : {}) }
+    const newPaths = [...targetPaths, newPath]
+    setConstructs(targetConstructs)
+    setPaths(newPaths)
+    commit(targetConstructs, newPaths)
+    setSelectedPaths([pathId])
+    setSelected([])
+  }, [constructs, paths, commit])
+
+  const createDirectPath = useCallback((fromId: string, toId: string, requestedHocRole?: HocPathRole) => {
+    if (fromId === toId) return
+    const id = `p-${Date.now()}`
+    if (requestedHocRole === 'measurement') {
+      const conflict = getHocPathConflict(fromId, toId, id)
+      if (conflict) {
+        setHocPathConflict(conflict)
+        return
+      }
+      commitDirectPath(fromId, toId, id, constructs, paths, 'measurement')
+      return
+    }
+    if (requestedHocRole === 'structural') {
+      commitDirectPath(fromId, toId, id, constructs, paths, 'structural')
+      return
+    }
+
+    const roleChoice = getHocPathRoleChoice(fromId, toId, id)
+    if (roleChoice) {
+      if (!showHocPathPrompt) {
+        commitDirectPath(fromId, toId, id, constructs, paths, 'structural')
+        return
+      }
+      setHocPathRoleChoice(roleChoice)
+      return
+    }
+
+    commitDirectPath(fromId, toId, id)
+  }, [commitDirectPath, constructs, getHocPathRoleChoice, paths, showHocPathPrompt])
+
+  const rememberHocPathPromptChoice = useCallback(() => {
+    if (!doNotShowHocPathPrompt) return
+    writeShowHocPathPromptPreference(false)
+    setShowHocPathPrompt(false)
+    setDoNotShowHocPathPrompt(false)
+  }, [doNotShowHocPathPrompt])
+
+  const createHocMeasurementPath = useCallback(() => {
+    if (!hocPathRoleChoice) return
+    const conflict = getHocPathConflict(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id)
+    rememberHocPathPromptChoice()
+    setHocPathRoleChoice(null)
+    if (conflict) {
+      setHocPathConflict(conflict)
+      return
+    }
+    commitDirectPath(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id, constructs, paths, 'measurement')
+  }, [commitDirectPath, constructs, getHocPathConflict, hocPathRoleChoice, paths, rememberHocPathPromptChoice])
+
+  const createHocStructuralPath = useCallback(() => {
+    if (!hocPathRoleChoice) return
+    rememberHocPathPromptChoice()
+    commitDirectPath(hocPathRoleChoice.from, hocPathRoleChoice.to, hocPathRoleChoice.id, constructs, paths, 'structural')
+    setHocPathRoleChoice(null)
+  }, [commitDirectPath, constructs, hocPathRoleChoice, paths, rememberHocPathPromptChoice])
+
+  const cancelHocPathRoleChoice = useCallback(() => {
+    setHocPathRoleChoice(null)
+    setDoNotShowHocPathPrompt(false)
+  }, [])
+
+  const keepHocMeasurementType = useCallback(() => {
+    if (!hocPathConflict) return
+    const expectedFrom = hocPathConflict.currentType === 'Reflective' ? hocPathConflict.hocId : hocPathConflict.locId
+    const expectedTo = hocPathConflict.currentType === 'Reflective' ? hocPathConflict.locId : hocPathConflict.hocId
+    commitDirectPath(expectedFrom, expectedTo, hocPathConflict.id, constructs, paths, 'measurement')
+    setHocPathConflict(null)
+  }, [commitDirectPath, constructs, hocPathConflict, paths])
+
+  const switchHocMeasurementType = useCallback(() => {
+    if (!hocPathConflict) return
+    const nextConstructs = constructs.map((construct) => (
+      construct.id === hocPathConflict.hocId
+        ? { ...construct, type: hocPathConflict.suggestedType }
+        : construct
+    ))
+    commitDirectPath(hocPathConflict.from, hocPathConflict.to, hocPathConflict.id, nextConstructs, paths, 'measurement')
+    setHocPathConflict(null)
+  }, [commitDirectPath, constructs, hocPathConflict, paths])
+
   // ── Drag ──────────────────────────────────────────────────────────────────────
   const snap = (v: number) => snapEnabled ? Math.round(v / 20) * 20 : v
 
@@ -2834,6 +3306,7 @@ export default function ModelCanvas({
 
   const onConstructMouseDown = (e: React.MouseEvent, id: string) => {
     if (e.button === 2) return // Ignore right-click for dragging
+    if (activeTool === 'pan') return // Let pan events bubble up to canvas handler
     e.stopPropagation()
     if (activeTool === 'delete') {
       const newC = constructs.filter(c => c.id !== id)
@@ -2850,15 +3323,7 @@ export default function ModelCanvas({
 
       // Click-to-connect: if source already selected, second click on another construct creates a path.
       if (connectStart && connectStart !== id) {
-        const exists = paths.some((p) => p.kind !== 'moderation' && p.from === connectStart && p.to === id)
-        if (!exists) {
-          const newId = `p-${Date.now()}`
-          const newP = [...paths, { id: newId, from: connectStart, to: id, kind: 'direct' as const }]
-          setPaths(newP)
-          commit(constructs, newP)
-          setSelectedPaths([newId])
-          setSelected([])
-        }
+        createDirectPath(connectStart, id, e.shiftKey ? 'measurement' : undefined)
         setIsConnecting(false)
         setConnectStart(null)
         setConnectEnd(null)
@@ -2935,7 +3400,7 @@ export default function ModelCanvas({
   }
 
   const onSvgMouseDown = (e: React.MouseEvent) => {
-    if (isSpaceDown || e.button === 1) {
+    if (isSpaceDown || e.button === 1 || activeTool === 'pan') {
       setIsPanning(true)
       panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY }
       return
@@ -3038,6 +3503,12 @@ export default function ModelCanvas({
           x: groupResizing.anchorX + (snapshot.x - groupResizing.anchorX) * scaleX,
           y: groupResizing.anchorY + (snapshot.y - groupResizing.anchorY) * scaleY,
           radius: Math.max(20, snapshot.radius * radiusScale),
+          ...(normalizeConstructShape(construct.shape) !== 'circle'
+            ? {
+                ovalWidth: Math.max(MIN_OVAL_DIMENSION, (snapshot.ovalWidth ?? getDefaultOvalDimensions(snapshot.radius).width) * Math.abs(scaleX)),
+                ovalHeight: Math.max(MIN_OVAL_DIMENSION, (snapshot.ovalHeight ?? getDefaultOvalDimensions(snapshot.radius).height) * Math.abs(scaleY)),
+              }
+            : {}),
         }
       })
 
@@ -3076,11 +3547,60 @@ export default function ModelCanvas({
       setDragGuideLines([])
       const handleSignX = resizing.handle === 'tl' || resizing.handle === 'bl' ? -1 : 1
       const handleSignY = resizing.handle === 'tl' || resizing.handle === 'tr' ? -1 : 1
+
+      if (resizing.startShape !== 'circle') {
+        const handleAxis = resizing.handle === 'left' || resizing.handle === 'right'
+          ? 'horizontal'
+          : resizing.handle === 'top' || resizing.handle === 'bottom'
+            ? 'vertical'
+            : 'diagonal'
+
+        if (handleAxis === 'horizontal') {
+          const sideSignX = resizing.handle === 'left' ? -1 : 1
+          const projectedWidth = (mouseX - resizing.centerX) * sideSignX * 2
+          const newWidth = Math.max(MIN_OVAL_DIMENSION, Number.isFinite(projectedWidth) ? projectedWidth : resizing.startWidth)
+          setConstructs(prev => prev.map(c => c.id === resizing.id ? {
+            ...c,
+            ovalWidth: newWidth,
+            ovalHeight: resizing.startHeight,
+          } : c))
+          return
+        }
+
+        if (handleAxis === 'vertical') {
+          const sideSignY = resizing.handle === 'top' ? -1 : 1
+          const projectedHeight = (mouseY - resizing.centerY) * sideSignY * 2
+          const newHeight = Math.max(MIN_OVAL_DIMENSION, Number.isFinite(projectedHeight) ? projectedHeight : resizing.startHeight)
+          setConstructs(prev => prev.map(c => c.id === resizing.id ? {
+            ...c,
+            ovalWidth: resizing.startWidth,
+            ovalHeight: newHeight,
+          } : c))
+          return
+        }
+
+        if (handleAxis === 'diagonal') {
+          const projectedWidth = (mouseX - resizing.centerX) * handleSignX * 2
+          const projectedHeight = (mouseY - resizing.centerY) * handleSignY * 2
+          const widthScale = resizing.startWidth > 0 ? projectedWidth / resizing.startWidth : 1
+          const heightScale = resizing.startHeight > 0 ? projectedHeight / resizing.startHeight : 1
+          const aspectScale = Math.max(0.2, Number.isFinite(widthScale) ? widthScale : 1, Number.isFinite(heightScale) ? heightScale : 1)
+          const newWidth = Math.max(MIN_OVAL_DIMENSION, resizing.startWidth * aspectScale)
+          const newHeight = Math.max(MIN_OVAL_DIMENSION, resizing.startHeight * aspectScale)
+          setConstructs(prev => prev.map(c => c.id === resizing.id ? {
+            ...c,
+            ovalWidth: newWidth,
+            ovalHeight: newHeight,
+          } : c))
+          return
+        }
+      }
+
       const projectedRadius = Math.max(
         (mouseX - resizing.centerX) * handleSignX,
         (mouseY - resizing.centerY) * handleSignY,
       )
-      const newRadius = Math.max(20, Number.isFinite(projectedRadius) ? projectedRadius : resizing.startRadius)
+      const newRadius = Math.max(MIN_CONSTRUCT_RADIUS, Number.isFinite(projectedRadius) ? projectedRadius : resizing.startRadius)
       setConstructs(prev => prev.map(c => c.id === resizing.id ? { ...c, radius: newRadius } : c))
       return
     }
@@ -3171,7 +3691,7 @@ export default function ModelCanvas({
     }
   }
 
-  const onSvgMouseUp = () => {
+  const onSvgMouseUp = (e: React.MouseEvent<SVGSVGElement>) => {
     setDragGuideLines([])
     if (isPanning) {
       setIsPanning(false)
@@ -3184,7 +3704,7 @@ export default function ModelCanvas({
       setNewConstructPos({ x: drawStart.x, y: drawStart.y })
       setPendingVars([])
       setNewConstructName(`VAR_${constructs.length + 1}`)
-      setNewConstructColor(C.secondary)
+      setNewConstructColor(SWATCH_COLORS[0])
       setShowNewConstructModal(true)
       setIsDrawing(false); setDrawStart(null); setDrawCurrent(null)
       return
@@ -3221,20 +3741,9 @@ export default function ModelCanvas({
     }
     if (dragRef.current) { commit(constructs, paths); dragRef.current = null }
     if (isConnecting && connectStart && connectEnd) {
-      const over = constructs.find(c => {
-        const d = Math.sqrt(Math.pow(c.x - connectEnd.x, 2) + Math.pow(c.y - connectEnd.y, 2))
-        return d < c.radius + 10
-      })
+      const over = constructs.find(c => isPointInConstruct(c, connectEnd.x, connectEnd.y, 10))
       if (over && over.id !== connectStart) {
-        const exists = paths.some((p) => p.kind !== 'moderation' && p.from === connectStart && p.to === over.id)
-        if (!exists) {
-          const id = `p-${Date.now()}`
-          const newP = [...paths, { id, from: connectStart, to: over.id, kind: 'direct' as const }]
-          setPaths(newP)
-          commit(constructs, newP)
-          setSelectedPaths([id])
-          setSelected([])
-        }
+        createDirectPath(connectStart, over.id, e.shiftKey ? 'measurement' : undefined)
       } else {
         const targetPath = findDirectPathAtPoint(connectEnd.x, connectEnd.y, connectStart)
         if (targetPath) {
@@ -3265,10 +3774,7 @@ export default function ModelCanvas({
     }
 
     if (dragPathRef.current && activePathDrag) {
-      const over = constructs.find(c => {
-        const d = Math.sqrt(Math.pow(c.x - activePathDrag.tx, 2) + Math.pow(c.y - activePathDrag.ty, 2))
-        return d < c.radius + 10
-      })
+      const over = constructs.find(c => isPointInConstruct(c, activePathDrag.tx, activePathDrag.ty, 10))
       if (over && over.id !== paths.find(p => p.id === activePathDrag.id)?.from) {
         const newP = paths.map(p => {
           if (p.id === activePathDrag.id) return { ...p, to: over.id }
@@ -3292,20 +3798,17 @@ export default function ModelCanvas({
     const id = `c-${Date.now()}`
     const radius = DEFAULT_CONSTRUCT_RADIUS
     const newC: Construct = {
-      id, name: newConstructName, type: 'Reflective', color: newConstructColor,
+      id, name: newConstructName, type: newConstructType, color: newConstructColor,
       x: newConstructPos.x, y: newConstructPos.y, radius, 
       indicators: pendingVars.map(v => ({ name: v, loading: null })),
       labelColor: 'var(--color-text-primary)', labelBold: true, labelItalic: false, labelSize: 13,
-      shape: 'circle'
+      shape: 'circle',
+      isHigherOrder: newConstructIsHigherOrder,
     }
     const updated = [...constructs, newC]
     setConstructs(updated)
     commit(updated, paths)
-    setShowNewConstructModal(false)
-    setNewConstructName('')
-    setNewConstructColor(C.secondary)
-    setHoveredNewConstructColor(null)
-    setPendingVars([])
+    resetNewConstructModal()
     setSelected([id])
   }
 
@@ -3321,10 +3824,7 @@ export default function ModelCanvas({
     const mouseY = (e.clientY - rect.top - panY) / (zoom / 100)
 
     // Check if dropped on existing construct
-    const target = constructs.find(c => {
-      const dist = Math.sqrt(Math.pow(mouseX - c.x, 2) + Math.pow(mouseY - c.y, 2))
-      return dist < c.radius
-    })
+    const target = constructs.find(c => isPointInConstruct(c, mouseX, mouseY))
 
     if (target) {
       // Add to existing
@@ -3347,7 +3847,10 @@ export default function ModelCanvas({
       setNewConstructPos({ x: mouseX, y: mouseY })
       setPendingVars(draggedVars)
       setNewConstructName(draggedVars.length === 1 ? draggedVars[0] : `VAR_${constructs.length + 1}`)
-      setNewConstructColor(C.secondary)
+      setNewConstructColor(SWATCH_COLORS[0])
+      setNewConstructType('Reflective')
+      setNewConstructIsHigherOrder(false)
+      setHoveredNewConstructColor(null)
       setShowNewConstructModal(true)
     }
   }
@@ -3355,7 +3858,17 @@ export default function ModelCanvas({
   const onResizeHandleMouseDown = (e: React.MouseEvent, id: string, handle: ResizeHandle) => {
     e.stopPropagation()
     const c = constructs.find(x => x.id === id)!
-    setResizing({ id, handle, centerX: c.x, centerY: c.y, startRadius: c.radius })
+    const { width, height } = getConstructDimensions(c)
+    setResizing({
+      id,
+      handle,
+      centerX: c.x,
+      centerY: c.y,
+      startRadius: c.radius,
+      startWidth: width,
+      startHeight: height,
+      startShape: normalizeConstructShape(c.shape),
+    })
   }
 
   const onPathHandleMouseDown = (e: React.MouseEvent, id: string) => {
@@ -3445,7 +3958,7 @@ export default function ModelCanvas({
     if (activeSelectedConstructs.length < 2) return null
     const minX = Math.min(...activeSelectedConstructs.map(c => c.x))
     const maxX = Math.max(...activeSelectedConstructs.map(c => c.x))
-    const topY = Math.min(...activeSelectedConstructs.map(c => c.y - c.radius))
+    const topY = Math.min(...activeSelectedConstructs.map(c => c.y - getConstructRadii(c).ry))
     
     // Convert to screen space
     const screenX = ((minX + maxX) / 2) * (zoom / 100) + panX
@@ -3460,7 +3973,7 @@ export default function ModelCanvas({
   const floatingPanelBottom = 52
   const currentCanvasTab = canvasTabs.find((tab) => tab.modelId === modelId) ?? canvasTabs[0]
   const currentModelSwitcherLabel = currentCanvasTab
-    ? `${stripModelDisplayName(String(currentCanvasTab.model?.name || currentCanvasTab.modelId).replace(/\.(hbe|ada)$/i, ''))}${dirtyModels[currentCanvasTab.modelId] ? '*' : ''}`
+    ? `${stripModelDisplayName(String(currentCanvasTab.model?.name || currentCanvasTab.modelId).replace(/\.(hbe|ada|metisws)$/i, ''))}${dirtyModels[currentCanvasTab.modelId] ? '*' : ''}`
     : stripModelDisplayName(currentModel?.name ?? 'Untitled model')
   const currentWorkspaceSwitcherLabel = currentCanvasTab
     ? stripWorkspaceDisplayName(currentCanvasTab.workspace?.name || '')
@@ -3812,7 +4325,7 @@ export default function ModelCanvas({
           ref={canvasRef}
           style={{ 
             flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: canvasBg,
-            cursor: isPanning ? 'grabbing' : isSpaceDown ? 'grab' : 'default'
+            cursor: isPanning ? 'grabbing' : (isSpaceDown || activeTool === 'pan') ? 'grab' : 'default'
           }}
         >
           {showGrid && (
@@ -3889,6 +4402,11 @@ export default function ModelCanvas({
               <marker id="arr-mod" markerWidth="7" markerHeight="5" refX="6.3" refY="2.5" orient="auto">
                 <polygon points="0 0,7 2.5,0 5" fill="var(--color-text-muted)" />
               </marker>
+              {constructs.map((construct) => (
+                <marker key={construct.id} id={indicatorArrowMarkerId(construct.id)} markerWidth="7" markerHeight="5" refX="6.3" refY="2.5" orient="auto">
+                  <polygon points="0 0,7 2.5,0 5" fill={construct.color} />
+                </marker>
+              ))}
             </defs>
 
             {/* MARQUEE RENDERING INSIDE SVG */}
@@ -3938,7 +4456,7 @@ export default function ModelCanvas({
                       : d}
                     fill="none"
                     stroke={isPathSel ? C.secondary : (isModeration ? 'var(--color-text-muted)' : 'var(--color-border)')}
-                    strokeWidth={isPathSel ? 2.5 : 1.5}
+                    strokeWidth={isPathSel ? SELECTED_PATH_STROKE_WIDTH : STRUCTURAL_PATH_STROKE_WIDTH}
                     strokeDasharray={isModeration ? '4,4' : undefined}
                     markerEnd={isPathSel ? 'url(#arr-sel)' : (isModeration ? 'url(#arr-mod)' : 'url(#arr)')}
                     style={{ pointerEvents: 'none' }}
@@ -4062,10 +4580,17 @@ export default function ModelCanvas({
 
             {constructs.map(c => {
               const showConstructBounds = selected.includes(c.id) && !hasUnifiedSelectionBounds
-              const resFontSize = Math.max(9, c.radius * 0.32)
+              const constructRadii = getConstructRadii(c)
+              const normalizedShape = normalizeConstructShape(c.shape)
+              const isOval = normalizedShape === 'oval'
+              const isRectangle = normalizedShape === 'rectangle'
+              const hasIndependentDimensions = normalizedShape !== 'circle'
+              const resFontSize = Math.max(9, Math.min(constructRadii.rx, constructRadii.ry) * 0.36)
               const constructLabelColor = !c.labelColor || c.labelColor === '#FFFFFF'
                 ? 'var(--color-text-primary)'
                 : c.labelColor
+              const showConnectedConstructHighlight = highlightedConstructId === c.id
+              const indicatorMarkerEnd = `url(#${indicatorArrowMarkerId(c.id)})`
 
               return (
                 <g key={c.id}>
@@ -4074,7 +4599,7 @@ export default function ModelCanvas({
                     const { ix, iy, labelW, labelH, dir } = getIndicatorLayout(c, ind, i)
                     const indId = `${c.id}:${ind.name}`
                     const showIndicatorSelection = selected.includes(indId) && !hasUnifiedSelectionBounds
-                    const p = indicatorPath(c.x, c.y, ix, iy, labelW, labelH, c.type, dir)
+                    const p = indicatorPath(c, ix, iy, labelW, labelH, c.type, dir)
                     const liveVal = realtimeEnabled ? liveLoadings[`${c.name}::${ind.name}`] : undefined
                     const hasLive = typeof liveVal === 'number' && Number.isFinite(liveVal)
                     let pathSegments: { seg1: string; seg2: string; midX: number; midY: number } | null = null
@@ -4104,7 +4629,7 @@ export default function ModelCanvas({
                       >
                         {hasLive && pathSegments ? (
                           <>
-                            <path d={pathSegments.seg1} fill="none" stroke={c.color} strokeWidth={1.2} opacity={0.5} />
+                            <path d={pathSegments.seg1} fill="none" stroke={c.color} strokeWidth={INDICATOR_PATH_STROKE_WIDTH} opacity={0.5} />
                             <rect x={pathSegments.midX - 17} y={pathSegments.midY - 8} width={34} height={14} rx={3} fill={C.surface} stroke={C.borderFaint} strokeWidth={0.5} />
                             <text
                               x={pathSegments.midX} y={pathSegments.midY + 1}
@@ -4114,10 +4639,10 @@ export default function ModelCanvas({
                             >
                               {(liveVal as number).toFixed(3)}
                             </text>
-                            <path d={pathSegments.seg2} fill="none" stroke={c.color} strokeWidth={1.2} markerEnd="url(#arr)" opacity={0.5} />
+                            <path d={pathSegments.seg2} fill="none" stroke={c.color} strokeWidth={INDICATOR_PATH_STROKE_WIDTH} markerEnd={indicatorMarkerEnd} opacity={0.5} />
                           </>
                         ) : (
-                          <path d={p} fill="none" stroke={c.color} strokeWidth={1.2} markerEnd="url(#arr)" opacity={0.5} />
+                          <path d={p} fill="none" stroke={c.color} strokeWidth={INDICATOR_PATH_STROKE_WIDTH} markerEnd={indicatorMarkerEnd} opacity={0.5} />
                         )}
 
                         {/* Frame */}
@@ -4141,9 +4666,44 @@ export default function ModelCanvas({
                     onContextMenu={e => handleConstructContextMenu(e, c.id)}
                     style={{ cursor: hasUnifiedSelectionBounds && selected.includes(c.id) ? 'default' : 'grab' }}
                   >
+                    {showConnectedConstructHighlight && (isRectangle ? (
+                      <rect
+                        x={-constructRadii.rx - 9}
+                        y={-constructRadii.ry - 9}
+                        width={(constructRadii.rx + 9) * 2}
+                        height={(constructRadii.ry + 9) * 2}
+                        rx={10}
+                        fill="rgb(var(--color-accent-rgb) / 0.18)"
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="7 4"
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    ) : isOval ? (
+                      <ellipse
+                        rx={constructRadii.rx + 9}
+                        ry={constructRadii.ry + 9}
+                        fill="rgb(var(--color-accent-rgb) / 0.18)"
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="7 4"
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    ) : (
+                      <circle
+                        r={constructRadii.rx + 9}
+                        fill="rgb(var(--color-accent-rgb) / 0.18)"
+                        stroke="var(--color-accent)"
+                        strokeWidth={2}
+                        strokeDasharray="7 4"
+                        style={{ pointerEvents: 'none' }}
+                      />
+                    ))}
                     {/* Shape */}
-                    {c.shape === 'square' ? (
-                      <rect x={-c.radius} y={-c.radius} width={c.radius * 2} height={c.radius * 2} fill={c.color} stroke="none" rx={4} />
+                    {isRectangle ? (
+                      <rect x={-constructRadii.rx} y={-constructRadii.ry} width={constructRadii.rx * 2} height={constructRadii.ry * 2} rx={8} fill={c.color} stroke="none" />
+                    ) : isOval ? (
+                      <ellipse rx={constructRadii.rx} ry={constructRadii.ry} fill={c.color} stroke="none" />
                     ) : (
                       <circle r={c.radius} fill={c.color} stroke="none" />
                     )}
@@ -4166,19 +4726,45 @@ export default function ModelCanvas({
 
                     {/* Bounding Box */}
                     {showConstructBounds && (
-                      <g transform={`translate(${-c.radius},${-c.radius})`}>
-                        <rect width={c.radius * 2} height={c.radius * 2} fill="none" stroke="var(--color-text-primary)" strokeWidth={1} />
-                        {([
-                          { x: 0, y: 0, h: 'tl' }, { x: c.radius * 2, y: 0, h: 'tr' },
-                          { x: 0, y: c.radius * 2, h: 'bl' }, { x: c.radius * 2, y: c.radius * 2, h: 'br' }
-                        ] as Array<{ x: number; y: number; h: ResizeHandle }>).map(h => (
-                          <rect 
-                            key={h.h} x={h.x - 3} y={h.y - 3} width={6} height={6} 
-                            fill="var(--color-text-primary)" stroke={C.secondary} strokeWidth={1}
-                            onMouseDown={e => onResizeHandleMouseDown(e, c.id, h.h)}
-                            style={{ cursor: (h.h === 'tl' || h.h === 'br') ? 'nwse-resize' : 'nesw-resize' }}
-                          />
-                        ))}
+                      <g transform={`translate(${-constructRadii.rx},${-constructRadii.ry})`}>
+                        <rect width={constructRadii.rx * 2} height={constructRadii.ry * 2} fill="none" stroke="var(--color-text-primary)" strokeWidth={1} />
+                        {(() => {
+                          const cornerResizeHandles = [
+                            { x: 0, y: 0, h: 'tl' as ResizeHandle },
+                            { x: constructRadii.rx * 2, y: 0, h: 'tr' as ResizeHandle },
+                            { x: 0, y: constructRadii.ry * 2, h: 'bl' as ResizeHandle },
+                            { x: constructRadii.rx * 2, y: constructRadii.ry * 2, h: 'br' as ResizeHandle },
+                          ]
+                          const sideResizeHandles = hasIndependentDimensions ? [
+                            { x: 0, y: constructRadii.ry, h: 'left' as ResizeHandle },
+                            { x: constructRadii.rx * 2, y: constructRadii.ry, h: 'right' as ResizeHandle },
+                            { x: constructRadii.rx, y: 0, h: 'top' as ResizeHandle },
+                            { x: constructRadii.rx, y: constructRadii.ry * 2, h: 'bottom' as ResizeHandle },
+                          ] : []
+                          return [...cornerResizeHandles, ...sideResizeHandles].map((h) => {
+                            const isSideHandle = h.h === 'left' || h.h === 'right' || h.h === 'top' || h.h === 'bottom'
+                            const cursor = h.h === 'left' || h.h === 'right'
+                              ? 'ew-resize'
+                              : h.h === 'top' || h.h === 'bottom'
+                                ? 'ns-resize'
+                                : (h.h === 'tl' || h.h === 'br') ? 'nwse-resize' : 'nesw-resize'
+                            return (
+                              <rect
+                                key={h.h}
+                                x={h.x - (isSideHandle ? 4 : 3)}
+                                y={h.y - (isSideHandle ? 4 : 3)}
+                                width={isSideHandle ? 8 : 6}
+                                height={isSideHandle ? 8 : 6}
+                                rx={isSideHandle ? 4 : 0}
+                                fill={isSideHandle ? C.surface : 'var(--color-text-primary)'}
+                                stroke={C.secondary}
+                                strokeWidth={1}
+                                onMouseDown={e => onResizeHandleMouseDown(e, c.id, h.h)}
+                                style={{ cursor }}
+                              />
+                            )
+                          })
+                        })()}
                       </g>
                     )}
                   </g>
@@ -4370,7 +4956,7 @@ export default function ModelCanvas({
                   {canvasTabs.map((tab) => {
                     const isActiveTab = tab.modelId === modelId
                     const workspaceLabel = stripWorkspaceDisplayName(tab.workspace?.name || '')
-                    const modelLabel = stripModelDisplayName(String(tab.model?.name || tab.modelId).replace(/\.(hbe|ada)$/i, ''))
+                    const modelLabel = stripModelDisplayName(String(tab.model?.name || tab.modelId).replace(/\.(hbe|ada|metisws)$/i, ''))
                     const isDirtyTab = !!dirtyModels[tab.modelId]
                     return (
                       <button
@@ -4459,13 +5045,32 @@ export default function ModelCanvas({
               {/* Construct Name */}
               <div style={{ padding: '14px 14px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>Construct Name</span>
-                <div style={{ backgroundColor: C.elevated, borderRadius: 6, height: 32, padding: '0 10px', border: `1px solid ${C.successBorderSoft}`, display: 'flex', alignItems: 'center' }}>
+                <div style={{ backgroundColor: C.elevated, borderRadius: 6, height: 32, padding: '0 8px 0 10px', border: `1px solid ${C.successBorderSoft}`, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <input
                     value={selectedConstruct?.name ?? ''}
                     onChange={e => updateSelected({ name: e.target.value })}
                     placeholder="Select a construct"
-                    style={{ background: 'none', border: 'none', outline: 'none', color: C.text, fontSize: 13, fontWeight: 600, fontFamily: 'DM Sans, sans-serif', width: '100%' }}
+                    style={{ background: 'none', border: 'none', outline: 'none', color: C.text, fontSize: 13, fontWeight: 600, fontFamily: 'DM Sans, sans-serif', flex: 1, minWidth: 0 }}
                   />
+                  {selectedConstruct?.isHigherOrder && (
+                    <span
+                      style={{
+                        height: 18,
+                        padding: '0 7px',
+                        borderRadius: 999,
+                        backgroundColor: 'rgb(var(--color-accent-rgb) / 0.18)',
+                        border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                        color: 'var(--color-accent)',
+                        fontFamily: 'DM Sans, sans-serif',
+                        fontSize: 9,
+                        fontWeight: 800,
+                        letterSpacing: 0.2,
+                        display: 'flex',
+                        alignItems: 'center',
+                        flexShrink: 0,
+                      }}
+                    >HOC</span>
+                  )}
                 </div>
               </div>
 
@@ -4483,11 +5088,11 @@ export default function ModelCanvas({
                       cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                     }}
                   >
-                    <Circle size={14} color={(selectedConstruct?.shape || 'circle') === 'circle' ? C.secondary : C.textDim} weight="fill" />
-                    <span style={{ fontSize: 11, color: (selectedConstruct?.shape || 'circle') === 'circle' ? C.secondary : C.textDim, fontWeight: 700 }}>Circle</span>
+                    <Circle size={14} color={normalizeConstructShape(selectedConstruct?.shape) === 'circle' ? C.secondary : C.textDim} weight="fill" />
+                    <span style={{ fontSize: 11, color: normalizeConstructShape(selectedConstruct?.shape) === 'circle' ? C.secondary : C.textDim, fontWeight: 700 }}>Circle</span>
                   </button>
                   <button 
-                    onClick={() => updateSelected({ shape: 'square' })}
+                    onClick={() => updateSelected({ shape: 'oval' })}
                     style={{ 
                       flex: 1, height: 32, borderRadius: 8,
                       border: 'none',
@@ -4496,87 +5101,193 @@ export default function ModelCanvas({
                       cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                     }}
                   >
-                    <SquaresFour size={14} color={selectedConstruct?.shape === 'square' ? C.secondary : C.textDim} weight="fill" />
-                    <span style={{ fontSize: 11, color: selectedConstruct?.shape === 'square' ? C.secondary : C.textDim, fontWeight: 700 }}>Square</span>
+                    <Circle
+                      size={14}
+                      color={normalizeConstructShape(selectedConstruct?.shape) === 'oval' ? C.secondary : C.textDim}
+                      weight="fill"
+                      style={{ transform: 'scaleX(1.35)' }}
+                    />
+                    <span style={{ fontSize: 11, color: normalizeConstructShape(selectedConstruct?.shape) === 'oval' ? C.secondary : C.textDim, fontWeight: 700 }}>Oval</span>
+                  </button>
+                  <button
+                    onClick={() => updateSelected({ shape: 'rectangle' })}
+                    style={{
+                      flex: 1, height: 32, borderRadius: 8,
+                      border: 'none',
+                      backgroundColor: 'transparent',
+                      boxShadow: 'none',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                    }}
+                  >
+                    <FrameCorners
+                      size={14}
+                      color={normalizeConstructShape(selectedConstruct?.shape) === 'rectangle' ? C.secondary : C.textDim}
+                      weight="fill"
+                    />
+                    <span style={{ fontSize: 11, color: normalizeConstructShape(selectedConstruct?.shape) === 'rectangle' ? C.secondary : C.textDim, fontWeight: 700 }}>Rectangle</span>
                   </button>
                 </div>
               </div>
 
               {/* Construct Size */}
               <div style={{ padding: '12px 14px 10px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>Size</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={selectedConstruct ? (constructSizeFocused ? constructSizeDraft : Math.round(selectedConstruct.radius * 2)) : ''}
-                    disabled={!selectedConstruct}
-                    onFocus={() => {
-                      if (!selectedConstruct) return
-                      setConstructSizeDraft(String(Math.round(selectedConstruct.radius * 2)))
-                      setConstructSizeFocused(true)
-                    }}
-                    onBlur={() => {
-                      setConstructSizeFocused(false)
-                      setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
-                    }}
-                    onChange={(e) => setConstructSizeDraft(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        commitConstructSizeDraft()
-                      }
-                      if (e.key === 'Escape') {
-                        e.preventDefault()
-                        setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
+                <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>
+                  {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) !== 'circle' ? 'Width / Height' : 'Size'}
+                </span>
+                {selectedConstruct && normalizeConstructShape(selectedConstruct.shape) !== 'circle' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {([
+                      { label: 'W', value: constructWidthDraft, setValue: setConstructWidthDraft },
+                      { label: 'H', value: constructHeightDraft, setValue: setConstructHeightDraft },
+                    ] as const).map((field) => (
+                      <label key={field.label} style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <span style={{ fontSize: 9, color: C.textDim, fontFamily: 'DM Sans, sans-serif', fontWeight: 800 }}>{field.label}</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="[0-9]*"
+                          value={field.value}
+                          onFocus={() => setConstructDimensionsFocused(true)}
+                          onBlur={() => {
+                            setConstructDimensionsFocused(false)
+                            const { width, height } = getConstructDimensions(selectedConstruct)
+                            setConstructWidthDraft(String(Math.round(width)))
+                            setConstructHeightDraft(String(Math.round(height)))
+                          }}
+                          onChange={(e) => field.setValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              commitConstructDimensionsDraft()
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              const { width, height } = getConstructDimensions(selectedConstruct)
+                              setConstructWidthDraft(String(Math.round(width)))
+                              setConstructHeightDraft(String(Math.round(height)))
+                              setConstructDimensionsFocused(false)
+                              e.currentTarget.blur()
+                            }
+                          }}
+                          style={{
+                            minWidth: 0,
+                            height: 26,
+                            borderRadius: 6,
+                            border: `1px solid ${C.border}`,
+                            backgroundColor: C.elevated,
+                            color: C.text,
+                            padding: '0 6px',
+                            fontSize: 10,
+                            fontFamily: 'DM Sans, sans-serif',
+                            outline: 'none',
+                            width: '100%',
+                          }}
+                        />
+                      </label>
+                    ))}
+                    <button
+                      onMouseDown={(e) => {
+                        if (constructDimensionsFocused) e.preventDefault()
+                      }}
+                      onClick={() => {
+                        if (constructDimensionsFocused) {
+                          commitConstructDimensionsDraft()
+                          return
+                        }
+                        const defaults = getDefaultOvalDimensions(DEFAULT_CONSTRUCT_RADIUS)
+                        updateSelected({ radius: DEFAULT_CONSTRUCT_RADIUS, ovalWidth: defaults.width, ovalHeight: defaults.height })
+                      }}
+                      style={{
+                        height: 26,
+                        borderRadius: 6,
+                        border: `1px solid ${C.border}`,
+                        backgroundColor: 'var(--color-border)',
+                        color: C.textSec,
+                        cursor: 'pointer',
+                        fontSize: 10,
+                        fontFamily: 'DM Sans, sans-serif',
+                        fontWeight: 700,
+                        padding: '0 10px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {constructDimensionsFocused ? 'Use' : 'Reset'}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={selectedConstruct ? (constructSizeFocused ? constructSizeDraft : Math.round(selectedConstruct.radius * 2)) : ''}
+                      disabled={!selectedConstruct}
+                      onFocus={() => {
+                        if (!selectedConstruct) return
+                        setConstructSizeDraft(String(Math.round(selectedConstruct.radius * 2)))
+                        setConstructSizeFocused(true)
+                      }}
+                      onBlur={() => {
                         setConstructSizeFocused(false)
-                        e.currentTarget.blur()
-                      }
-                    }}
-                    style={{
-                      height: 26,
-                      borderRadius: 6,
-                      border: `1px solid ${C.border}`,
-                      backgroundColor: C.elevated,
-                      color: C.text,
-                      padding: '0 6px',
-                      fontSize: 10,
-                      fontFamily: 'DM Sans, sans-serif',
-                      outline: 'none',
-                      opacity: selectedConstruct ? 1 : 0.5,
-                      flex: 1,
-                    }}
-                  />
-                  <button
-                    disabled={!selectedConstruct}
-                    onMouseDown={(e) => {
-                      if (constructSizeFocused) e.preventDefault()
-                    }}
-                    onClick={() => {
-                      if (constructSizeFocused) {
-                        commitConstructSizeDraft()
-                        return
-                      }
-                      updateSelected({ radius: DEFAULT_CONSTRUCT_RADIUS })
-                    }}
-                    style={{
-                      height: 26,
-                      borderRadius: 6,
-                      border: `1px solid ${C.border}`,
-                      backgroundColor: selectedConstruct ? 'var(--color-border)' : C.elevated,
-                      color: selectedConstruct ? C.textSec : C.textMuted,
-                      cursor: selectedConstruct ? 'pointer' : 'not-allowed',
-                      fontSize: 10,
-                      fontFamily: 'DM Sans, sans-serif',
-                      fontWeight: 700,
-                      padding: '0 10px',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {constructSizeFocused ? 'Use size' : 'Auto size'}
-                  </button>
-                </div>
+                        setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
+                      }}
+                      onChange={(e) => setConstructSizeDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          commitConstructSizeDraft()
+                        }
+                        if (e.key === 'Escape') {
+                          e.preventDefault()
+                          setConstructSizeDraft(selectedConstruct ? String(Math.round(selectedConstruct.radius * 2)) : '')
+                          setConstructSizeFocused(false)
+                          e.currentTarget.blur()
+                        }
+                      }}
+                      style={{
+                        height: 26,
+                        borderRadius: 6,
+                        border: `1px solid ${C.border}`,
+                        backgroundColor: C.elevated,
+                        color: C.text,
+                        padding: '0 6px',
+                        fontSize: 10,
+                        fontFamily: 'DM Sans, sans-serif',
+                        outline: 'none',
+                        opacity: selectedConstruct ? 1 : 0.5,
+                        flex: 1,
+                      }}
+                    />
+                    <button
+                      disabled={!selectedConstruct}
+                      onMouseDown={(e) => {
+                        if (constructSizeFocused) e.preventDefault()
+                      }}
+                      onClick={() => {
+                        if (constructSizeFocused) {
+                          commitConstructSizeDraft()
+                          return
+                        }
+                        updateSelected({ radius: DEFAULT_CONSTRUCT_RADIUS })
+                      }}
+                      style={{
+                        height: 26,
+                        borderRadius: 6,
+                        border: `1px solid ${C.border}`,
+                        backgroundColor: selectedConstruct ? 'var(--color-border)' : C.elevated,
+                        color: selectedConstruct ? C.textSec : C.textMuted,
+                        cursor: selectedConstruct ? 'pointer' : 'not-allowed',
+                        fontSize: 10,
+                        fontFamily: 'DM Sans, sans-serif',
+                        fontWeight: 700,
+                        padding: '0 10px',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {constructSizeFocused ? 'Use size' : 'Auto size'}
+                    </button>
+                  </div>
+                )}
               </div>
 
 
@@ -4601,14 +5312,61 @@ export default function ModelCanvas({
                         cursor: 'pointer',
                       }}
                     >
-                      <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>Indicators ({selectedConstruct.indicators.length})</span>
+                      <span style={{ fontSize: 10, color: C.textMuted, fontFamily: 'DM Sans, sans-serif' }}>
+                        {selectedConstruct.isHigherOrder
+                          ? `Lower-order constructs (${selectedHocLowerOrderConstructs.length})`
+                          : `Indicators (${selectedConstruct.indicators.length})`}
+                      </span>
                       <CaretDown
                         size={12}
                         color={C.textMuted}
                         style={{ transform: propertiesIndicatorsExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.16s ease' }}
                       />
                     </button>
-                    {propertiesIndicatorsExpanded && selectedConstruct.indicators.length === 0 ? (
+                    {propertiesIndicatorsExpanded && selectedConstruct.isHigherOrder && selectedHocLowerOrderConstructs.length === 0 ? (
+                      <span style={{ fontSize: 11, color: C.textDim, fontFamily: 'DM Sans, sans-serif' }}>No lower-order constructs connected</span>
+                    ) : propertiesIndicatorsExpanded && selectedConstruct.isHigherOrder ? (
+                      selectedHocLowerOrderConstructs.map((construct) => (
+                        <button
+                          key={construct.id}
+                          type="button"
+                          onClick={() => highlightConnectedConstruct(construct.id)}
+                          style={{
+                            minHeight: 32,
+                            border: 'none',
+                            backgroundColor: C.elevated,
+                            borderRadius: 6,
+                            padding: '0 8px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            fontFamily: 'DM Sans, sans-serif',
+                          }}
+                        >
+                          <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: construct.color, flexShrink: 0 }} />
+                          <span
+                            title={construct.name}
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              color: C.textSec,
+                              fontSize: 11,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {construct.name}
+                          </span>
+                          <span style={{ color: C.textDim, fontSize: 9, fontWeight: 700 }}>
+                            LOC
+                          </span>
+                        </button>
+                      ))
+                    ) : propertiesIndicatorsExpanded && selectedConstruct.indicators.length === 0 ? (
                       <span style={{ fontSize: 11, color: C.textDim, fontFamily: 'DM Sans, sans-serif' }}>No indicators assigned</span>
                     ) : propertiesIndicatorsExpanded && selectedConstruct.indicators.map((ind, i) => (
                       <div key={`${ind.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: 8, minHeight: 30, backgroundColor: C.elevated, borderRadius: 6, padding: '0 6px' }}>
@@ -4839,6 +5597,9 @@ export default function ModelCanvas({
         <TBtn id="tour-select" onClick={() => setActiveTool('select')} active={activeTool === 'select'} activeTone={activeTool === 'select' ? 'yellow' : undefined} activeLabel="Select" title="Move / Select (V)">
           <Cursor size={18} color={activeTool === 'select' ? C.textOnAccent : C.textSec} weight={activeTool === 'select' ? 'bold' : 'regular'} />
         </TBtn>
+        <TBtn onClick={() => setActiveTool('pan')} active={activeTool === 'pan'} activeTone={activeTool === 'pan' ? 'yellow' : undefined} activeLabel="Pan" title="Pan Canvas (H)">
+          <Hand size={18} color={activeTool === 'pan' ? C.textOnAccent : C.textSec} weight={activeTool === 'pan' ? 'fill' : 'regular'} />
+        </TBtn>
         <TBtn id="tour-connect" onClick={() => setActiveTool('connect')} active={activeTool === 'connect'} activeTone={activeTool === 'connect' ? 'yellow' : undefined} activeLabel="Connect" title="Connect (C)">
           <ArrowRight size={18} color={activeTool === 'connect' ? C.textOnAccent : C.textSec} weight={activeTool === 'connect' ? 'bold' : 'regular'} />
         </TBtn>
@@ -4859,7 +5620,7 @@ export default function ModelCanvas({
           <Trash size={18} color={(activeTool === 'delete' || selected.length > 0 || selectedPaths.length > 0) ? C.danger : C.textMuted} weight={activeTool === 'delete' ? 'fill' : 'regular'} />
         </TBtn>
         <div style={{ width: 1, height: 28, backgroundColor: C.floatingBorderSoft, margin: '0 3px' }} />
-        <TBtn id="tour-calculate" onClick={() => setShowAlgorithmDialog(true)} disabled={!canCalculate || isAnyCalculationRunning} active={canCalculate && !isAnyCalculationRunning} activeTone={canCalculate && !isAnyCalculationRunning ? 'green' : undefined} title={isAnyCalculationRunning ? 'Calculation in progress - finish or stop current' : 'Calculate (Ctrl+Enter)'}>
+        <TBtn id="tour-calculate" onClick={() => setShowAlgorithmDialog(true)} disabled={!canCalculate || isAnyCalculationRunning} active={canCalculate && !isAnyCalculationRunning} activeTone={canCalculate && !isAnyCalculationRunning ? 'green' : undefined} activeLabel="Calculate" title={isAnyCalculationRunning ? 'Calculation in progress - finish or stop current' : 'Calculate (Ctrl+Enter)'}>
           <MathOperations size={18} color={canCalculate && !isAnyCalculationRunning ? C.textOnSuccess : C.textMuted} weight="bold" />
         </TBtn>
       </div>
@@ -4871,13 +5632,13 @@ export default function ModelCanvas({
           onClick={triggerModalAlert}
         >
           <div
-            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(e) => e.stopPropagation()}
             style={{ 
               backgroundColor: 'var(--color-elevated)',
               borderRadius: 12,
               border: '1px solid var(--color-border)',
-              boxShadow: '0 16px 40px rgba(0,0,0,0.8)',
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
             <div style={{ padding: 24 }}>
@@ -4968,9 +5729,9 @@ export default function ModelCanvas({
         >
           <div 
             onClick={(e) => e.stopPropagation()}
-            className={`w-[520px] bg-[var(--color-elevated)] rounded-lg overflow-hidden border border-white/10 shadow-2xl transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`w-[520px] bg-[var(--color-elevated)] rounded-lg overflow-hidden border border-white/10 transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             style={{ 
-              display: 'flex', flexDirection: 'column'
+              display: 'flex', flexDirection: 'column', boxShadow: 'var(--shadow-modal)'
             }}
           >
             {/* Modal Title Bar */}
@@ -5186,9 +5947,13 @@ export default function ModelCanvas({
       {showPathSettings && editingPathId && (() => {
         const p = paths.find(x => x.id === editingPathId)
         if (!p) return null
+        const fromConstruct = constructs.find((construct) => construct.id === p.from)
+        const toConstruct = constructs.find((construct) => construct.id === p.to)
+        const showHocRole = Boolean(fromConstruct && toConstruct && Boolean(fromConstruct.isHigherOrder) !== Boolean(toConstruct.isHigherOrder))
         return (
           <PathSettingsModal 
             path={p} 
+            showHocRole={showHocRole}
             position={pathSettingsPos} 
             onClose={() => setShowPathSettings(false)} 
             onSave={handleSavePathSettings} 
@@ -5204,106 +5969,429 @@ export default function ModelCanvas({
           onClick={() => triggerModalAlert()}
         >
           <div
-            className={`w-[400px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(e) => e.stopPropagation()}
-            style={{ 
-              backgroundColor: 'var(--color-elevated)',
-              borderRadius: 12,
-              border: '1px solid var(--color-border)',
-              boxShadow: C.floatingPanelShadow,
+            style={{
+              width: 356,
+              backgroundColor: C.panelPop,
+              borderRadius: 14,
+              border: `1px solid ${C.floatingBorderSoft}`,
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
-            <div style={{ padding: '24px 24px 16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
-                <div style={{ 
-                  width: 42, height: 42, flexShrink: 0, borderRadius: '50%', aspectRatio: '1/1',
-                  backgroundColor: `${newConstructColor}26`, display: 'flex', alignItems: 'center', justifyContent: 'center' 
-                }}>
-                  <PlusCircle size={22} color={newConstructColor} weight="fill" />
+            <div style={{ height: 188, padding: '22px 24px 16px', display: 'flex', flexDirection: 'column', gap: 16, backgroundColor: C.panelPop }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
+                <div
+                  style={{
+                    width: 34,
+                    height: 34,
+                    flexShrink: 0,
+                    borderRadius: 999,
+                    backgroundColor: `${newConstructColor}26`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <span style={{ color: newConstructColor, fontFamily: 'DM Sans, sans-serif', fontSize: 20, fontWeight: 700, lineHeight: 1 }}>+</span>
                 </div>
-                <div>
-                  <h2 style={{ color: 'var(--color-text-primary)', fontSize: 18, fontWeight: 600, marginBottom: 4, fontFamily: 'DM Sans, sans-serif' }}>New Construct</h2>
-                  <p style={{ color: 'var(--color-text-muted)', fontSize: 13, lineHeight: 1.5, fontFamily: 'DM Sans, sans-serif' }}>
-                    Enter a name and choose a color for the new latent variable.
+                <div style={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                  <h2 style={{ color: 'var(--color-text-primary)', fontSize: 16, fontWeight: 500, margin: 0, fontFamily: 'DM Sans, sans-serif', lineHeight: 1.2 }}>New Construct</h2>
+                  <p style={{ color: 'var(--color-text-secondary)', fontSize: 10, margin: 0, lineHeight: 1.35, fontFamily: 'DM Sans, sans-serif' }}>
+                    Enter construct name and choose a color
                   </p>
                 </div>
               </div>
 
-              <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1, minWidth: 0, backgroundColor: C.input, borderRadius: 8, padding: '4px 12px', border: `1px solid ${C.border}` }}>
+              <div style={{ display: 'flex', alignItems: 'stretch', gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0, borderRadius: 5, padding: '9px 8px', border: '1px solid var(--color-border)', backgroundColor: 'var(--color-input)', display: 'flex', alignItems: 'center' }}>
                   <input 
                     autoFocus
                     value={newConstructName}
                     onChange={e => setNewConstructName(e.target.value)}
                     onKeyDown={e => {
                       if (e.key === 'Enter') handleCreateConstruct()
-                      if (e.key === 'Escape') {
-                        setShowNewConstructModal(false)
-                        setNewConstructColor(C.secondary)
-                        setHoveredNewConstructColor(null)
-                      }
+                      if (e.key === 'Escape') resetNewConstructModal()
                     }}
                     placeholder="Construct Name"
                     style={{
-                      width: '100%', height: 40, background: 'none', border: 'none', outline: 'none',
-                      color: C.text, fontSize: 14, fontFamily: 'DM Sans, sans-serif'
+                      width: '100%',
+                      background: 'none',
+                      border: 'none',
+                      outline: 'none',
+                      color: 'var(--color-text-primary)',
+                      fontSize: 12,
+                      fontFamily: 'DM Sans, sans-serif',
+                      lineHeight: 1.2,
+                      padding: 0,
                     }}
                   />
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                  {SWATCH_COLORS.map((sw) => {
-                    const emphasized = newConstructColor === sw || hoveredNewConstructColor === sw
+                <div style={{ width: 108, display: 'flex', justifyContent: 'end', alignItems: 'center' }}>
+                  <div style={{ width: 94, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ height: 22, display: 'flex', alignItems: 'center', gap: 7 }}>
+                      {newConstructPalette.map((sw) => {
+                        const selectedSwatch = newConstructColor === sw
+                        const hoveredSwatch = hoveredNewConstructColor === sw
+                        return (
+                          <button
+                            key={sw}
+                            type="button"
+                            aria-label={`Select construct color ${sw}`}
+                            onClick={() => setNewConstructColor(sw)}
+                            onMouseEnter={() => setHoveredNewConstructColor(sw)}
+                            onMouseLeave={() => setHoveredNewConstructColor((current) => current === sw ? null : current)}
+                            style={{
+                              width: 16,
+                              height: 16,
+                              borderRadius: 999,
+                              backgroundColor: sw,
+                              border: 'none',
+                              padding: 0,
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              transform: hoveredSwatch ? 'scale(1.08)' : 'scale(1)',
+                              transition: 'transform 0.16s ease',
+                            }}
+                          >
+                            {selectedSwatch && <Check size={9} color="#FBF9F2" weight="bold" />}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'end', gap: 10, padding: '7px 0' }}>
+                <div
+                  role="group"
+                  aria-label="Measurement model"
+                  style={{
+                    width: 158,
+                    height: 32,
+                    borderRadius: 999,
+                    backgroundColor: C.panelControl,
+                    padding: 2,
+                    display: 'flex',
+                    border: `1px solid ${C.floatingBorderSoft}`,
+                    boxShadow: 'var(--shadow-modal-popover)',
+                  }}
+                >
+                  {(['Reflective', 'Formative'] as const).map((type) => {
+                    const active = newConstructType === type
                     return (
                       <button
-                        key={sw}
-                        onClick={() => setNewConstructColor(sw)}
-                        onMouseEnter={() => setHoveredNewConstructColor(sw)}
-                        onMouseLeave={() => setHoveredNewConstructColor((current) => current === sw ? null : current)}
+                        key={type}
+                        type="button"
+                        onClick={() => setNewConstructType(type)}
                         style={{
-                          width: 18,
-                          height: 18,
-                          borderRadius: '50%',
-                          backgroundColor: sw,
-                          border: emphasized ? '2px solid rgba(255,255,255,0.9)' : '2px solid rgba(255,255,255,0.08)',
-                          boxShadow: emphasized ? `0 10px 18px ${sw}35` : '0 4px 8px rgba(0,0,0,0.18)',
-                          transform: emphasized ? 'translateY(-2px) scale(1.22)' : 'scale(1)',
-                          transition: 'transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease',
+                          flex: 1,
+                          border: 'none',
+                          borderRadius: 999,
+                          backgroundColor: active ? C.panelControlActive : 'transparent',
+                          color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                          fontSize: 10,
+                          fontWeight: 400,
+                          fontFamily: 'DM Sans, sans-serif',
                           cursor: 'pointer',
+                          boxShadow: active ? '0 2px 6px rgba(0,0,0,0.27)' : 'none',
                         }}
-                      />
+                      >
+                        {type}
+                      </button>
                     )
                   })}
                 </div>
+
+                <button
+                  type="button"
+                  aria-pressed={newConstructIsHigherOrder}
+                  onClick={() => {
+                    const nextIsHigherOrder = !newConstructIsHigherOrder
+                    const nextPalette = nextIsHigherOrder ? HOC_SWATCH_COLORS : SWATCH_COLORS
+                    setNewConstructIsHigherOrder(nextIsHigherOrder)
+                    setNewConstructColor((current) => nextPalette.includes(current) ? current : nextPalette[0])
+                    setHoveredNewConstructColor(null)
+                  }}
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    height: 28,
+                    border: 'none',
+                    backgroundColor: 'transparent',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'end',
+                    gap: 6,
+                    padding: 0,
+                    cursor: 'pointer',
+                    fontFamily: 'DM Sans, sans-serif',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 999,
+                      border: '1px solid rgb(var(--color-accent-rgb) / 0.62)',
+                      backgroundColor: newConstructIsHigherOrder ? 'var(--color-accent)' : C.panelControl,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}
+                  >
+                    {newConstructIsHigherOrder && <Check size={8} color="var(--color-on-accent)" weight="bold" />}
+                  </span>
+                  <span style={{ color: 'var(--color-text-secondary)', fontSize: 10, fontWeight: 400, whiteSpace: 'nowrap' }}>Higher-order construct</span>
+                </button>
               </div>
             </div>
 
-            <div style={{ padding: '8px 24px 24px', backgroundColor: 'transparent', display: 'flex', justifyContent: 'end', gap: 12 }}>
+            <div style={{ height: 64, padding: '0 24px', backgroundColor: 'var(--color-surface)', borderTop: `1px solid ${C.floatingBorderSoft}`, display: 'flex', justifyContent: 'end', alignItems: 'center', gap: 12 }}>
               <button
-                onClick={() => {
-                  setShowNewConstructModal(false)
-                  setNewConstructColor(C.secondary)
-                  setHoveredNewConstructColor(null)
-                }}
+                onClick={resetNewConstructModal}
                 style={{
-                  padding: '10px 20px', borderRadius: 10, border: 'none', backgroundColor: 'rgba(255,255,255,0.04)',
-                  color: 'var(--color-text-secondary)', fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'all 0.2s',
-                  fontFamily: 'DM Sans, sans-serif'
+                  width: 92,
+                  height: 34,
+                  borderRadius: 6,
+                  border: `1px solid ${C.floatingBorderSoft}`,
+                  backgroundColor: C.panelControl,
+                  color: 'var(--color-text-secondary)',
+                  fontSize: 11,
+                  fontWeight: 400,
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
                 }}
-                onMouseOver={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.08)'}
-                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.04)'}
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreateConstruct}
                 style={{
-                  padding: '10px 24px', borderRadius: 10, border: '1px solid rgb(var(--color-accent-rgb) / 0.42)', backgroundColor: 'var(--color-accent)',
-                  color: 'var(--color-on-accent)', fontSize: 13, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s',
-                  fontFamily: 'DM Sans, sans-serif', boxShadow: '0 8px 18px rgb(var(--color-accent-rgb) / 0.18)'
+                  width: 108,
+                  height: 34,
+                  borderRadius: 6,
+                  border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'var(--color-on-accent)',
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  boxShadow: '0 8px 18px rgb(var(--color-accent-rgb) / 0.16)',
                 }}
               >
                 Create
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hocPathRoleChoice && (
+        <div
+          className="fixed inset-0 z-[2100] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--color-overlay)', backdropFilter: 'blur(3px)' }}
+          onClick={triggerModalAlert}
+        >
+          <div
+            className={`overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 468,
+              backgroundColor: C.panelPop,
+              borderRadius: 14,
+              border: `1px solid ${C.floatingBorderSoft}`,
+              boxShadow: 'var(--shadow-modal)',
+            }}
+          >
+            <div style={{ padding: '16px 18px 10px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: C.panelPop }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <h2 style={{ color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>
+                    HOC path type
+                  </h2>
+                  <p style={{ color: 'var(--color-text-secondary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
+                    Connect {constructs.find((construct) => construct.id === hocPathRoleChoice.locId)?.name ?? 'this construct'} as a lower-order construct, or keep this as a structural path.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  aria-label="Discard HOC path"
+                  onClick={cancelHocPathRoleChoice}
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 6,
+                    border: `1px solid ${C.floatingBorderSoft}`,
+                    backgroundColor: C.floatingIconBg,
+                    color: 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <p style={{ color: 'var(--color-text-muted)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.5, display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 4, rowGap: 2 }}>
+                Hold
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 3,
+                    color: 'var(--color-accent)',
+                    fontWeight: 800,
+                    lineHeight: 1,
+                  }}
+                >
+                  <ArrowUp size={12} color="var(--color-accent)" weight="bold" />
+                  <span style={{ color: 'var(--color-accent)', fontWeight: 800 }}>Shift</span>
+                </span>
+                to connect a lower-order construct. Draw normally for a structural path.
+              </p>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+                <input
+                  type="checkbox"
+                  checked={doNotShowHocPathPrompt}
+                  onChange={(event) => setDoNotShowHocPathPrompt(event.target.checked)}
+                  style={{ width: 13, height: 13, accentColor: 'var(--color-accent)', cursor: 'pointer' }}
+                />
+                <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 10 }}>
+                  Do not show this again
+                </span>
+              </label>
+            </div>
+            <div style={{ padding: '0 18px 16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, backgroundColor: C.panelPop }}>
+              <button
+                type="button"
+                onClick={createHocMeasurementPath}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                  backgroundColor: 'var(--color-accent)',
+                  color: 'var(--color-on-accent)',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                  fontWeight: 700,
+                }}
+              >
+                Use as lower-order construct
+              </button>
+              <button
+                type="button"
+                onClick={createHocStructuralPath}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: `1px solid ${C.floatingBorderSoft}`,
+                  backgroundColor: C.floatingIconBg,
+                  color: 'var(--color-text-secondary)',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                }}
+              >
+                Keep structural path
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hocPathConflict && (
+        <div
+          className="fixed inset-0 z-[2100] flex items-center justify-center p-4"
+          style={{ backgroundColor: 'var(--color-overlay)', backdropFilter: 'blur(3px)' }}
+          onClick={triggerModalAlert}
+        >
+          <div
+            className={`overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 313,
+              backgroundColor: C.panelPop,
+              borderRadius: 14,
+              border: `1px solid ${C.floatingBorderSoft}`,
+              boxShadow: 'var(--shadow-modal)',
+            }}
+          >
+            <div style={{ minHeight: 99, padding: '18px 20px 8px', display: 'flex', flexDirection: 'column', gap: 12, backgroundColor: C.panelPop }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 999,
+                    border: '1px solid var(--color-warning)',
+                    backgroundColor: 'rgb(var(--color-warning-rgb) / 0.15)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <span style={{ color: 'var(--color-warning)', fontFamily: 'DM Sans, sans-serif', fontSize: 15, fontWeight: 800 }}>!</span>
+                </div>
+                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <h2 style={{ color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}>
+                    Path direction conflict
+                  </h2>
+                  <p style={{ color: 'var(--color-text-secondary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.35 }}>
+                    Resolve the path direction before continuing.
+                  </p>
+                </div>
+              </div>
+              <p style={{ color: 'var(--color-text-secondary)', margin: 0, fontFamily: 'DM Sans, sans-serif', fontSize: 10, lineHeight: 1.45 }}>
+                {constructs.find((construct) => construct.id === hocPathConflict.hocId)?.name ?? 'This construct'} is {hocPathConflict.currentType}, but this path suggests {hocPathConflict.suggestedType}.
+              </p>
+            </div>
+            <div style={{ padding: '0 20px 16px', display: 'flex', flexDirection: 'column', gap: 10, backgroundColor: C.panelPop }}>
+              <button
+                type="button"
+                onClick={keepHocMeasurementType}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: `1px solid ${C.floatingBorderSoft}`,
+                  backgroundColor: C.panelControl,
+                  color: 'var(--color-text-secondary)',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                }}
+              >
+                Keep {hocPathConflict.currentType}
+              </button>
+              <button
+                type="button"
+                onClick={switchHocMeasurementType}
+                style={{
+                  width: '100%',
+                  height: 32,
+                  borderRadius: 6,
+                  border: 'none',
+                  backgroundColor: 'var(--color-warning)',
+                  color: '#FFFFFF',
+                  cursor: 'pointer',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 10,
+                }}
+              >
+                Switch to {hocPathConflict.suggestedType}
               </button>
             </div>
           </div>
@@ -5320,11 +6408,11 @@ export default function ModelCanvas({
           }}
         >
           <div
-            className={`w-[420px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
+            className={`w-[420px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden transition-all duration-200 ${isModalShaking ? 'animate-shake' : ''}`}
             onClick={(e) => e.stopPropagation()}
             style={{ 
               backgroundColor: 'var(--color-elevated)', borderRadius: 12, border: '1px solid var(--color-border)',
-              boxShadow: '0 24px 60px rgba(0,0,0,0.9)',
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
             <div style={{ padding: '24px 24px 16px' }}>
@@ -5345,13 +6433,13 @@ export default function ModelCanvas({
                 onClick={() => setCautionModal({ open: false, title: '', message: '' })}
               >
                 <div
-                  className="w-[460px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] shadow-2xl overflow-hidden"
+                  className="w-[460px] bg-[var(--color-elevated)] rounded-xl border border-[var(--color-border)] overflow-hidden"
                   onClick={(e) => e.stopPropagation()}
                   style={{
                     backgroundColor: 'var(--color-elevated)',
                     borderRadius: 12,
                     border: '1px solid var(--color-border)',
-                    boxShadow: '0 24px 60px rgba(0,0,0,0.9)',
+                    boxShadow: 'var(--shadow-modal)',
                   }}
                 >
                   <div style={{ padding: '24px 24px 16px' }}>
@@ -5487,59 +6575,64 @@ export default function ModelCanvas({
 
 // ─── Latent Variable Settings Modal ──────────────────────────────────────────
 
-const ModalInput = ({ label, value, onChange, type = "text" }: any) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 }}>
-    <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
-    <input 
-      type={type}
-      value={value} 
-      onChange={(e) => onChange(e.target.value)}
-      style={{ backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '5px 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }}
-    />
-  </div>
-)
-
-const ModalSelect = ({ label, id, value, options, activeSelect, setActiveSelect, onChange }: any) => (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8, position: 'relative' }}>
-    <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
-    <div 
-      onClick={(e) => { e.stopPropagation(); setActiveSelect(activeSelect === id ? null : id) }}
-      style={{ 
-        backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '5px 8px', 
-        color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif', cursor: 'pointer',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between'
-      }}
-    >
-      <span>{value}</span>
-      <CaretDown size={10} color="var(--color-text-muted)" weight="bold" />
+const ModalInput = ({ label, value, onChange, type = "text" }: any) => {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 6 }}>
+      <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ height: 26, boxSizing: 'border-box', backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '0 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }}
+      />
     </div>
-    
-    {activeSelect === id && (
-      <div style={{ 
-        position: 'absolute', top: '100%', left: 0, right: 0, 
-        backgroundColor: 'var(--color-elevated)', border: '1px solid var(--color-border)', borderRadius: 6,
-        marginTop: 2, padding: 4, overflow: 'hidden', boxShadow: '0 8px 16px rgba(0,0,0,0.5)',
-        zIndex: 4100
-      }}>
-        {options.map((o: string) => (
-          <div 
-            key={o}
-            onClick={() => { onChange(o); setActiveSelect(null) }}
-            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-border)'}
-            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-            style={{ 
-              padding: '6px 8px', borderRadius: 4, fontSize: 11, color: o === value ? 'var(--color-accent)' : 'var(--color-text-secondary)', 
-              cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', backgroundColor: o === value ? 'rgb(var(--color-accent-rgb) / 0.08)' : 'transparent',
-              transition: 'background-color 0.1s'
-            }}
-          >
-            {o}
-          </div>
-        ))}
+  )
+}
+
+const ModalSelect = ({ label, id, value, options, activeSelect, setActiveSelect, onChange }: any) => {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 6, position: 'relative' }}>
+      <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>{label}</label>
+      <div
+        onClick={(e) => { e.stopPropagation(); setActiveSelect(activeSelect === id ? null : id) }}
+        style={{
+          height: 26, boxSizing: 'border-box',
+          backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '0 8px',
+          color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+        }}
+      >
+        <span>{value}</span>
+        <CaretDown size={10} color="var(--color-text-muted)" weight="bold" />
       </div>
-    )}
-  </div>
-)
+
+      {activeSelect === id && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0,
+          backgroundColor: 'var(--color-panel-pop)', border: '1px solid var(--color-border)', borderRadius: 6,
+          marginTop: 2, padding: 4, overflow: 'hidden', boxShadow: 'var(--shadow-modal-popover)',
+          zIndex: 4100
+        }}>
+          {options.map((o: string) => (
+            <div
+              key={o}
+              onClick={() => { onChange(o); setActiveSelect(null) }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--color-hover)'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+              style={{
+                padding: '6px 8px', borderRadius: 4, fontSize: 11, color: o === value ? 'var(--color-accent)' : 'var(--color-text-secondary)',
+                cursor: 'pointer', fontFamily: 'DM Sans, sans-serif', backgroundColor: o === value ? 'rgb(var(--color-accent-rgb) / 0.08)' : 'transparent',
+                transition: 'background-color 0.1s'
+              }}
+            >
+              {o}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function LatentVariableSettingsModal({
   construct,
@@ -5558,13 +6651,12 @@ function LatentVariableSettingsModal({
 }) {
   const [formData, setFormData] = useState({
     name: construct.name,
-    captionInReport: construct.captionInReport || '',
     type: construct.type,
     weightingMode: construct.weightingMode || 'Automatic',
     indicatorAlignment: construct.indicatorAlignment || construct.indicatorDirection || 'top',
-    sortOrder: construct.sortOrder || 'Alphabetical',
     margin: construct.margin || 10,
-    folded: construct.folded || false
+    folded: construct.folded || false,
+    isHigherOrder: construct.isHigherOrder || false
   })
 
   const [activeSelect, setActiveSelect] = useState<string | null>(null)
@@ -5584,102 +6676,136 @@ function LatentVariableSettingsModal({
       <div 
         style={{ 
           position: 'absolute', top: adjustedY, left: adjustedX,
-          width: modalWidth, backgroundColor: C.panelPop, borderRadius: 10, border: '1px solid var(--color-border)', 
-          padding: '12px 14px', boxShadow: C.floatingMenuShadow,
-          animation: 'fadeUp 0.1s ease-out', userSelect: 'none'
+          width: modalWidth,
+          height: modalHeight,
+          boxSizing: 'border-box',
+          backgroundColor: C.panelPop,
+          background: `linear-gradient(180deg, ${C.panelControl} 0%, ${C.panelPop} 100%)`,
+          borderRadius: 10,
+          border: `1px solid ${C.floatingBorderSoft}`,
+          boxShadow: C.floatingMenuShadow,
+          animation: 'fadeUp 0.1s ease-out',
+          userSelect: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          padding: '10px 12px',
         }} 
         onClick={e => { e.stopPropagation(); setActiveSelect(null) }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: construct.color }} />
-            <h3 style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif' }}>Settings</h3>
+            <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: construct.color }} />
+            <h3 style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', margin: 0, fontFamily: 'DM Sans, sans-serif' }}>Construct settings</h3>
           </div>
-          <button onClick={onClose} style={{ backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: 2 }}><X size={14} /></button>
+          <button onClick={onClose} style={{ backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: 2, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={14} /></button>
         </div>
 
-        <ModalInput label="Name" value={formData.name} onChange={(v: string) => setFormData({ ...formData, name: v })} />
-        <ModalInput label="Caption" value={formData.captionInReport} onChange={(v: string) => setFormData({ ...formData, captionInReport: v })} />
-        
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
-            <ModalSelect id="model" label="Model" value={formData.type} options={['Reflective', 'Formative']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, type: v })} />
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+          <ModalInput label="Name" value={formData.name} onChange={(v: string) => setFormData({ ...formData, name: v })} />
+
+          <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0 12px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
+              <input
+                type="checkbox"
+                checked={formData.isHigherOrder}
+                onChange={(e) => setFormData({ ...formData, isHigherOrder: e.target.checked })}
+                style={{ width: 14, height: 14, cursor: 'pointer', accentColor: 'var(--color-accent)' }}
+              />
+              <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif' }}>Higher-order construct</span>
+            </label>
           </div>
-          <div style={{ flex: 1 }}>
-             <ModalSelect id="align" label="Align" value={formData.indicatorAlignment} options={['top', 'bottom', 'left', 'right']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, indicatorAlignment: v })} />
+
+          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+            <div style={{ flex: 1 }}>
+              <ModalSelect id="model" label="Model" value={formData.type} options={['Reflective', 'Formative']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, type: v })} />
+            </div>
+            <div style={{ flex: 1 }}>
+               <ModalSelect id="align" label="Align" value={formData.indicatorAlignment} options={['top', 'bottom', 'left', 'right']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: any) => setFormData({ ...formData, indicatorAlignment: v })} />
+            </div>
           </div>
-        </div>
-        
-        <div style={{ display: 'flex', gap: 8 }}>
-          <div style={{ flex: 1 }}>
+
+          <div style={{ marginBottom: 6 }}>
             <ModalSelect id="weighting" label="Weights" value={formData.weightingMode} options={['Automatic', 'Factor', 'Correlation']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: string) => setFormData({ ...formData, weightingMode: v })} />
           </div>
-          <div style={{ flex: 1 }}>
-            <ModalSelect id="sort" label="Sort" value={formData.sortOrder} options={['Alphabetical', 'Loading', 'Original']} activeSelect={activeSelect} setActiveSelect={setActiveSelect} onChange={(v: string) => setFormData({ ...formData, sortOrder: v })} />
-          </div>
-        </div>
 
-        <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 12, marginTop: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
-            <div style={{ width: 72, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>Margin</label>
-              <DraftNumberInput
-                value={formData.margin}
-                min={0}
-                fallback={0}
-                onCommit={(value) => setFormData({ ...formData, margin: value })}
-                style={{ backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '5px 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif' }}
-              />
+          <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 2 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 6 }}>
+              <div style={{ width: 72, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <label style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>Margin</label>
+                <DraftNumberInput
+                  value={formData.margin}
+                  min={0}
+                  fallback={0}
+                  onCommit={(value) => setFormData({ ...formData, margin: value })}
+                  style={{ height: 26, boxSizing: 'border-box', backgroundColor: 'var(--color-input)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '0 8px', color: 'var(--color-text-primary)', fontSize: 12, fontFamily: 'DM Sans, sans-serif', width: '100%' }}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={onCopy}
+                title="Copy"
+                style={{ width: 26, height: 26, boxSizing: 'border-box', borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Copy size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={onCut}
+                title="Cut"
+                style={{ width: 26, height: 26, boxSizing: 'border-box', borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Scissors size={14} />
+              </button>
             </div>
-            <button
-              onClick={onCopy}
-              title="Copy"
-              style={{ width: 28, height: 28, borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Copy size={14} />
-            </button>
-            <button
-              onClick={onCut}
-              title="Cut"
-              style={{ width: 28, height: 28, borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Scissors size={14} />
-            </button>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 9, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontWeight: 700, textTransform: 'uppercase' }}>Folded</span>
-            <div 
-              onClick={() => setFormData({ ...formData, folded: !formData.folded })}
-              style={{ width: 28, height: 14, borderRadius: 7, backgroundColor: formData.folded ? 'var(--color-accent)' : 'var(--color-border)', position: 'relative', cursor: 'pointer', transition: '0.2s' }}
-            >
-              <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: '#FFFFFF', position: 'absolute', top: 2, left: formData.folded ? 16 : 2, transition: '0.2s' }} />
-            </div>
-          </div>
-        </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: '1px solid var(--color-border)', paddingTop: 10 }}>
-          <button onClick={onClose} style={{ padding: '6px 12px', borderRadius: 5, border: '1px solid var(--color-border)', backgroundColor: 'transparent', color: 'var(--color-text-secondary)', fontSize: 11, fontWeight: 600, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif' }}>Close</button>
-          <button 
-            onClick={() => onSave({ ...construct, ...formData, type: formData.type as 'Reflective' | 'Formative', indicatorDirection: formData.indicatorAlignment as any })} 
-            style={{ 
-              padding: '6px 16px', borderRadius: 5, border: '1px solid rgb(var(--color-accent-rgb) / 0.42)', backgroundColor: 'var(--color-accent)', 
-              color: 'var(--color-on-accent)', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
-              boxShadow: '0 8px 18px rgb(var(--color-accent-rgb) / 0.18)'
-            }}
-          >
-            Apply
-          </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, height: 26 }}>
+              <span style={{ fontSize: 11, color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontWeight: 600 }}>Folded</span>
+              <div
+                onClick={() => setFormData({ ...formData, folded: !formData.folded })}
+                style={{ width: 28, height: 14, borderRadius: 7, backgroundColor: formData.folded ? 'var(--color-accent)' : 'var(--color-border)', position: 'relative', cursor: 'pointer', transition: '0.2s' }}
+              >
+                <div style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: '#FFFFFF', position: 'absolute', top: 2, left: formData.folded ? 16 : 2, transition: '0.2s' }} />
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <button
+              type="button"
+              onClick={() => onSave({ ...construct, ...formData, type: formData.type as 'Reflective' | 'Formative', indicatorDirection: formData.indicatorAlignment as any, isHigherOrder: formData.isHigherOrder })}
+              style={{
+                width: '100%', height: 30, borderRadius: 6, border: 'none', backgroundColor: 'var(--color-accent)',
+                color: 'var(--color-on-accent)', fontSize: 11, fontWeight: 700, cursor: 'pointer', fontFamily: 'DM Sans, sans-serif',
+                boxShadow: '0 4px 10px rgb(var(--color-accent-rgb) / 0.15)'
+              }}
+            >
+              Apply
+            </button>
+          </div>
         </div>
       </div>
     </div>
   )
 }
 
-function PathSettingsModal({ path, position, onClose, onSave }: { path: Path; position: { x: number; y: number }; onClose: () => void; onSave: (p: Path) => void }) {
-  const modalWidth = 180
+function PathSettingsModal({
+  path,
+  showHocRole = false,
+  position,
+  onClose,
+  onSave,
+}: {
+  path: Path
+  showHocRole?: boolean
+  position: { x: number; y: number }
+  onClose: () => void
+  onSave: (p: Path) => void
+}) {
+  const activeHocRole = path.hocRole ?? 'measurement'
+  const modalWidth = showHocRole ? 220 : 180
   const isBottomHalf = position.y > window.innerHeight / 2
   const adjustedX = Math.min(position.x, window.innerWidth - modalWidth - 20)
-  const adjustedY = isBottomHalf ? position.y - 140 : position.y + 10
+  const adjustedY = isBottomHalf ? position.y - (showHocRole ? 230 : 140) : position.y + 10
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 3000 }} onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose() }}>
@@ -5692,6 +6818,40 @@ function PathSettingsModal({ path, position, onClose, onSave }: { path: Path; po
         }} 
         onClick={e => e.stopPropagation()}
       >
+        {showHocRole && (
+          <>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 8, padding: '0 4px', textTransform: 'uppercase', fontFamily: 'DM Sans, sans-serif' }}>HOC Relationship</div>
+            {(['measurement', 'structural'] as HocPathRole[]).map((role) => {
+              const isActive = activeHocRole === role
+              return (
+                <button
+                  key={role}
+                  onClick={() => {
+                    onSave({ ...path, hocRole: role })
+                    onClose()
+                  }}
+                  style={{
+                    width: '100%', padding: '8px', borderRadius: 6, border: 'none',
+                    backgroundColor: isActive ? 'rgb(var(--color-accent-rgb) / 0.15)' : 'transparent',
+                    color: isActive ? 'var(--color-accent)' : 'var(--color-text-primary)',
+                    textAlign: 'left', fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'DM Sans, sans-serif'
+                  }}
+                >
+                  <div style={{
+                    width: 24, height: 24, borderRadius: 4,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: isActive ? 'rgb(var(--color-accent-rgb) / 0.1)' : C.floatingIconBg,
+                    color: isActive ? 'var(--color-accent)' : 'var(--color-text-muted)'
+                  }}>
+                    {role === 'measurement' ? <TreeStructure size={14} weight={isActive ? 'bold' : 'regular'} /> : <ArrowRight size={14} weight={isActive ? 'bold' : 'regular'} />}
+                  </div>
+                  {role === 'measurement' ? 'Lower-order construct' : 'Structural path'}
+                </button>
+              )
+            })}
+            <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: '8px 4px 10px' }} />
+          </>
+        )}
         <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-muted)', marginBottom: 8, padding: '0 4px', textTransform: 'uppercase', fontFamily: 'DM Sans, sans-serif' }}>Connector Style</div>
         {(['straight', 'curved', 'rightangle'] as const).map(s => {
           const Icon = s === 'straight' ? ArrowRight : s === 'curved' ? BezierCurve : ArrowElbowRight

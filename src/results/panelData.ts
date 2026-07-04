@@ -16,6 +16,10 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'vif': 'quality_criteria.vif',
     'model-fit': 'quality_criteria.model_fit',
     'model-select': 'quality_criteria.model_selection_criteria',
+    'moderation-summary': 'final_results.moderation_summary',
+    'moderation-slopes': 'final_results.moderation_slopes',
+    'moderation-slope-chart': 'charts.moderation_slope_chart',
+    'moderation-r2-change': 'quality_criteria.moderation_r2_change',
     'latent-variables': 'final_results.latent_variables',
     'indicator-correlations': 'model_and_data.indicator_data_correlations',
     'indicator-original': 'model_and_data.indicator_data_original',
@@ -36,6 +40,7 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'r-square': 'quality_criteria.r_square',
     'f-square': 'quality_criteria.f_square',
     'vif': 'quality_criteria.vif',
+    'moderation-bootstrap': 'final_results.moderation_bootstrap',
     'execution-log': 'execution_log',
   },
   plspredict: {
@@ -73,7 +78,7 @@ const BOOTSTRAP_BASE_MODEL_REFERENCE_PANELS = new Set([
   'vif',
 ])
 
-export function getPanelDataPath(mode: AnalysisMode, panelId: string): string | undefined {
+function getPanelDataPath(mode: AnalysisMode, panelId: string): string | undefined {
   return PANEL_DATA_PATHS[mode]?.[panelId]
 }
 

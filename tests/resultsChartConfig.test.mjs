@@ -147,9 +147,10 @@ await runTest('results chart config supports PLSpredict summary and comparison p
   const bottleneckSvg = buildChartSvgForPanel('bottleneck-table', 'advanced', {
     final_results: {
       bottleneck_table: [
-        { Method: 'CE-FDH', row_name: '10', PEOU: 0, PU: 5 },
-        { Method: 'CE-FDH', row_name: '20', PEOU: 8, PU: 15 },
-        { Method: 'CR-FDH', row_name: '10', PEOU: 2, PU: 7 },
+        { Method: 'CE-FDH', Ceiling: 'ce_fdh', ATT: 0, PEOU: 'NN', PU: 'NN', SE: 'NN' },
+        { Method: 'CE-FDH', Ceiling: 'ce_fdh', ATT: 10, PEOU: 'NN', PU: 0.4, SE: 32.6 },
+        { Method: 'CR-FDH', Ceiling: 'cr_fdh', ATT: 0, PEOU: 'NN', PU: 'NN', SE: 'NN' },
+        { Method: 'CR-FDH', Ceiling: 'cr_fdh', ATT: 10, PEOU: 'NN', PU: 0.4, SE: 32.6 },
       ],
     },
   })
@@ -193,7 +194,17 @@ await runTest('results chart config supports PLSpredict summary and comparison p
   assert.match(String(cipmaSvg), /Sufficient only/)
   assert.match(String(bottleneckSvg), /<svg/i)
   assert.match(String(bottleneckSvg), /CE-FDH/)
+  assert.match(String(bottleneckSvg), /CE-FDH Bottleneck Heatmap/)
   assert.match(String(bottleneckSvg), /CR-FDH/)
+  assert.match(String(bottleneckSvg), /CR-FDH Bottleneck Heatmap/)
+  assert.match(String(bottleneckSvg), /Outcome level \(%\)/)
+  assert.match(String(bottleneckSvg), /Construct/)
+  assert.match(String(bottleneckSvg), /ATT/)
+  assert.match(String(bottleneckSvg), /PEOU/)
+  assert.match(String(bottleneckSvg), /PU/)
+  assert.match(String(bottleneckSvg), /SE/)
+  assert.match(String(bottleneckSvg), /NN/)
+  assert.match(String(bottleneckSvg), /0\.40/)
 })
 
 await runTest('results view limits inline charts to advanced panels and PLSpredict error histograms', async () => {
@@ -378,13 +389,43 @@ await runTest('advanced charts use clearer heatmap cells and stronger ceiling gr
   )
   assert.match(
     resultsChartsSource,
-    /stepLinePath\(group\.ceFdh/,
+    /stepLinePath\(displayGroup\.ceFdh/,
     'CE-FDH inline chart should render as a step function.'
   )
   assert.match(
     resultsChartsSource,
-    /stepLinePath\(group\.ceFdh, xOf, yOf\)/,
+    /stepLinePath\(displayGroup\.ceFdh, xOf, yOf\)/,
     'CE-FDH export chart should render as a step function.'
+  )
+  assert.match(
+    resultsChartsSource,
+    /function groupBottleneckRows\(rows: any\[\]\)/,
+    'Bottleneck heatmap should group rows by ceiling method.'
+  )
+  assert.match(
+    resultsChartsSource,
+    /rowLabels: colLabels,[\s\S]*colLabels: levelLabels/,
+    'Bottleneck heatmap should rotate constructs onto the vertical axis and levels onto the horizontal axis.'
+  )
+  assert.match(
+    resultsChartsSource,
+    /normalizeBottleneckRowsForDisplay\(rows\)/,
+    'Bottleneck heatmap should repair older rows where outcome levels were stored under the first construct column.'
+  )
+  assert.match(
+    resultsChartsSource,
+    /missingLabel: 'NN'/,
+    'Bottleneck heatmap should render NN as a neutral nonnumeric cell instead of zero.'
+  )
+  assert.match(
+    resultsChartsSource,
+    /buildBottleneckMatrices\(rawRows\('bottleneck-table'\)\)/,
+    'Bottleneck chart view should render all available ceiling-method heatmaps.'
+  )
+  assert.match(
+    resultsChartsSource,
+    /xAxisLabel: 'Outcome level \(%\)',[\s\S]*yAxisLabel: 'Construct'/,
+    'Bottleneck heatmaps should label outcome levels horizontally and constructs vertically.'
   )
   assert.match(
     resultsChartsSource,

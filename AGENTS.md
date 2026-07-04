@@ -66,7 +66,7 @@ Important areas:
 
 Use the existing package manager lockfile. Do not change package managers without explicit user approval.
 
-- Install dependencies: `npm install`
+- Install dependencies: `npm install` --current version
 - Start development server: `npm run dev`
 - Typecheck: `npm run typecheck`
 - Security audit for high severity production issues: `npm run audit:high`

@@ -61,11 +61,11 @@ const ROWS: StatRow[] = [
 ]
 
 const CONSTRUCT_COLORS: Record<string, string> = {
-  ATT: '#87976B',
-  BI: '#87976B',
-  DC: '#B7923F',
+  ATT: 'var(--color-accent)',
+  BI: 'var(--color-accent)',
+  DC: '#DC6973',
   PEOU: '#D96B4D',
-  PU: '#B7923F',
+  PU: '#DC6973',
   SE: '#A78BFA',
 }
 
@@ -197,7 +197,7 @@ export default function DescriptiveStats() {
               // Construct separator row
               if (row.construct) {
                 const tag = row.construct.split(' — ')[0]
-                const color = CONSTRUCT_COLORS[tag] || '#87976B'
+                const color = CONSTRUCT_COLORS[tag] || 'var(--color-accent)'
                 return (
                   <tr key={i} className="bg-elevated border-t border-border">
                     <td

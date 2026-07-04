@@ -17,7 +17,7 @@ export default {
         secondary:        'var(--color-success)',  // metis Moss
         danger:           'var(--color-danger)',  // Signal Clay — destructive / warning
         coral:            'var(--color-danger)',
-        amber:            'var(--color-warning)',  // Seed Gold
+        amber:            'var(--color-warning)',
         purple:           'var(--color-data-purple)',
         cyan:             'var(--color-data-blue)',  // Workspace swatch blue
       },

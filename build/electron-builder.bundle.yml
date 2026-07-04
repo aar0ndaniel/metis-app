@@ -32,30 +32,30 @@ extraResources:
       - renv-bootstrap.R
       - renv.lock
       - renv/**
-      - R-Portable.zip
-      - R-macos.tar.gz
-      - R-linux.tar.gz
 
 win:
   target: nsis
   icon: build/icon.ico
   artifactName: metis ${version} Bundle.${ext}
+  extraResources:
+    - from: r-api
+      to: r-api
+      filter:
+        - R-Portable.zip
 
 mac:
   target:
     - dmg
     - zip
   category: public.app-category.education
+  minimumSystemVersion: '13.3.0'
   icon: build/icon.icns
-  artifactName: metis ${version} Bundle macOS.${ext}
-
-linux:
-  target:
-    - AppImage
-    - deb
-  category: Education
-  icon: build/icon.png
-  artifactName: metis ${version} Bundle Linux.${ext}
+  artifactName: metis ${version} Bundle macOS ${arch}.${ext}
+  extraResources:
+    - from: r-api
+      to: r-api
+      filter:
+        - R-macos-${arch}.tar.gz
 
 nsis:
   oneClick: true
@@ -67,6 +67,6 @@ nsis:
   installerHeaderIcon: build/icon.ico
 
 fileAssociations:
-  - ext: ada
+  - ext: metisws
     name: metis Workspace
     role: Editor

@@ -2,8 +2,12 @@ import { startTransition, useEffect, useMemo, useRef, useState, type MouseEvent 
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
+  CaretDown,
   CaretRight,
+  Check,
+  Copy,
   FloppyDisk,
+  PencilSimple,
   Plus,
   Trash,
   WarningCircle,
@@ -15,6 +19,13 @@ import {
   prepareDatasetForPersistence,
 } from '../utils/datasetColumns'
 import { computeDerivedColumn, type ComputeOperation } from '../utils/dataViewCompute'
+import {
+  applyColumnTransforms,
+  getUniqueColumnTerms,
+  suggestTransformMeasurementType,
+  TRANSFORM_MEASUREMENT_TYPES,
+  type TransformMeasurementType,
+} from '../utils/dataViewTransform'
 import { loadDatasetSnapshot } from '../utils/datasetLoading'
 import { persistDatasetToWorkspace } from '../utils/datasetPersistence'
 import {
@@ -40,10 +51,24 @@ type DataViewContextMenu = {
   panel: ContextMenuPanel
 }
 
+type DataViewTransformDraft = {
+  id: string
+  uniqueTerm: string
+  changeTo: string
+  measurementType: TransformMeasurementType
+  typeTouched: boolean
+}
+
 type ColumnDragSelection = {
   anchorIndex: number
   baseSelection: number[]
   additive: boolean
+}
+
+type TransformDropdownOption = {
+  value: string
+  label: string
+  title?: string
 }
 
 const COMPUTE_ACTIONS: ComputeOperation[] = ['sum', 'mean', 'mode', 'median', 'max', 'min']
@@ -148,6 +173,21 @@ function labelOperation(operation: ComputeOperation): string {
   }
 }
 
+function labelTransformMeasurementType(type: TransformMeasurementType): string {
+  switch (type) {
+    case 'nominal':
+      return 'Nominal'
+    case 'ordinal':
+      return 'Ordinal'
+    case 'interval':
+      return 'Range'
+    case 'ratio':
+      return 'Ratio'
+    default:
+      return 'Type'
+  }
+}
+
 export default function DataView({ workspaces }: DataViewProps) {
   const navigate = useNavigate()
   const location = useLocation()
@@ -173,6 +213,7 @@ export default function DataView({ workspaces }: DataViewProps) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
+  const [editMode, setEditMode] = useState(false)
   const [selectedColumns, setSelectedColumns] = useState<number[]>([])
   const [selectedRows, setSelectedRows] = useState<number[]>([])
   const [selectionScope, setSelectionScope] = useState<SelectionScope>('none')
@@ -182,6 +223,9 @@ export default function DataView({ workspaces }: DataViewProps) {
   const [columnWidths, setColumnWidths] = useState<Record<number, number>>({})
   const [rowHeights, setRowHeights] = useState<Record<number, number>>({})
   const [contextMenu, setContextMenu] = useState<DataViewContextMenu | null>(null)
+  const [transformColumnIndex, setTransformColumnIndex] = useState<number | null>(null)
+  const [transformDrafts, setTransformDrafts] = useState<DataViewTransformDraft[]>([])
+  const [transformOpenDropdownId, setTransformOpenDropdownId] = useState<string | null>(null)
   const [showUnsavedExitModal, setShowUnsavedExitModal] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(0)
@@ -192,11 +236,23 @@ export default function DataView({ workspaces }: DataViewProps) {
   const gridScrollRef = useRef<HTMLDivElement | null>(null)
   const scrollFrameRef = useRef<number | null>(null)
   const pendingScrollTopRef = useRef(0)
+  const transformDraftIdRef = useRef(0)
 
   const datasetFileName = dataset?.originalFileName || dataset?.filePath || dataset?.name || 'dataset.csv'
   const returnTo = routeState.returnTo || (routeState.source === 'model-canvas' && routeState.modelId
     ? `/canvas/${routeState.modelId}`
     : '/')
+
+  const createTransformDraft = (uniqueTerm = ''): DataViewTransformDraft => {
+    transformDraftIdRef.current += 1
+    return {
+      id: `transform-${transformDraftIdRef.current}`,
+      uniqueTerm,
+      changeTo: '',
+      measurementType: 'nominal',
+      typeTouched: false,
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -227,6 +283,7 @@ export default function DataView({ workspaces }: DataViewProps) {
         setRows(parsed.allRows)
         setColumnWidths({})
         setRowHeights({})
+        setEditMode(false)
         setSelectedColumns([])
         setSelectedRows([])
         setSelectionScope('none')
@@ -234,6 +291,9 @@ export default function DataView({ workspaces }: DataViewProps) {
         setEditingHeaderIndex(null)
         setHighlightedHeaderIndex(null)
         setContextMenu(null)
+        setTransformColumnIndex(null)
+        setTransformDrafts([])
+        setTransformOpenDropdownId(null)
         setHasChanges(false)
         setScrollTop(0)
         pendingScrollTopRef.current = 0
@@ -306,6 +366,9 @@ export default function DataView({ workspaces }: DataViewProps) {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setContextMenu(null)
+        setTransformColumnIndex(null)
+        setTransformDrafts([])
+        setTransformOpenDropdownId(null)
         columnDragSelectionRef.current = null
       }
     }
@@ -340,6 +403,17 @@ export default function DataView({ workspaces }: DataViewProps) {
 
   const selectedColumnSet = useMemo(() => new Set(selectedColumns), [selectedColumns])
   const selectedRowSet = useMemo(() => new Set(selectedRows), [selectedRows])
+  const transformColumnName = transformColumnIndex == null
+    ? ''
+    : headers[transformColumnIndex] || `Column ${transformColumnIndex + 1}`
+  const transformUniqueTerms = useMemo(
+    () => transformColumnIndex == null ? [] : getUniqueColumnTerms(rows, transformColumnIndex),
+    [rows, transformColumnIndex],
+  )
+  const transformUsedTerms = useMemo(
+    () => new Set(transformDrafts.map((draft) => draft.uniqueTerm).filter(Boolean)),
+    [transformDrafts],
+  )
   const autoColumnWidths = useMemo(() => {
     if (!headers.length) return []
     if (typeof document === 'undefined') {
@@ -446,11 +520,40 @@ export default function DataView({ workspaces }: DataViewProps) {
     }))
     setColumnWidths((prev) => shiftSizeMapOnInsert(prev, safeIndex))
     setHighlightedHeaderIndex(safeIndex)
-    setEditingHeaderIndex(safeIndex)
+    if (editMode) setEditingHeaderIndex(safeIndex)
     setSelectionScope('columns')
     setSelectedColumns([safeIndex])
     setSelectedRows([])
     lastSelectedColumnRef.current = safeIndex
+    setHasChanges(true)
+  }
+
+  const duplicateColumnAfter = (columnIndex: number) => {
+    if (!headers.length || columnIndex < 0 || columnIndex >= headers.length) return
+    const safeIndex = Math.max(0, Math.min(columnIndex + 1, headers.length))
+    const sourceHeader = headers[columnIndex] || `Column ${columnIndex + 1}`
+    setHeaders((prev) => {
+      const next = [...prev]
+      const duplicateHeader = getUniqueHeaderName(prev, `${sourceHeader} copy`)
+      next.splice(safeIndex, 0, duplicateHeader)
+      return next
+    })
+    setRows((prev) => prev.map((row) => {
+      const next = [...row]
+      next.splice(safeIndex, 0, row[columnIndex] ?? '')
+      return next
+    }))
+    setColumnWidths((prev) => ({
+      ...shiftSizeMapOnInsert(prev, safeIndex),
+      [safeIndex]: resolvedColumnWidths[columnIndex] || MIN_COLUMN_WIDTH,
+    }))
+    setHighlightedHeaderIndex(safeIndex)
+    if (editMode) setEditingHeaderIndex(safeIndex)
+    setSelectionScope('columns')
+    setSelectedColumns([safeIndex])
+    setSelectedRows([])
+    lastSelectedColumnRef.current = safeIndex
+    setContextMenu(null)
     setHasChanges(true)
   }
 
@@ -466,6 +569,36 @@ export default function DataView({ workspaces }: DataViewProps) {
     setSelectedRows([safeIndex])
     setSelectedColumns([])
     lastSelectedRowRef.current = safeIndex
+    setHasChanges(true)
+  }
+
+  const duplicateRowIndices = (indices: number[]) => {
+    const validIndices = uniqueSorted(indices.filter((index) => index >= 0 && index < rows.length))
+    if (!validIndices.length) return
+
+    const insertIndex = Math.max(...validIndices) + 1
+    const insertedIndices = validIndices.map((_, offset) => insertIndex + offset)
+    setRows((prev) => {
+      const next = [...prev]
+      const copies = validIndices.map((index) => [...(prev[index] ?? Array.from({ length: headers.length }, () => ''))])
+      next.splice(insertIndex, 0, ...copies)
+      return next
+    })
+    setRowHeights((prev) => {
+      let next = prev
+      for (let offset = 0; offset < validIndices.length; offset += 1) {
+        next = shiftSizeMapOnInsert(next, insertIndex + offset)
+      }
+      validIndices.forEach((sourceIndex, offset) => {
+        if (prev[sourceIndex] != null) next = { ...next, [insertIndex + offset]: prev[sourceIndex] }
+      })
+      return next
+    })
+    setSelectionScope('rows')
+    setSelectedRows(insertedIndices)
+    setSelectedColumns([])
+    lastSelectedRowRef.current = insertedIndices[insertedIndices.length - 1] ?? null
+    setContextMenu(null)
     setHasChanges(true)
   }
 
@@ -502,6 +635,308 @@ export default function DataView({ workspaces }: DataViewProps) {
     })
   }
 
+  const closeTransformModal = () => {
+    setTransformColumnIndex(null)
+    setTransformDrafts([])
+    setTransformOpenDropdownId(null)
+  }
+
+  const openTransformModal = (columnIndex: number) => {
+    const uniqueTerms = getUniqueColumnTerms(rows, columnIndex)
+    setTransformColumnIndex(columnIndex)
+    setTransformDrafts(uniqueTerms.length ? [createTransformDraft(uniqueTerms[0])] : [])
+    setSelectedColumns([columnIndex])
+    setSelectedRows([])
+    setSelectionScope('columns')
+    lastSelectedColumnRef.current = columnIndex
+    setContextMenu(null)
+    setTransformOpenDropdownId(null)
+  }
+
+  const toggleEditMode = () => {
+    setEditMode((previous) => {
+      const next = !previous
+      if (!next) {
+        setEditingCell(null)
+        setEditingHeaderIndex(null)
+        setHighlightedHeaderIndex(null)
+      }
+      return next
+    })
+  }
+
+  const updateTransformDraft = (draftId: string, update: Partial<DataViewTransformDraft>) => {
+    setTransformDrafts((prev) => prev.map((draft) => draft.id === draftId ? { ...draft, ...update } : draft))
+  }
+
+  const updateTransformValue = (draftId: string, value: string) => {
+    setTransformDrafts((prev) => prev.map((draft) => {
+      if (draft.id !== draftId) return draft
+      return {
+        ...draft,
+        changeTo: value,
+        measurementType: draft.typeTouched ? draft.measurementType : suggestTransformMeasurementType(value),
+      }
+    }))
+  }
+
+  const addTransformDraft = () => {
+    const nextTerm = transformUniqueTerms.find((term) => !transformUsedTerms.has(term))
+    if (!nextTerm) {
+      dispatchToast('info', 'No more unique terms', 'Every available value in this column already has a transform row.')
+      return
+    }
+    setTransformOpenDropdownId(null)
+    setTransformDrafts((prev) => [...prev, createTransformDraft(nextTerm)])
+  }
+
+  const deleteTransformDraft = (draftId: string) => {
+    setTransformOpenDropdownId(null)
+    setTransformDrafts((prev) => prev.filter((draft) => draft.id !== draftId))
+  }
+
+  const renderTransformDropdown = ({
+    id,
+    label,
+    value,
+    options,
+    onChange,
+  }: {
+    id: string
+    label: string
+    value: string
+    options: TransformDropdownOption[]
+    onChange: (value: string) => void
+  }) => {
+    const open = transformOpenDropdownId === id
+    const selectedOption = options.find((option) => option.value === value)
+    const selectedLabel = selectedOption?.label ?? value
+
+    return (
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, position: 'relative' }}>
+        <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.35 }}>
+          {label}
+        </span>
+        <button
+          type="button"
+          onClick={() => setTransformOpenDropdownId((previous) => previous === id ? null : id)}
+          title={selectedOption?.title}
+          className="data-view-context-action"
+          style={{
+            height: 34,
+            borderRadius: 9,
+            border: '1px solid var(--color-border)',
+            background: 'var(--color-input)',
+            color: 'var(--color-text-primary)',
+            padding: '0 10px',
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 12,
+            outline: 'none',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            minWidth: 0,
+          }}
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+            {selectedLabel}
+          </span>
+          <CaretDown
+            size={12}
+            color="var(--color-text-muted)"
+            weight="bold"
+            style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.16s ease' }}
+          />
+        </button>
+        {open && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 'auto',
+              bottom: 'calc(100% + 4px)',
+              zIndex: 90,
+              width: 'min(320px, calc(100vw - 64px))',
+              maxHeight: 240,
+              overflowY: 'auto',
+              padding: 3,
+              borderRadius: 9,
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-elevated)',
+              boxShadow: 'var(--shadow-modal-popover)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 3,
+            }}
+          >
+            {options.map((option) => {
+              const selected = option.value === value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(option.value)
+                    setTransformOpenDropdownId(null)
+                  }}
+                  title={option.title}
+                  className="data-view-context-action"
+                  style={{
+                    width: 'auto',
+                    maxWidth: '100%',
+                    minHeight: 22,
+                    border: 'none',
+                    borderRadius: 5,
+                    background: selected ? 'rgb(var(--color-accent-rgb) / 0.10)' : 'transparent',
+                    color: 'var(--color-text-primary)',
+                    padding: '0 5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 4,
+                    fontFamily: 'DM Sans, sans-serif',
+                    fontSize: 10,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{option.label}</span>
+                  {selected && <Check size={10} color="var(--color-accent)" weight="bold" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </label>
+    )
+  }
+
+  const renderTransformTypeTag = (draft: DataViewTransformDraft) => {
+    const id = `${draft.id}-type`
+    const open = transformOpenDropdownId === id
+    const selectedOption = TRANSFORM_MEASUREMENT_TYPES.find((option) => option.value === draft.measurementType)
+
+    return (
+      <div style={{ position: 'relative', flexShrink: 0 }}>
+        <button
+          type="button"
+          aria-label={`Choose statistical type for ${draft.uniqueTerm || 'transform'}`}
+          title={selectedOption?.note}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => setTransformOpenDropdownId((previous) => previous === id ? null : id)}
+          className="data-view-context-action"
+          style={{
+            height: 24,
+            borderRadius: 5,
+            border: 'none',
+            background: 'rgb(var(--color-accent-rgb) / 0.10)',
+            color: 'var(--color-text-secondary)',
+            padding: '0 7px',
+            display: 'flex',
+            alignItems: 'center',
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 10,
+            fontWeight: 800,
+            lineHeight: 1,
+          }}
+        >
+          <span>{labelTransformMeasurementType(draft.measurementType)}</span>
+        </button>
+        {open && (
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              bottom: 'calc(100% + 6px)',
+              zIndex: 95,
+              width: 238,
+              padding: 3,
+              borderRadius: 9,
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-elevated)',
+              boxShadow: 'var(--shadow-modal-popover)',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 3,
+            }}
+          >
+            {TRANSFORM_MEASUREMENT_TYPES.map((option) => {
+              const selected = option.value === draft.measurementType
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    updateTransformDraft(draft.id, {
+                      measurementType: option.value,
+                      typeTouched: true,
+                    })
+                    setTransformOpenDropdownId(null)
+                  }}
+                  title={option.note}
+                  className="data-view-context-action"
+                  style={{
+                    width: 'auto',
+                    minHeight: 22,
+                    border: 'none',
+                    borderRadius: 5,
+                    background: selected ? 'rgb(var(--color-accent-rgb) / 0.10)' : 'transparent',
+                    color: 'var(--color-text-primary)',
+                    padding: '0 5px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 4,
+                    fontFamily: 'DM Sans, sans-serif',
+                    fontSize: 10,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span>{labelTransformMeasurementType(option.value)}</span>
+                  {selected && <Check size={10} color="var(--color-accent)" weight="bold" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  const runTransform = () => {
+    if (transformColumnIndex == null) return
+    const rules = transformDrafts
+      .map((draft) => ({
+        from: draft.uniqueTerm.trim(),
+        to: draft.changeTo.trim(),
+        measurementType: draft.measurementType,
+      }))
+
+    if (!rules.length || rules.some((draft) => draft.from.length === 0 || draft.to.length === 0)) {
+      dispatchToast('warning', 'Transform incomplete', 'Choose a unique term and enter the replacement value before transforming.')
+      return
+    }
+
+    try {
+      const result = applyColumnTransforms(rows, transformColumnIndex, rules)
+      if (!result.changedCells) {
+        dispatchToast('warning', 'Nothing changed', `No values in ${transformColumnName} need those transforms.`)
+        return
+      }
+      setRows(result.rows)
+      setSelectedColumns([transformColumnIndex])
+      setSelectedRows([])
+      setSelectionScope('columns')
+      setHighlightedHeaderIndex(transformColumnIndex)
+      setHasChanges(true)
+      closeTransformModal()
+      dispatchToast('success', 'Column transformed', `${result.changedCells} values updated in ${transformColumnName}.`)
+    } catch (err: any) {
+      dispatchToast('error', 'Transform failed', err?.message || 'The selected column could not be transformed.')
+    }
+  }
+
   const runCompute = (operation: ComputeOperation) => {
     if (selectedColumns.length < 2) return
     try {
@@ -516,7 +951,7 @@ export default function DataView({ workspaces }: DataViewProps) {
       setSelectedColumns([result.insertedColumnIndex])
       setSelectionScope('columns')
       setHighlightedHeaderIndex(result.insertedColumnIndex)
-      setEditingHeaderIndex(result.insertedColumnIndex)
+      if (editMode) setEditingHeaderIndex(result.insertedColumnIndex)
       setContextMenu(null)
       lastSelectedColumnRef.current = result.insertedColumnIndex
       setHasChanges(true)
@@ -836,6 +1271,22 @@ export default function DataView({ workspaces }: DataViewProps) {
           )}
 
           <button
+            onClick={toggleEditMode}
+            title={editMode ? 'Editing enabled' : 'Enable editing'}
+            aria-pressed={editMode}
+            className="flex items-center justify-center"
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              border: editMode ? '1px solid rgb(var(--color-accent-rgb) / 0.42)' : '1px solid var(--color-border)',
+              background: editMode ? 'rgb(var(--color-accent-rgb) / 0.12)' : 'var(--color-elevated)',
+            }}
+          >
+            <PencilSimple size={16} color={editMode ? 'var(--color-accent)' : 'var(--color-text-muted)'} weight={editMode ? 'fill' : 'regular'} />
+          </button>
+
+          <button
             onClick={() => void saveDataset('replace')}
             disabled={saving || !hasChanges}
             title="Save dataset"
@@ -844,8 +1295,8 @@ export default function DataView({ workspaces }: DataViewProps) {
               width: 36,
               height: 36,
               borderRadius: 10,
-              border: '1px solid rgba(135,151,107,0.34)',
-              background: hasChanges ? '#87976B' : 'var(--color-elevated)',
+              border: '1px solid rgb(var(--color-accent-rgb) / 0.34)',
+              background: hasChanges ? 'var(--color-accent)' : 'var(--color-elevated)',
               opacity: saving ? 0.6 : hasChanges ? 1 : 0.45,
             }}
           >
@@ -875,7 +1326,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                   width: 10,
                   height: 10,
                   borderRadius: 999,
-                  background: hasChanges ? '#87976B' : 'var(--color-border)',
+                  background: hasChanges ? 'var(--color-accent)' : 'var(--color-border)',
                 }}
               >
                 <Plus size={8} color={hasChanges ? 'var(--color-on-accent)' : 'var(--color-text-muted)'} weight="bold" />
@@ -942,16 +1393,19 @@ export default function DataView({ workspaces }: DataViewProps) {
                       borderRight: '1px solid var(--color-border)',
                       userSelect: 'none',
                       background: isHighlighted
-                        ? 'rgb(var(--color-hover-rgb) / 0.95)'
+                        ? 'rgb(var(--color-accent-rgb) / 0.16)'
                         : isSelected
-                          ? 'rgb(var(--color-hover-rgb) / 0.75)'
+                          ? 'rgb(var(--color-accent-rgb) / 0.10)'
                           : 'var(--color-surface)',
                     }}
                   >
                     <button
                       onMouseDown={(event) => handleColumnMouseDown(columnIndex, event)}
                       onMouseEnter={() => handleColumnMouseEnter(columnIndex)}
-                      onDoubleClick={() => setEditingHeaderIndex(columnIndex)}
+                      onDoubleClick={() => {
+                        if (!editMode) return
+                        setEditingHeaderIndex(columnIndex)
+                      }}
                       className="w-full h-full flex items-center justify-start text-left"
                       style={{ padding: '0 4px', background: 'transparent', border: 'none' }}
                     >
@@ -1022,7 +1476,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                       height: rowHeight,
                       borderRight: '1px solid var(--color-border)',
                       userSelect: 'none',
-                      background: isSelectedRow ? 'rgb(var(--color-hover-rgb) / 0.85)' : rowIndex % 2 === 0 ? 'var(--color-surface)' : 'var(--color-elevated)',
+                      background: isSelectedRow ? 'rgb(var(--color-accent-rgb) / 0.12)' : rowIndex % 2 === 0 ? 'var(--color-surface)' : 'var(--color-elevated)',
                     }}
                     >
                       <button
@@ -1055,14 +1509,17 @@ export default function DataView({ workspaces }: DataViewProps) {
                         borderRight: '1px solid var(--color-border)',
                         userSelect: 'none',
                         background: isSelectedRow && selectedColumnSet.has(columnIndex)
-                          ? 'rgb(var(--color-hover-rgb) / 0.95)'
+                          ? 'rgb(var(--color-accent-rgb) / 0.16)'
                           : isSelectedRow
-                            ? 'rgb(var(--color-hover-rgb) / 0.75)'
+                            ? 'rgb(var(--color-accent-rgb) / 0.10)'
                             : selectedColumnSet.has(columnIndex)
-                              ? 'rgb(var(--color-hover-rgb) / 0.55)'
+                              ? 'rgb(var(--color-accent-rgb) / 0.07)'
                               : baseRowBackground,
                       }}
-                      onDoubleClick={() => setEditingCell({ rowIndex, columnIndex })}
+                      onDoubleClick={() => {
+                        if (!editMode) return
+                        setEditingCell({ rowIndex, columnIndex })
+                      }}
                     >
                       {editingCell?.rowIndex === rowIndex && editingCell?.columnIndex === columnIndex ? (
                         <input
@@ -1125,7 +1582,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                   insertRowAfter(activeRowAppendIndex)
                   setContextMenu(null)
                 }}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1141,8 +1598,25 @@ export default function DataView({ workspaces }: DataViewProps) {
                 <Plus size={14} color="var(--color-text-secondary)" weight="bold" />
               </button>
               <button
+                onClick={() => duplicateRowIndices(activeRowDeletion)}
+                className="data-view-context-action w-full flex items-center justify-between"
+                style={{
+                  height: 34,
+                  borderRadius: 10,
+                  border: 'none',
+                  background: 'transparent',
+                  padding: '0 10px',
+                  color: 'var(--color-text-primary)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 12,
+                }}
+              >
+                <span>{activeRowDeletion.length > 1 ? 'Duplicate rows' : 'Duplicate row'}</span>
+                <Copy size={14} color="var(--color-text-secondary)" />
+              </button>
+              <button
                 onClick={() => deleteRowIndices(activeRowDeletion)}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action data-view-context-action-warning w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1162,7 +1636,7 @@ export default function DataView({ workspaces }: DataViewProps) {
             <>
               <button
                 onClick={() => setContextMenu((prev) => prev ? { ...prev, panel: 'base' } : prev)}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1181,7 +1655,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                 <button
                   key={operation}
                   onClick={() => runCompute(operation)}
-                  className="w-full flex items-center justify-between"
+                  className="data-view-context-action w-full flex items-center justify-between"
                   style={{
                     height: 34,
                     borderRadius: 10,
@@ -1207,7 +1681,7 @@ export default function DataView({ workspaces }: DataViewProps) {
                   insertColumnAfter(activeColumnAppendIndex)
                   setContextMenu(null)
                 }}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1222,10 +1696,44 @@ export default function DataView({ workspaces }: DataViewProps) {
                 <span>Append column</span>
                 <Plus size={14} color="var(--color-text-secondary)" weight="bold" />
               </button>
+              <button
+                onClick={() => openTransformModal(contextMenu.targetIndex)}
+                className="data-view-context-action w-full flex items-center justify-between"
+                style={{
+                  height: 34,
+                  borderRadius: 10,
+                  border: 'none',
+                  background: 'transparent',
+                  padding: '0 10px',
+                  color: 'var(--color-text-primary)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 12,
+                }}
+              >
+                <span>Transform</span>
+                <CaretRight size={14} color="var(--color-text-secondary)" />
+              </button>
+              <button
+                onClick={() => duplicateColumnAfter(contextMenu.targetIndex)}
+                className="data-view-context-action w-full flex items-center justify-between"
+                style={{
+                  height: 34,
+                  borderRadius: 10,
+                  border: 'none',
+                  background: 'transparent',
+                  padding: '0 10px',
+                  color: 'var(--color-text-primary)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 12,
+                }}
+              >
+                <span>Duplicate column</span>
+                <Copy size={14} color="var(--color-text-secondary)" />
+              </button>
               {activeColumnDeletion.length > 1 && (
                 <button
                   onClick={() => setContextMenu((prev) => prev ? { ...prev, panel: 'compute' } : prev)}
-                  className="w-full flex items-center justify-between"
+                  className="data-view-context-action w-full flex items-center justify-between"
                   style={{
                     height: 34,
                     borderRadius: 10,
@@ -1243,7 +1751,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               )}
               <button
                 onClick={() => deleteColumnIndices(activeColumnDeletion)}
-                className="w-full flex items-center justify-between"
+                className="data-view-context-action data-view-context-action-warning w-full flex items-center justify-between"
                 style={{
                   height: 34,
                   borderRadius: 10,
@@ -1263,6 +1771,230 @@ export default function DataView({ workspaces }: DataViewProps) {
         </div>
       )}
 
+      {transformColumnIndex !== null && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center p-4"
+          style={{ background: 'rgba(0,0,0,0.58)', backdropFilter: 'blur(4px)' }}
+          onClick={closeTransformModal}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: 'min(480px, calc(100vw - 32px))',
+              maxHeight: 'min(720px, calc(100vh - 48px))',
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              borderRadius: 14,
+              overflow: 'hidden',
+              boxShadow: 'var(--shadow-modal)',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div
+              style={{
+                height: 50,
+                padding: '0 16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid var(--color-border)',
+                background: 'var(--color-elevated)',
+                gap: 12,
+              }}
+            >
+              <span style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: 800 }}>
+                Transform {transformColumnName}
+              </span>
+              <button
+                onClick={closeTransformModal}
+                aria-label="Close transform modal"
+                className="flex items-center justify-center"
+                style={{
+                  width: 26,
+                  height: 26,
+                  borderRadius: 8,
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                }}
+              >
+                <X size={12} color="var(--color-text-muted)" weight="bold" />
+              </button>
+            </div>
+
+            <div style={{ padding: 16, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.4 }}>
+                  New transform
+                </span>
+                <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11 }}>
+                  {transformUniqueTerms.length} unique terms found
+                </span>
+              </div>
+
+              {transformDrafts.length === 0 ? (
+                <div
+                  style={{
+                    minHeight: 86,
+                    borderRadius: 12,
+                    border: '1px dashed var(--color-border)',
+                    background: 'var(--color-elevated)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: 16,
+                    color: 'var(--color-text-secondary)',
+                    fontFamily: 'DM Sans, sans-serif',
+                    fontSize: 12,
+                    textAlign: 'center',
+                  }}
+                >
+                  This column has no non-empty values to transform.
+                </div>
+              ) : (
+                transformDrafts.map((draft) => {
+                  const termOptions = transformUniqueTerms.filter((term) => term === draft.uniqueTerm || !transformUsedTerms.has(term))
+                  return (
+                    <div
+                      key={draft.id}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(104px, 0.8fr) minmax(0, 1.35fr) 34px',
+                        gap: 10,
+                        alignItems: 'end',
+                        padding: 0,
+                        border: 'none',
+                        borderRadius: 0,
+                        background: 'transparent',
+                        overflow: 'visible',
+                      }}
+                    >
+                      {renderTransformDropdown({
+                        id: `${draft.id}-term`,
+                        label: 'Unique term',
+                        value: draft.uniqueTerm,
+                        options: termOptions.map((term) => ({ value: term, label: term })),
+                        onChange: (value) => updateTransformDraft(draft.id, { uniqueTerm: value }),
+                      })}
+
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+                        <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: 0.35 }}>
+                          Change to
+                        </span>
+                        <div
+                          style={{
+                            height: 34,
+                            borderRadius: 9,
+                            border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                            background: 'var(--color-input)',
+                            padding: '0 5px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 7,
+                            minWidth: 0,
+                            position: 'relative',
+                          }}
+                        >
+                          {renderTransformTypeTag(draft)}
+                          <input
+                            value={draft.changeTo}
+                            onChange={(event) => updateTransformValue(draft.id, event.target.value)}
+                            placeholder="0, 1, Low..."
+                            style={{
+                              flex: 1,
+                              minWidth: 0,
+                              height: '100%',
+                              border: 'none',
+                              background: 'transparent',
+                              color: 'var(--color-text-primary)',
+                              padding: 0,
+                              fontFamily: 'DM Sans, sans-serif',
+                              fontSize: 12,
+                              outline: 'none',
+                            }}
+                          />
+                        </div>
+                      </label>
+
+                      <button
+                        onClick={() => deleteTransformDraft(draft.id)}
+                        aria-label={`Delete transform for ${draft.uniqueTerm || 'empty value'}`}
+                        className="flex items-center justify-center data-view-context-action-warning"
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 9,
+                          border: '1px solid rgba(217,107,77,0.25)',
+                          background: 'rgba(217,107,77,0.12)',
+                        }}
+                      >
+                        <Trash size={14} color="var(--color-danger)" />
+                      </button>
+                    </div>
+                  )
+                })
+              )}
+
+              <button
+                onClick={addTransformDraft}
+                disabled={transformUniqueTerms.length === 0}
+                className="data-view-context-action"
+                style={{
+                  height: 36,
+                  borderRadius: 10,
+                  border: '1px solid var(--color-border)',
+                  background: 'var(--color-elevated)',
+                  color: 'var(--color-text-primary)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 12,
+                  fontWeight: 800,
+                  opacity: transformUniqueTerms.length === 0 ? 0.5 : 1,
+                }}
+              >
+                Add new transform
+              </button>
+            </div>
+
+            <div style={{ padding: '0 16px 16px', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+              <button
+                onClick={closeTransformModal}
+                style={{
+                  height: 36,
+                  padding: '0 14px',
+                  borderRadius: 10,
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: 'var(--color-text-secondary)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 12,
+                  fontWeight: 800,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={runTransform}
+                disabled={transformDrafts.length === 0}
+                style={{
+                  height: 36,
+                  padding: '0 16px',
+                  borderRadius: 10,
+                  border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                  background: 'var(--color-accent)',
+                  color: 'var(--color-on-accent)',
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 12,
+                  fontWeight: 900,
+                  opacity: transformDrafts.length === 0 ? 0.55 : 1,
+                }}
+              >
+                Transform
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showUnsavedExitModal && (
         <div
           className="fixed inset-0 z-[80] flex items-center justify-center p-4"
@@ -1277,7 +2009,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               border: '1px solid var(--color-border)',
               borderRadius: 14,
               overflow: 'hidden',
-              boxShadow: '0 28px 70px rgba(0,0,0,0.45)',
+              boxShadow: 'var(--shadow-modal)',
             }}
           >
             <div
@@ -1287,13 +2019,13 @@ export default function DataView({ workspaces }: DataViewProps) {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'space-between',
-                borderBottom: '1px solid var(--color-danger)',
-                background: 'var(--color-danger)',
+                borderBottom: '1px solid var(--color-border)',
+                background: 'var(--color-elevated)',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <WarningCircle size={16} color="var(--color-on-danger)" weight="fill" />
-                <span style={{ color: 'var(--color-on-danger)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>
+                <WarningCircle size={16} color="var(--color-warning)" weight="fill" />
+                <span style={{ color: 'var(--color-warning)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>
                   Unsaved dataset changes
                 </span>
               </div>
@@ -1305,11 +2037,11 @@ export default function DataView({ workspaces }: DataViewProps) {
                   width: 24,
                   height: 24,
                   borderRadius: 7,
-                  border: '1px solid rgba(255,255,255,0.32)',
-                  background: 'rgba(255,255,255,0.12)',
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
                 }}
               >
-                <X size={12} color="var(--color-on-danger)" weight="bold" />
+                <X size={12} color="var(--color-text-muted)" weight="bold" />
               </button>
             </div>
 
@@ -1325,13 +2057,14 @@ export default function DataView({ workspaces }: DataViewProps) {
                   setShowUnsavedExitModal(false)
                   navigate(returnTo)
                 }}
+                className="data-view-unsaved-discard"
                 style={{
                   height: 34,
                   padding: '0 14px',
                   borderRadius: 10,
                   border: 'none',
-                  background: 'var(--color-danger)',
-                  color: 'var(--color-on-danger)',
+                  background: 'rgb(var(--color-warning-rgb) / 0.92)',
+                  color: 'var(--color-on-accent)',
                   fontFamily: 'DM Sans, sans-serif',
                   fontSize: 12,
                   fontWeight: 700,
@@ -1347,20 +2080,21 @@ export default function DataView({ workspaces }: DataViewProps) {
                   navigate(returnTo)
                 }}
                 disabled={saving}
+                className="data-view-unsaved-save"
                 style={{
                   height: 34,
                   padding: '0 14px',
                   borderRadius: 10,
-                  border: '1px solid rgba(135,151,107,0.34)',
-                  background: '#87976B',
-                  color: 'var(--color-on-accent)',
+                  border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',
+                  background: 'transparent',
+                  color: 'var(--color-text-primary)',
                   fontFamily: 'DM Sans, sans-serif',
                   fontSize: 12,
                   fontWeight: 700,
                   opacity: saving ? 0.7 : 1,
                 }}
               >
-                Save dataset
+                Save changes
               </button>
             </div>
           </div>

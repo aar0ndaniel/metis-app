@@ -9,6 +9,10 @@ const electronMainSource = await fs.readFile(path.join(workspaceRoot, 'electron'
 const verifierSource = await fs.readFile(path.join(workspaceRoot, 'scripts', 'verify-r-bundle-archive.mjs'), 'utf8')
 const smokeSource = await fs.readFile(path.join(workspaceRoot, 'scripts', 'smoke-r-bundle-runtime.mjs'), 'utf8')
 const packageSource = await fs.readFile(path.join(workspaceRoot, 'package.json'), 'utf8')
+const runtimePathsSource = electronMainSource.slice(
+  electronMainSource.indexOf('function getBundledPortableRuntimePaths'),
+  electronMainSource.indexOf('function getBundledUnixRuntimeRelocationMarker'),
+)
 
 assert.match(
   electronMainSource,
@@ -42,14 +46,26 @@ assert.match(
 
 assert.match(
   electronMainSource,
-  /function resolveRscriptCommand\(\): string \{[\s\S]*if \(!isLiteBuild\(\) && fs\.existsSync\(extractedRscriptPath\)\) \{[\s\S]*return extractedRscriptPath[\s\S]*METIS_RSCRIPT_PATH/,
-  'Bundle should prefer the extracted bundled Rscript before any stale Lite/system override.'
+  /function resolveRscriptCommand\(\): string \{[\s\S]*if \(!isLiteBuild\(\)\) \{[\s\S]*return extractedRscriptPath[\s\S]*METIS_RSCRIPT_PATH/,
+  'Bundle should use the bundled Rscript path before any stale Lite/system override.'
+)
+
+assert.doesNotMatch(
+  electronMainSource,
+  /if \(!isLiteBuild\(\) && fs\.existsSync\(extractedRscriptPath\)\)/,
+  'Bundle Rscript resolution should not fall back to a system Rscript when the extracted runtime is missing.'
 )
 
 assert.match(
   electronMainSource,
-  /function isLiteBuild\(\): boolean \{[\s\S]*const \{ archivePath \} = getBundledPortableRuntimePaths\(\)[\s\S]*return !fs\.existsSync\(archivePath\)/,
-  'Lite versus Bundle detection should be based on the archive shipped with the current app, not stale extracted runtimes.'
+  /function getConfiguredAppEdition\(\): 'Bundle' \| 'Lite' \{[\s\S]*__METIS_APP_EDITION__ === 'Lite' \? 'Lite' : 'Bundle'/,
+  'Electron main should use the compiled app edition to distinguish packaged Lite and Bundle builds.'
+)
+
+assert.match(
+  electronMainSource,
+  /function isLiteBuild\(\): boolean \{[\s\S]*if \(isDev\) return !fs\.existsSync\(archivePath\)[\s\S]*return getConfiguredAppEdition\(\) === 'Lite'/,
+  'Packaged Lite versus Bundle detection should use the build edition while dev keeps archive-based detection.'
 )
 
 assert.match(
@@ -60,8 +76,8 @@ assert.match(
 
 assert.match(
   electronMainSource,
-  /R-Portable\.zip[\s\S]*R-macos\.tar\.gz[\s\S]*R-linux\.tar\.gz/,
-  'Bundle runtime extraction should select platform-specific R archives, using tarballs for Unix runtimes.'
+  /R-Portable\.zip[\s\S]*R-macos-\$\{getBundledRuntimeArch\(\)\}\.tar\.gz[\s\S]*R-linux\.tar\.gz/,
+  'Bundle runtime extraction should use architecture-specific macOS runtime archives while keeping future Linux runtime support.'
 )
 
 assert.match(
@@ -84,8 +100,14 @@ assert.doesNotMatch(
 
 assert.match(
   electronMainSource,
+  /function getBundledUnixRuntimeExtractionRoot\(\): string \{[\s\S]*app\.getPath\('cache'\)[\s\S]*'r-runtime'[\s\S]*getBundledRuntimeArch\(\)/,
+  'macOS and Linux bundled R should extract to an architecture-specific app cache r-runtime path so R launchers do not break on the Application Support space or share ARM and Intel runtimes.'
+)
+
+assert.doesNotMatch(
+  runtimePathsSource,
   /path\.join\(app\.getPath\('userData'\), 'r-runtime'\)/,
-  'macOS and Linux bundled R should extract to writable userData, not packaged app resources.'
+  'macOS and Linux bundled R should not extract into Application Support because conda-packed R launchers split that path on the space.'
 )
 
 assert.match(
@@ -107,15 +129,81 @@ assert.match(
 )
 
 assert.match(
+  electronMainSource,
+  /function isBundledPortableRuntimeReady\(\): boolean \{[\s\S]*if \(fs\.existsSync\(archivePath\)\) return false[\s\S]*return isLiteBuild\(\)/,
+  'A packaged Bundle with no runtime archive should stay in setup instead of being treated as runtime-ready.'
+)
+
+assert.match(
+  electronMainSource,
+  /function getBundledPortableRuntimeStatus\(\)[\s\S]*runtimeArch: getBundledRuntimeArch\(\)[\s\S]*appEdition: getConfiguredAppEdition\(\)[\s\S]*archiveName[\s\S]*archiveExists[\s\S]*archiveSize[\s\S]*runtimeDirExists[\s\S]*extractedRscriptExists[\s\S]*relocationMarkerExists[\s\S]*condaUnpackExists/,
+  'Bundle runtime diagnostics should report architecture, edition, archive, extraction, Rscript, and Unix relocation status.'
+)
+
+assert.match(
+  electronMainSource,
+  /function getBundledPortableRuntimeStatus\(\)[\s\S]*legacyRuntimeDir[\s\S]*legacyRuntimeDirExists/,
+  'Bundle runtime diagnostics should report whether the old Application Support runtime still exists without selecting it as the active runtime.'
+)
+
+assert.match(
+  electronMainSource,
+  /function verifyBundledPortableRuntimeCanStart[\s\S]*Bundled R runtime could not start[\s\S]*verifyBundledPortableRuntimeCanStart\(extractedRscriptPath\)/,
+  'Bundle setup should smoke-check the extracted Rscript before accepting the runtime as installed.'
+)
+
+assert.match(
+  electronMainSource,
+  /Bundled Rscript missing at \$\{runtimeStatus\.extractedRscriptPath\}; archive exists=\$\{runtimeStatus\.archiveExists\}/,
+  'Plumber startup should log missing bundled Rscript status before returning not-ready.'
+)
+
+assert.match(
+  electronMainSource,
+  /await prepareBundledUnixRuntime\(runtimeStatus\.runtimeDir, runtimeStatus\.extractedRscriptPath\)/,
+  'Plumber startup should repair missing Unix relocation markers before launching bundled R.'
+)
+
+assert.match(
+  electronMainSource,
+  /ipcMain\.handle\('plumber:health'[\s\S]*const ready = await ensurePlumberReady\(\)[\s\S]*runtimeStatus: getBundledPortableRuntimeStatus\(\)[\s\S]*recentPlumberLogs: getRecentPlumberLogs\(\)/,
+  'Plumber health checks should expose runtime status and recent backend logs when startup fails.'
+)
+
+assert.match(
+  electronMainSource,
+  /PLS backend is not ready[\s\S]*runtimeStatus: getBundledPortableRuntimeStatus\(\)[\s\S]*recentPlumberLogs: getRecentPlumberLogs\(\)/,
+  'Analysis calls should include bundled runtime diagnostics when the R backend is not ready.'
+)
+
+assert.match(
+  electronMainSource,
+  /Lite build has no bundled R archive[\s\S]*skipping extraction[\s\S]*Bundled R archive was not found at \$\{archivePath\}/,
+  'Lite setup should skip missing archives, while Bundle installer extraction should fail clearly when the platform R archive is missing.'
+)
+
+assert.match(
+  electronMainSource,
+  /Failed to start \$\{executablePath\}: \$\{err\.message\}/,
+  'Archive and relocation process failures should include the executable that failed to start.'
+)
+
+assert.match(
   verifierSource,
-  /darwin: 'R-macos\.tar\.gz'[\s\S]*linux: 'R-linux\.tar\.gz'/,
-  'Bundle archive verifier should require platform-specific macOS and Linux runtime tarballs.'
+  /supportedDarwinArchitectures[\s\S]*linux: 'R-linux\.tar\.gz'[\s\S]*R-macos-\$\{arch\}\.tar\.gz/,
+  'Bundle archive verifier should require architecture-specific macOS runtime tarballs and platform-specific Linux runtime tarballs.'
 )
 
 assert.match(
   verifierSource,
   /R-Bundled\/bin\/Rscript[\s\S]*R-Bundled\/bin\/conda-unpack[\s\S]*REQUIRED_R_PACKAGES\.map/,
   'Bundle archive verifier should check Unix Rscript, conda-unpack, and required R package entries.'
+)
+
+assert.match(
+  smokeSource,
+  /supportedDarwinArchitectures[\s\S]*R-macos-\$\{arch\}\.tar\.gz/,
+  'Unix runtime smoke test should support architecture-specific macOS runtime tarballs.'
 )
 
 assert.match(
@@ -132,14 +220,14 @@ assert.match(
 
 assert.match(
   packageSource,
-  /"build:bundle:mac"[\s\S]*verify-r-bundle-archive\.mjs darwin[\s\S]*smoke-r-bundle-runtime\.mjs darwin/,
-  'macOS Bundle builds should smoke-test the conda-packed runtime before packaging.'
+  /"build:bundle:mac:arm64"[\s\S]*verify-r-bundle-archive\.mjs darwin arm64[\s\S]*smoke-r-bundle-runtime\.mjs darwin arm64[\s\S]*"build:bundle:mac:x64"[\s\S]*verify-r-bundle-archive\.mjs darwin x64[\s\S]*smoke-r-bundle-runtime\.mjs darwin x64/,
+  'macOS Bundle builds should smoke-test the matching architecture conda-packed runtime before packaging.'
 )
 
-assert.match(
+assert.doesNotMatch(
   packageSource,
-  /"build:bundle:linux"[\s\S]*verify-r-bundle-archive\.mjs linux[\s\S]*smoke-r-bundle-runtime\.mjs linux/,
-  'Linux Bundle builds should smoke-test the conda-packed runtime before packaging.'
+  /"build:bundle:linux"|"build:lite:linux"/,
+  'Active package scripts should exclude Linux until Linux packaging is ready.'
 )
 
 console.log('PASS cross-platform runtime guards')

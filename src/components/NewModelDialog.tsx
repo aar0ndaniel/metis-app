@@ -1,5 +1,10 @@
 import { useState } from 'react'
 import { NotePencil, X, CaretDown } from '@phosphor-icons/react'
+import {
+  WORKSPACE_ACCENT_FALLBACK_COLORS,
+  getActiveAccentColor,
+  getWorkspaceAccentPalette,
+} from '../utils/themeAccent'
 
 interface Workspace { id: string; name: string; color: string }
 
@@ -33,7 +38,7 @@ export default function NewModelDialog({
   // New workspace fields
   const [newWsName, setNewWsName] = useState('')
   const [newWsDesc, setNewWsDesc] = useState('')
-  const [newWsColor, setNewWsColor] = useState('#87976B')
+  const [newWsColor, setNewWsColor] = useState(() => getActiveAccentColor())
 
   const selectedWs = workspaces.find((w) => w.id === wsId)
   const isCreatingNewWs = wsId === 'new'
@@ -49,7 +54,7 @@ export default function NewModelDialog({
     )
   }
 
-  const COLORS = ['#87976B', '#A78BFA', '#FFB547', '#32D583', '#6366F1', '#60A5FA', '#F97316', '#E879F9']
+  const COLORS = WORKSPACE_ACCENT_FALLBACK_COLORS
 
   return (
     <div
@@ -64,7 +69,7 @@ export default function NewModelDialog({
           backgroundColor: 'var(--color-surface)',
           borderRadius: 14,
           border: '1px solid var(--color-border-subtle)',
-          boxShadow: '0 16px 40px rgba(0,0,0,0.8)',
+          boxShadow: 'var(--shadow-modal)',
         }}
       >
         {/* Title bar */}
@@ -158,7 +163,7 @@ export default function NewModelDialog({
                     backgroundColor: 'var(--color-surface)',
                     borderRadius: 8,
                     border: '1px solid var(--color-border-subtle)',
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                    boxShadow: 'var(--shadow-modal-popover)',
                     padding: '4px 0',
                   }}
                 >
@@ -220,7 +225,7 @@ export default function NewModelDialog({
                   Workspace Colour
                 </span>
                 <div className="flex items-center" style={{ gap: 8 }}>
-                  {COLORS.map((c) => (
+                  {getWorkspaceAccentPalette(COLORS).map((c) => (
                     <button
                       key={c}
                       onClick={() => setNewWsColor(c)}

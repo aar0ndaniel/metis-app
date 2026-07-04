@@ -4,13 +4,21 @@ declare const __METIS_APP_NAME__: string
 declare const __METIS_APP_VERSION__: string
 declare const __METIS_APP_EDITION__: string
 
+type NativeMenuViewState = {
+  showVars: boolean
+  showProps: boolean
+  showZoomControl: boolean
+}
+
 interface Window {
   electronAPI: {
     minimize: () => void
     maximize: () => void
     close: () => void
     isMaximized: () => Promise<boolean>
-    onWindowStateChanged: (cb: (data: { isMaximized: boolean }) => void) => () => void
+    onWindowStateChanged: (cb: (data: { isMaximized: boolean; isFullScreen?: boolean }) => void) => () => void
+    onNativeMenuAction: (cb: (action: string) => void) => () => void
+    setNativeMenuState: (state: NativeMenuViewState) => void
     notifyAppReady: () => void
     sendRendererReady: () => void
     openFile: (options?: any) => Promise<any>
@@ -21,6 +29,8 @@ interface Window {
     copyToWorkspace: (data: { originalFilePath: string, workspacePath: string, datasetId: string }) => Promise<any>
     saveDatasetToWorkspace: (data: { workspacePath: string; datasetId: string; fileName: string; base64Data: string }) => Promise<any>
     getDataPath: () => Promise<any>
+    getStoragePaths: () => Promise<any>
+    setStoragePaths: (data: { workspacePath: string; exportPath: string }) => Promise<any>
     getWelcomeContext: () => Promise<any>
     setThemePreference: (theme: 'dark' | 'light') => Promise<any>
     useSampleDataset: (data: { workspacePath: string; datasetId?: string }) => Promise<any>

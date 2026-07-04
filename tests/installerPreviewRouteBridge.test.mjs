@@ -28,6 +28,30 @@ assert.match(
   'Installer routes should reset their wrapper theme to Light when opened.'
 )
 
+assert.match(
+  appSource,
+  /const DEFAULT_INTERFACE_CONTRAST = 75[\s\S]*const MIN_READABLE_INTERFACE_CONTRAST = 75/,
+  'App contrast should default to a readable 75% preference value.'
+)
+
+assert.match(
+  appSource,
+  /Math\.max\(MIN_READABLE_INTERFACE_CONTRAST, Math\.min\(100, parsed\)\)/,
+  'Saved app contrast values below the readable floor should be clamped before applying.'
+)
+
+assert.match(
+  appSource,
+  /applySavedVisualPreferences\(\{ skipSavedContrast: isInstallerPreview \}\)/,
+  'Installer routes should not inherit the saved global contrast filter.'
+)
+
+assert.match(
+  appSource,
+  /root\.style\.setProperty\('--app-interface-contrast-filter', 'contrast\(100%\)'\)/,
+  'Skipping saved setup contrast should explicitly restore normal contrast.'
+)
+
 assert.doesNotMatch(appSource, /function bridgeDirectInstallerRouteToHash\(\)/, 'App should not rewrite direct installer URLs to hash routes.')
 
 assert.doesNotMatch(appSource, /window\.history\.replaceState\(null, '', `\/#\$\{directInstallerRoute\}`\)/, 'App should not modify history for direct installer routes.')

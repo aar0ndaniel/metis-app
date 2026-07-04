@@ -32,6 +32,14 @@ import {
   type DatasetViewCacheEntry,
 } from './utils/datasetViewCache'
 import { readWorkspaceClientCache, writeWorkspaceClientCache } from './utils/workspaceClientCache'
+import { stripModelDisplayName } from './utils/displayNames'
+import {
+  DEFAULT_ACCENT_CHOICE,
+  LEGACY_PREF_ACCENT_COLOR_KEY,
+  METIS_PREF_ACCENT_COLOR_KEY,
+  getAccentOption,
+  normalizeAccentChoice,
+} from './utils/themeAccent'
 import type {
   Workspace,
   WorkspaceChild,
@@ -39,6 +47,7 @@ import type {
 } from './types/workspace'
 
 type AppTheme = 'Dark' | 'Light'
+type ThemePreference = AppTheme | 'Auto'
 
 interface WelcomeContext {
   displayName: string
@@ -62,13 +71,39 @@ const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
 const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
+const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
+const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
+const DEFAULT_INTERFACE_CONTRAST = 75
+const MIN_READABLE_INTERFACE_CONTRAST = 75
 const METIS_TOUR_COMPLETED_KEY = 'metis:tour-completed'
 const LEGACY_TOUR_COMPLETED_KEY = 'pls:tour-completed'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
+const METIS_FEEDBACK_URL = 'https://metis.emend.it.com/submit-feedback.html'
+const METIS_BUG_REPORT_URL = 'https://github.com/aar0ndaniel/metis-app/issues/new?labels=bug'
+const METIS_CITATION_URL = 'https://metis.emend.it.com/how-to-cite.html'
+
+function normalizeThemePreference(raw: string | null): ThemePreference {
+  if (raw === 'Auto' || raw === 'auto') return 'Auto'
+  if (raw === 'Light' || raw === 'light') return 'Light'
+  return 'Dark'
+}
+
+function getSystemTheme(): AppTheme {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'Dark'
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'Light' : 'Dark'
+}
+
+function resolveThemePreference(preference: ThemePreference): AppTheme {
+  return preference === 'Auto' ? getSystemTheme() : preference
+}
+
+function getSavedThemePreference(): ThemePreference {
+  const raw = localStorage.getItem(METIS_PREF_THEME_KEY) ?? localStorage.getItem(LEGACY_PREF_THEME_KEY)
+  return normalizeThemePreference(raw)
+}
 
 function getSavedTheme(): AppTheme {
-  const raw = localStorage.getItem(METIS_PREF_THEME_KEY) ?? localStorage.getItem(LEGACY_PREF_THEME_KEY)
-  return raw === 'Light' ? 'Light' : 'Dark'
+  return resolveThemePreference(getSavedThemePreference())
 }
 
 function getInstallerPreviewTheme(): AppTheme {
@@ -82,6 +117,54 @@ function readStartupFontScale(): string {
   if (raw === 'Large') return 'large'
   if (raw === 'Extra Large') return 'extra-large'
   return 'default'
+}
+
+function readSavedAccentColor(): string {
+  const raw = localStorage.getItem(METIS_PREF_ACCENT_COLOR_KEY) ?? localStorage.getItem(LEGACY_PREF_ACCENT_COLOR_KEY)
+  return normalizeAccentChoice(raw)
+}
+
+function readSavedInterfaceContrast(): number {
+  const raw = localStorage.getItem(METIS_PREF_INTERFACE_CONTRAST_KEY) ?? localStorage.getItem(LEGACY_PREF_INTERFACE_CONTRAST_KEY)
+  const parsed = Number(raw)
+  return Number.isFinite(parsed)
+    ? Math.max(MIN_READABLE_INTERFACE_CONTRAST, Math.min(100, parsed))
+    : DEFAULT_INTERFACE_CONTRAST
+}
+
+function applySavedVisualPreferences(options: { skipSavedContrast?: boolean } = {}) {
+  const root = document.documentElement
+  root.setAttribute('data-font-scale', readStartupFontScale())
+  const savedAccentColor = readSavedAccentColor()
+  const accentTargets = [
+    root,
+    document.body,
+    ...Array.from(document.querySelectorAll<HTMLElement>('.metis-app-shell')),
+  ]
+
+  if (savedAccentColor === DEFAULT_ACCENT_CHOICE) {
+    accentTargets.forEach((target) => {
+      target.style.removeProperty('--color-accent')
+      target.style.removeProperty('--color-accent-rgb')
+      target.style.removeProperty('--color-on-accent')
+    })
+  } else {
+    const accent = getAccentOption(savedAccentColor)
+    accentTargets.forEach((target) => {
+      target.style.setProperty('--color-accent', accent.color)
+      target.style.setProperty('--color-accent-rgb', accent.rgb)
+      target.style.setProperty('--color-on-accent', accent.onAccent)
+    })
+  }
+
+  if (options.skipSavedContrast) {
+    root.style.setProperty('--app-interface-contrast-filter', 'contrast(100%)')
+    return
+  }
+
+  const contrast = readSavedInterfaceContrast()
+  const contrastPercent = Math.max(100, Math.min(160, 100 + (contrast - DEFAULT_INTERFACE_CONTRAST)))
+  root.style.setProperty('--app-interface-contrast-filter', `contrast(${contrastPercent}%)`)
 }
 
 function openMetisExternal(url: string) {
@@ -143,6 +226,13 @@ function resolveWorkspaceForAction(workspaces: Workspace[], requestedId?: string
   return owningWorkspace ? migrateWorkspace(owningWorkspace) : null
 }
 
+function collapseWorkspaceFoldersForStartup(workspaces: Workspace[]): Workspace[] {
+  return workspaces.map((workspace) => ({
+    ...workspace,
+    expanded: false,
+  }))
+}
+
 type DatasetImportedPayload = {
   datasetId?: string
   fileName: string
@@ -193,6 +283,7 @@ function AppShell() {
   const location  = useLocation()
   const navigate  = useNavigate()
   const isInstallerPreview = location.pathname.startsWith('/installer-preview') || location.pathname.startsWith('/setup-wizard')
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => isInstallerPreview ? 'Light' : getSavedThemePreference())
   const [theme, setTheme] = useState<AppTheme>(() => isInstallerPreview ? 'Light' : getSavedTheme())
   const [prefsOpen,      setPrefsOpen]      = useState(false)
   const [tarkOpen, setTarkOpen] = useState(false)
@@ -203,6 +294,7 @@ function AppShell() {
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false)
   const [welcomeContext, setWelcomeContext] = useState<WelcomeContext | null>(null)
   const { toasts, toast: _toast } = useToast()  // global toast listener
+  const [, setVisualPreferenceRevision] = useState(0)
 
   // ── Workspace state — starts empty, loaded from disk on mount ───────────────
   const [workspaces,       setWorkspaces]       = useState<Workspace[]>([])
@@ -214,6 +306,11 @@ function AppShell() {
   const currentCanvasModelId = location.pathname.startsWith('/canvas/')
     ? decodeURIComponent(location.pathname.split('/')[2] ?? '')
     : ''
+  const currentResultsModelId = location.pathname.startsWith('/results/')
+    ? decodeURIComponent(location.pathname.split('/')[2] ?? '')
+    : location.pathname.startsWith('/tark-preview/')
+      ? decodeURIComponent(location.pathname.split('/')[3] ?? '')
+      : ''
 
   // ── Load workspaces from the metis data directory on first mount ───────────
   useEffect(() => {
@@ -239,12 +336,23 @@ function AppShell() {
       console.log('[App] electronAPI found. Environment is Electron.')
     }
 
-    async function loadWorkspaces() {
+    const clearWorkspaceState = (details?: unknown) => {
+      setWorkspaces([])
+      setActiveWorkspaceId('')
+      addDiagnostic({
+        category: 'workspace',
+        level: 'warn',
+        message: 'No workspaces were available in the selected workspace folder.',
+        details,
+      })
+    }
+
+    async function loadWorkspaces(options: { allowCacheFallback: boolean }) {
       try {
         const result = await (window as any).electronAPI?.listWorkspaces?.()
         if (result?.success && Array.isArray(result.workspaces) && result.workspaces.length > 0) {
           const migrated = result.workspaces.map((workspace: Workspace) => migrateWorkspace(workspace))
-          setWorkspaces(migrated)
+          setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
           setActiveWorkspaceId(migrated[0].id)
           addDiagnostic({
             category: 'workspace',
@@ -255,29 +363,29 @@ function AppShell() {
             },
           })
         } else {
-          const backup = readWorkspaceClientCache()
-          const parsed = backup ? JSON.parse(backup) : []
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
-            setWorkspaces(migrated)
-            setActiveWorkspaceId(migrated[0].id)
-            addDiagnostic({
-              category: 'workspace',
-              level: 'warn',
-              message: 'Workspace load fell back to client cache.',
-              details: {
-                count: migrated.length,
-                workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
-              },
-            })
+          if (options.allowCacheFallback) {
+            const backup = readWorkspaceClientCache()
+            const parsed = backup ? JSON.parse(backup) : []
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
+              setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
+              setActiveWorkspaceId(migrated[0].id)
+              addDiagnostic({
+                category: 'workspace',
+                level: 'warn',
+                message: 'Workspace load fell back to client cache.',
+                details: {
+                  count: migrated.length,
+                  workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
+                },
+              })
+            } else {
+              console.log('[App] No workspaces found or list failed:', result)
+              clearWorkspaceState(result)
+            }
           } else {
             console.log('[App] No workspaces found or list failed:', result)
-            addDiagnostic({
-              category: 'workspace',
-              level: 'warn',
-              message: 'No workspaces were available during startup.',
-              details: result,
-            })
+            clearWorkspaceState(result)
           }
         }
       } catch (err) {
@@ -288,32 +396,47 @@ function AppShell() {
           message: 'Workspace loading failed.',
           details: err,
         })
-        const backup = readWorkspaceClientCache()
-        const parsed = backup ? JSON.parse(backup) : []
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
-          setWorkspaces(migrated)
-          setActiveWorkspaceId(migrated[0].id)
-          addDiagnostic({
-            category: 'workspace',
-            level: 'warn',
-            message: 'Recovered workspaces from local cache after load failure.',
-            details: {
-              count: migrated.length,
-              workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
-            },
-          })
+        if (options.allowCacheFallback) {
+          const backup = readWorkspaceClientCache()
+          const parsed = backup ? JSON.parse(backup) : []
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
+            setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
+            setActiveWorkspaceId(migrated[0].id)
+            addDiagnostic({
+              category: 'workspace',
+              level: 'warn',
+              message: 'Recovered workspaces from local cache after load failure.',
+              details: {
+                count: migrated.length,
+                workspaceIds: migrated.map((workspace: Workspace) => workspace.id),
+              },
+            })
+          } else {
+            clearWorkspaceState(err)
+          }
+        } else {
+          clearWorkspaceState(err)
         }
       } finally {
         setWorkspaceLoadAttempted(true)
       }
     }
-    loadWorkspaces()
-  }, [isInstallerPreview])
+
+    const handleStorageLocationsUpdated = () => {
+      setWorkspaceLoadAttempted(false)
+      navigate('/')
+      void loadWorkspaces({ allowCacheFallback: false })
+    }
+
+    window.addEventListener('pls:storage-locations-updated', handleStorageLocationsUpdated)
+    void loadWorkspaces({ allowCacheFallback: true })
+    return () => window.removeEventListener('pls:storage-locations-updated', handleStorageLocationsUpdated)
+  }, [isInstallerPreview, navigate])
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-font-scale', readStartupFontScale())
-  }, [])
+    applySavedVisualPreferences({ skipSavedContrast: isInstallerPreview })
+  }, [isInstallerPreview])
 
   useEffect(() => {
     if (isInstallerPreview) return
@@ -394,11 +517,26 @@ function AppShell() {
   }, [theme])
 
   useEffect(() => {
-    const readCurrentTheme = () => isInstallerPreview ? getInstallerPreviewTheme() : getSavedTheme()
-    const handlePreferencesUpdate = () => setTheme(readCurrentTheme())
+    const readCurrentThemePreference = () => isInstallerPreview ? getInstallerPreviewTheme() : getSavedThemePreference()
+    const applyCurrentPreferences = () => {
+      applySavedVisualPreferences({ skipSavedContrast: isInstallerPreview })
+      setVisualPreferenceRevision((revision) => revision + 1)
+      const nextPreference = readCurrentThemePreference()
+      setThemePreference(nextPreference)
+      setTheme(resolveThemePreference(nextPreference))
+    }
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === INSTALLER_PREF_THEME_KEY || event.key === METIS_PREF_THEME_KEY || event.key === LEGACY_PREF_THEME_KEY) {
-        setTheme(readCurrentTheme())
+      if (
+        event.key === INSTALLER_PREF_THEME_KEY ||
+        event.key === METIS_PREF_THEME_KEY ||
+        event.key === LEGACY_PREF_THEME_KEY ||
+        event.key === METIS_PREF_FONT_SCALE_KEY ||
+        event.key === METIS_PREF_ACCENT_COLOR_KEY ||
+        event.key === LEGACY_PREF_ACCENT_COLOR_KEY ||
+        event.key === METIS_PREF_INTERFACE_CONTRAST_KEY ||
+        event.key === LEGACY_PREF_INTERFACE_CONTRAST_KEY
+      ) {
+        applyCurrentPreferences()
       }
     }
 
@@ -407,13 +545,34 @@ function AppShell() {
     } else {
       setTheme(getSavedTheme())
     }
-    window.addEventListener('pls:preferences-updated', handlePreferencesUpdate)
+    setThemePreference(readCurrentThemePreference())
+    if (!isInstallerPreview) applyCurrentPreferences()
+    const handleThemePreview = (event: Event) => {
+      const detail = (event as CustomEvent).detail
+      if (detail && detail.theme && detail.preference) {
+        setThemePreference(detail.preference)
+        setTheme(detail.theme)
+      }
+    }
+    window.addEventListener('pls:preferences-updated', applyCurrentPreferences)
     window.addEventListener('storage', handleStorage)
+    window.addEventListener('pls:theme-preview', handleThemePreview)
     return () => {
-      window.removeEventListener('pls:preferences-updated', handlePreferencesUpdate)
+      window.removeEventListener('pls:preferences-updated', applyCurrentPreferences)
       window.removeEventListener('storage', handleStorage)
+      window.removeEventListener('pls:theme-preview', handleThemePreview)
     }
   }, [isInstallerPreview])
+
+  useEffect(() => {
+    if (isInstallerPreview || themePreference !== 'Auto' || typeof window === 'undefined' || !window.matchMedia) return
+    const systemThemeQuery = window.matchMedia('(prefers-color-scheme: light)')
+    const handleSystemThemeChange = () => setTheme(resolveThemePreference('Auto'))
+    systemThemeQuery.addEventListener?.('change', handleSystemThemeChange)
+    return () => {
+      systemThemeQuery.removeEventListener?.('change', handleSystemThemeChange)
+    }
+  }, [isInstallerPreview, themePreference])
 
   useEffect(() => {
     if (location.pathname.startsWith('/canvas/')) {
@@ -662,6 +821,17 @@ function AppShell() {
   if (location.pathname.startsWith('/canvas'))  currentScreen = 'canvas'
   else if (location.pathname.startsWith('/results') || location.pathname.startsWith('/tark-preview')) currentScreen = 'results'
   else if (location.pathname.startsWith('/import') || location.pathname.startsWith('/dataview') || location.pathname === '/rcode') currentScreen = 'import'
+  const activeTitleModelName = (() => {
+    const modelId = currentCanvasModelId || currentResultsModelId
+    if (!modelId || (currentScreen !== 'canvas' && currentScreen !== 'results')) return ''
+
+    for (const workspace of workspaces) {
+      const model = workspace.children.find((child) => child.type === 'model' && child.id === modelId)
+      if (model) return stripModelDisplayName(model.name || modelId)
+    }
+
+    return stripModelDisplayName(modelId)
+  })()
 
   // ── Hidden file input ref — fallback when electronAPI.openFile is unavailable ─
   const fileInputRef        = useRef<HTMLInputElement>(null)
@@ -885,6 +1055,9 @@ function AppShell() {
       if (action === 'open-tark')        { setTarkOpen(true); return }
       if (action === 'open-about')       { setPrefsInitialTab('updates'); setPrefsOpen(true); return }
       if (action === 'open-docs')        { openMetisExternal(METIS_DOCS_URL); return }
+      if (action === 'open-feedback')    { openMetisExternal(METIS_FEEDBACK_URL); return }
+      if (action === 'open-report-bug')  { openMetisExternal(METIS_BUG_REPORT_URL); return }
+      if (action === 'open-cite-metis')  { openMetisExternal(METIS_CITATION_URL); return }
       if (action === 'open-tour')        { setShowTour(true);  return }
       if (action === 'new-workspace')    { setNewWsOpen(true); return }
       if (action === 'new-model')        { setNewModelOpen(true); return }
@@ -971,7 +1144,7 @@ function AppShell() {
       if (action === 'open-workspace') {
         const result = await (window as any).electronAPI?.openFile?.({
           title: 'Open Workspace',
-          filters: [{ name: 'metis Workspace', extensions: ['ada'] }],
+          filters: [{ name: 'metis Workspace', extensions: ['metisws', 'ada'] }],
           properties: ['openFile'],
         })
         if (result && !result.canceled && result.filePaths?.length > 0) {
@@ -984,6 +1157,14 @@ function AppShell() {
     window.addEventListener('pls:action', handler)
     return () => window.removeEventListener('pls:action', handler)
   }, [navigate, workspaces, activeWorkspaceId, openDatasetFilePicker, openRScriptFilePicker, currentScreen, location.pathname, requestQuit, openModelInCanvas, openWorkspaceFromFilePath, currentCanvasModelId])
+
+  useEffect(() => {
+    const unsubscribe = (window as any).electronAPI?.onNativeMenuAction?.((action: string) => {
+      if (!action) return
+      window.dispatchEvent(new CustomEvent('pls:action', { detail: { action } }))
+    })
+    return () => unsubscribe?.()
+  }, [])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1162,7 +1343,7 @@ function AppShell() {
             : 'Browser mode: window.electronAPI is not available. Run `npm run electron:dev` to test native file dialogs and the R/Plumber backend.'}
         </div>
       )}
-      {!isInstallerPreview && <TitleBar currentScreen={currentScreen} theme={theme} />}
+      {!isInstallerPreview && <TitleBar currentScreen={currentScreen} theme={theme} activeModelName={activeTitleModelName} />}
       <div className="flex-1 overflow-hidden">
         <Routes>
           <Route path="/installer-preview" element={<InstallerPreview />} />
@@ -1238,7 +1419,7 @@ function AppShell() {
               background: 'var(--color-surface)',
               border: '1px solid var(--color-border)',
               borderRadius: 14,
-              boxShadow: 'var(--shadow-floating-panel)',
+              boxShadow: 'var(--shadow-modal)',
               overflow: 'hidden',
             }}
           >
@@ -1292,7 +1473,7 @@ function AppShell() {
             const id  = `ws-${Date.now()}`
             const newWs: Workspace = {
               id,
-              name: `${name}.ada`,
+              name: `${name}.metisws`,
               color,
               expanded: true,
               children: [],
@@ -1320,7 +1501,7 @@ function AppShell() {
               const newWsId = `ws-${Date.now()}`
               const newWs: Workspace = {
                 id: newWsId,
-                name: `${newWsData.name}.ada`,
+                name: `${newWsData.name}.metisws`,
                 color: newWsData.color,
                 expanded: true,
                 children: [],

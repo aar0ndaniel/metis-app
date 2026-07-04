@@ -38,27 +38,134 @@ assert.match(
   /boxShadow:\s*C\.floatingMenuShadow/,
   'Construct right-click settings menu should use the active theme menu shadow.'
 )
+assert.match(
+  constructSettingsMenu,
+  /const modalWidth = 260[\s\S]*const modalHeight = 310/,
+  'Construct right-click settings menu should keep its existing width and height contract.'
+)
+assert.match(
+  constructSettingsMenu,
+  /height:\s*modalHeight/,
+  'Construct right-click settings menu should preserve its fixed height after the redesign.'
+)
+assert.match(
+  constructSettingsMenu,
+  /isHigherOrder:\s*construct\.isHigherOrder \|\| false/,
+  'Construct right-click settings menu should edit the higher-order construct flag.'
+)
+assert.match(
+  constructSettingsMenu,
+  /Higher-order construct/,
+  'Construct right-click settings menu should expose an HOC toggle like the create construct modal.'
+)
+assert.match(
+  constructSettingsMenu,
+  /isHigherOrder:\s*formData\.isHigherOrder/,
+  'Applying right-click construct settings should persist the HOC toggle.'
+)
+assert.match(
+  constructSettingsMenu,
+  /background:\s*`linear-gradient\(180deg, \$\{C\.panelControl\} 0%, \$\{C\.panelPop\} 100%\)`/,
+  'Construct right-click settings menu should use a token-driven shell suitable for light and dark theme.'
+)
 assert.doesNotMatch(
   constructSettingsMenu,
   /backgroundColor:\s*'#18181A'|rgba\(0,0,0,0\.6\)/,
   'Construct right-click settings menu should not force dark shell colors in light theme.'
 )
 
-const newConstructModal = sliceBetween('/* ─── New Construct Modal', '{showExitModal &&')
+const newConstructModal = sliceBetween('/* ─── New Construct Modal', '{hocPathConflict && (')
 assert.match(
   newConstructModal,
-  /backgroundColor:\s*C\.input/,
-  'New latent variable name field should use the active theme input background.'
+  /width:\s*356/,
+  'New latent variable modal should be wider than the compact s.pen draft.'
 )
 assert.match(
   newConstructModal,
-  /color:\s*C\.text/,
-  'New latent variable name field should use the active theme text color.'
+  /fontSize:\s*10,[\s\S]*Enter construct name and choose a color/,
+  'New latent variable helper copy should be readable at the larger modal size.'
+)
+assert.match(
+  newConstructModal,
+  /Enter construct name and choose a color/,
+  'New latent variable modal should use the compact s.pen helper copy.'
+)
+assert.match(
+  newConstructModal,
+  /newConstructPalette\.map/,
+  'New latent variable modal should render the active LOC or HOC color palette.'
+)
+assert.match(
+  newConstructModal,
+  /newConstructIsHigherOrder[\s\S]*HOC_SWATCH_COLORS[\s\S]*SWATCH_COLORS/,
+  'Higher-order checkbox should switch the color palette between HOC and LOC colors.'
+)
+assert.match(
+  newConstructModal,
+  /newConstructType === type/,
+  'New latent variable modal should expose the Reflective/Formative measurement toggle.'
+)
+assert.match(
+  newConstructModal,
+  /Higher-order construct/,
+  'New latent variable modal should include the HOC checkbox label from the s.pen design.'
+)
+assert.match(
+  source,
+  /const HOC_SWATCH_COLORS = \['#D94141', '#BE185D', '#0E7490', '#52525B'\]/,
+  'Higher-order constructs should use a visibly distinct palette from the LOC swatches.'
+)
+for (const locSwatch of ['#87976B', '#A78BFA', '#60A5FA', '#F97316']) {
+  const hocPaletteDeclaration = source.match(/const HOC_SWATCH_COLORS = \[[^\]]+\]/)?.[0] ?? ''
+  assert.doesNotMatch(
+    hocPaletteDeclaration,
+    new RegExp(locSwatch.replace('#', '#')),
+    `HOC palette should not reuse the LOC swatch ${locSwatch}.`,
+  )
+}
+assert.match(
+  newConstructModal,
+  /backgroundColor:\s*'var\(--color-accent\)'[\s\S]*color:\s*'var\(--color-on-accent\)'/,
+  'Create CTA should use the accent color selected in Preferences.'
+)
+assert.match(
+  source,
+  /type:\s*newConstructType/,
+  'New constructs should use the measurement type selected in the creation modal.'
+)
+assert.match(
+  source,
+  /isHigherOrder:\s*newConstructIsHigherOrder/,
+  'New constructs should persist the higher-order construct selection.'
 )
 assert.doesNotMatch(
   newConstructModal,
-  /color:\s*'#FFFFFF'/,
-  'New latent variable name field should not force white text in light theme.'
+  /#242424|#202020|#2B2B2B|#191919|#373737|#3a3a3a|#F5F1E7|#D7CDBC|#ffffff80|#A8A8A8|#8F8F8F|#d3d3d3/,
+  'New latent variable modal should not force dark-theme shell colors in light theme.'
+)
+
+const hocPathChoiceModal = sliceBetween('{hocPathRoleChoice && (', '{hocPathConflict && (')
+assert.match(
+  hocPathChoiceModal,
+  /backgroundColor:\s*C\.panelPop[\s\S]*color:\s*'var\(--color-text-primary\)'[\s\S]*color:\s*'var\(--color-text-secondary\)'/,
+  'HOC path type choice should use theme-aware surface and text tokens.'
+)
+assert.doesNotMatch(
+  hocPathChoiceModal,
+  /#242424|#202020|#2B2B2B|#191919|#373737|#3a3a3a|#F5F1E7|#D7CDBC|#ffffff80/,
+  'HOC path type choice should not force dark modal colors in light theme.'
+)
+
+const hocConflictModal = sliceBetween('{hocPathConflict && (', '{showExitModal &&')
+assert.match(
+  hocConflictModal,
+  /backgroundColor:\s*C\.panelPop[\s\S]*border:\s*`1px solid \$\{C\.floatingBorderSoft\}`/,
+  'HOC direction conflict modal should use theme-aware popover chrome.'
+)
+assert.doesNotMatch(
+  hocConflictModal,
+  /#242424|#202020|#2B2B2B|#191919|#373737|#3a3a3a|#F5F1E7|#D7CDBC|#ffffff80/,
+  'HOC direction conflict modal should not force dark modal colors in light theme.'
 )
 
 console.log('PASS model canvas light popup coverage')

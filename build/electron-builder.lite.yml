@@ -44,15 +44,7 @@ mac:
     - zip
   category: public.app-category.education
   icon: build/icon.icns
-  artifactName: metis ${version} Lite macOS.${ext}
-
-linux:
-  target:
-    - AppImage
-    - deb
-  category: Education
-  icon: build/icon.png
-  artifactName: metis ${version} Lite Linux.${ext}
+  artifactName: metis ${version} Lite macOS ${arch}.${ext}
 
 nsis:
   oneClick: true
@@ -64,6 +56,6 @@ nsis:
   installerHeaderIcon: build/icon.ico
 
 fileAssociations:
-  - ext: ada
+  - ext: metisws
     name: metis Workspace
     role: Editor

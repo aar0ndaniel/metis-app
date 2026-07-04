@@ -61,9 +61,9 @@ function buildTourData(displayName = '', workspacePath = ''): Record<'home' | 'c
   void workspacePath
   const feedbackStep: TourStep = {
     title: 'Send Feedback',
-    content: 'When you are ready to send feedback to the team, click Feedback in the title bar.',
+    content: 'When you are ready to send feedback to the team, open Help and choose Feedback.',
     icon: <ChatCircleText size={30} color={TOUR_ACCENT} weight="regular" />,
-    selector: '#tour-feedback',
+    selector: '#tour-help',
   }
 
   return {
@@ -151,7 +151,7 @@ function HomePreview({ step }: { step: TourStep }) {
             <Cell active={selector === '#tour-grid-view'} h={24}><GridFour size={11} color={TOUR_ACCENT} weight="fill" /></Cell>
             <Cell active={selector === '#tour-list-view'} h={24}><Rows size={11} color={TOUR_ACCENT} weight="fill" /></Cell>
             <Cell active={selector === '#tour-tark'} h={24}><FileText size={11} color={TOUR_ACCENT} weight="fill" /></Cell>
-            <Cell active={selector === '#tour-feedback'} h={24}><ChatCircleText size={11} color={TOUR_ACCENT} weight="regular" /></Cell>
+            <Cell active={selector === '#tour-help'} h={24}><ChatCircleText size={11} color={TOUR_ACCENT} weight="regular" /></Cell>
           </div>
         </div>
         <div style={{ ...panel({ borderRadius: 16, padding: 12, display: 'flex', flexDirection: 'column', gap: 10, minHeight: 96 }), ...(welcome ? focus(true, 16) : {}) }}>
@@ -212,7 +212,7 @@ function CanvasPreview({ step }: { step: TourStep }) {
         <div style={{ ...panel({ height: 34, borderRadius: 12, padding: '0 10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }), ...focus(selector === '#tour-properties-tab', 12) }}><Bar w={42} h={5} /><span style={{ width: 12, height: 12, borderRadius: '50%', background: TOUR_PREVIEW_MUTED }} /></div>
         <div style={{ ...panel({ borderRadius: 12, padding: 10 }), ...focus(selector === '#tour-indicators-panel', 12) }}>{[0, 1, 2].map((item) => <div key={item} style={{ marginBottom: item === 2 ? 0 : 6 }}><Bar w="100%" h={7} /></div>)}</div>
         <div style={{ ...panel({ borderRadius: 12, padding: 10 }), ...focus(selector === '#tour-measurement-model', 12) }}><div style={{ display: 'flex', gap: 6 }}><div style={{ flex: 1, height: 22, borderRadius: 999, background: 'rgb(var(--color-accent-rgb) / 0.22)', border: `1px solid ${TOUR_ACCENT}` }} /><div style={{ flex: 1, height: 22, borderRadius: 999, background: TOUR_PREVIEW_SUBTLE }} /></div></div>
-        <div style={{ ...panel({ borderRadius: 12, padding: 10 }), ...focus(selector === '#tour-construct-color', 12) }}><div style={{ display: 'flex', gap: 6 }}>{['var(--color-accent)', '#87976B', '#FFB547', '#A78BFA'].map((color, index) => <span key={color} style={{ width: index === 0 ? 16 : 12, height: index === 0 ? 16 : 12, borderRadius: '50%', background: color, border: index === 0 ? '2px solid var(--color-text-primary)' : 'none' }} />)}</div></div>
+        <div style={{ ...panel({ borderRadius: 12, padding: 10 }), ...focus(selector === '#tour-construct-color', 12) }}><div style={{ display: 'flex', gap: 6 }}>{['var(--color-accent)', '#2F8FB3', '#7C5CFF', '#E46F61'].map((color, index) => <span key={color} style={{ width: index === 0 ? 16 : 12, height: index === 0 ? 16 : 12, borderRadius: '50%', background: color, border: index === 0 ? '2px solid var(--color-text-primary)' : 'none' }} />)}</div></div>
         <div style={{ ...panel({ flex: 1, borderRadius: 12, padding: 10 }), ...focus(selector === '#tour-tools-tab', 12) }}>
           {[0, 1].map((row) => <div key={row} style={{ display: 'flex', gap: 6, marginBottom: row === 1 ? 0 : 8 }}>{[0, 1, 2].map((cell) => <div key={cell} style={{ flex: 1, height: 18, borderRadius: 8, background: TOUR_PREVIEW_SUBTLE }} />)}</div>)}
         </div>
@@ -373,7 +373,7 @@ export default function OnboardingTour({ currentScreen, theme, displayName = '',
         />
       )}
       <div className="fixed pointer-events-auto transition-all duration-300 ease-out" style={{ top: modalPos.top, left: modalPos.left, width: modalPos.width, opacity: modalPos.opacity, transform: `translateY(${modalPos.opacity === 1 ? 0 : 10}px)` }}>
-        <div style={{ position: 'relative', borderRadius: 18, background: 'linear-gradient(180deg, var(--color-surface) 0%, var(--color-panel) 100%)', border: '1px solid var(--color-floating-border-soft)', boxShadow: 'var(--shadow-floating-panel)', overflow: 'hidden' }}>
+        <div style={{ position: 'relative', borderRadius: 18, background: 'linear-gradient(180deg, var(--color-surface) 0%, var(--color-panel) 100%)', border: '1px solid var(--color-floating-border-soft)', boxShadow: 'var(--shadow-modal)', overflow: 'hidden' }}>
           <button onClick={handleSkip} style={{ position: 'absolute', top: 12, right: 12, width: 24, height: 24, borderRadius: '50%', border: 'none', background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><X size={12} /></button>
           <div style={{ display: 'grid', gridTemplateColumns: compact ? '1fr' : '120px 1fr', gap: compact ? 12 : 14, padding: isWelcomeStep ? '16px 44px 10px 16px' : '14px 42px 10px 14px' }}>
             <TourArtwork step={step} currentStep={currentStep} totalSteps={steps.length} isWelcomeStep={isWelcomeStep} />

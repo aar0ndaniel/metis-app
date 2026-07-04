@@ -43,6 +43,20 @@ if (is.na(max_predict_repetitions) || max_predict_repetitions < 1L) max_predict_
 if (is.na(max_cvpat_bootstrap_samples) || max_cvpat_bootstrap_samples < 50L) max_cvpat_bootstrap_samples <- 500L
 if (is.na(max_cached_pls_cores) || max_cached_pls_cores < 0L) max_cached_pls_cores <- 8L
 
+# Redefine fSquared in the seminr namespace safely to avoid subscript out of bounds errors
+# during summary calculation for models with interaction terms when main effects are missing/removed.
+if (requireNamespace("seminr", quietly = TRUE)) {
+  orig_fSquared <- seminr::fSquared
+  safe_fSquared <- function(seminr_model, iv, dv) {
+    tryCatch({
+      orig_fSquared(seminr_model, iv, dv)
+    }, error = function(e) {
+      NA_real_
+    })
+  }
+  utils::assignInNamespace("fSquared", safe_fSquared, "seminr")
+}
+
 pr <- plumber$new()
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
@@ -78,6 +92,36 @@ record_timing <- function(timings, phase, seconds, details = list()) {
 
 format_timing_details <- function(details) {
   if (!length(details)) return("")
+  core_detail_names <- c("cores", "detected_cores", "reserved_cores", "core_policy")
+  has_core_plan <- all(vapply(core_detail_names, function(name) !is.null(details[[name]]), logical(1)))
+  if (has_core_plan) {
+    detail_value <- function(name) {
+      value <- details[[name]]
+      if (length(value) > 1L) value <- paste(value, collapse = ",")
+      as.character(value[[1]])
+    }
+    parts <- character(0)
+    if (!is.null(details$nboot)) {
+      parts <- c(parts, sprintf("nboot=%s", detail_value("nboot")))
+    }
+    parts <- c(parts, sprintf(
+      "core plan: using %s of %s logical cores; reserved %s for desktop responsiveness; core_policy=%s",
+      detail_value("cores"),
+      detail_value("detected_cores"),
+      detail_value("reserved_cores"),
+      detail_value("core_policy")
+    ))
+    extra_names <- setdiff(names(details), c("nboot", core_detail_names))
+    if (length(extra_names)) {
+      parts <- c(parts, vapply(extra_names, function(name) {
+        value <- details[[name]]
+        if (is.null(value)) return(sprintf("%s=NULL", name))
+        if (length(value) > 1L) value <- paste(value, collapse = ",")
+        sprintf("%s=%s", name, as.character(value[[1]]))
+      }, character(1), USE.NAMES = FALSE))
+    }
+    return(sprintf(" (%s)", paste(parts, collapse = ", ")))
+  }
   parts <- vapply(names(details), function(name) {
     value <- details[[name]]
     if (is.null(value)) return(sprintf("%s=NULL", name))
@@ -160,12 +204,12 @@ analysis_core_plan <- function() {
   requested <- max_analysis_cores
   policy <- "env-fixed"
   if (is.na(requested) || requested == 0L) {
-    reserve <- if (detected <= 4L) {
-      1L
-    } else if (detected <= 16L) {
+    reserve <- if (detected > 16L) {
+      4L
+    } else if (detected > 10L) {
       2L
     } else {
-      4L
+      1L
     }
     requested <- detected - reserve
     policy <- "dynamic-reserve"
@@ -201,9 +245,33 @@ normalize_local_path <- function(file_path) {
   normalizePath(path.expand(as.character(file_path %||% "")), winslash = "/", mustWork = FALSE)
 }
 
+# Safe default dataset roots used when METIS_ALLOWED_DATA_ROOTS is not configured
+# (e.g. a standalone / dev Plumber server started outside the Electron host).
+# These cover every legitimate dataset location (user home + system temp) while still
+# rejecting arbitrary system paths, so the gate degrades to "scoped" rather than "off".
+default_dataset_roots <- function() {
+  candidates <- c(
+    Sys.getenv("USERPROFILE"),
+    {
+      hd <- Sys.getenv("HOMEDRIVE"); hp <- Sys.getenv("HOMEPATH")
+      if (nzchar(hd) && nzchar(hp)) file.path(hd, hp) else ""
+    },
+    Sys.getenv("HOME"),
+    tryCatch(path.expand("~"), error = function(e) ""),
+    tempdir(),
+    Sys.getenv("TMPDIR"),
+    Sys.getenv("TEMP"),
+    Sys.getenv("TMP")
+  )
+  candidates <- trimws(candidates)
+  candidates <- candidates[nzchar(candidates)]
+  if (!length(candidates)) return(character(0))
+  unique(vapply(candidates, normalize_local_path, character(1), USE.NAMES = FALSE))
+}
+
 trusted_metis_dataset_roots <- {
   if (!nzchar(trimws(trusted_metis_dataset_roots_raw))) {
-    character(0)
+    default_dataset_roots()
   } else {
     roots <- unlist(strsplit(trusted_metis_dataset_roots_raw, .Platform$path.sep, fixed = TRUE), use.names = FALSE)
     roots <- trimws(roots)
@@ -288,6 +356,12 @@ format_analysis_error_message <- function(err, analysis_label, timeout_seconds) 
   if (grepl("cannot allocate vector|memory exhausted|cannot allocate memory", message, ignore.case = TRUE)) {
     return(sprintf(
       "%s ran out of memory. Try fewer bootstrap subsamples, close other heavy apps, or run the analysis on a machine with more RAM.",
+      analysis_label
+    ))
+  }
+  if (grepl("dgesv|exactly singular|singular matrix|computationally singular", message, ignore.case = TRUE)) {
+    return(sprintf(
+      "%s could not be estimated because the data or predictors are perfectly duplicated or collinear. Check duplicate indicators, constant columns, identical dataset columns, or predictors that move exactly together.",
       analysis_label
     ))
   }
@@ -408,27 +482,79 @@ validate_constructs_payload <- function(constructs_payload) {
       stop(sprintf("constructs[%s].type must be Reflective or Formative.", idx))
     }
 
+    is_higher_order <- isTRUE(construct$is_higher_order %||% construct$isHigherOrder)
+    indicator_min_len <- if (is_higher_order) 0L else 1L
     indicators <- unique(require_string_array(
-      construct$indicators,
+      construct$indicators %||% list(),
       sprintf("constructs[%s].indicators", idx),
-      min_len = 1L,
+      min_len = indicator_min_len,
       max_len = max_indicators_per_construct,
       max_chars = 120
     ))
+
+    higher_order_type <- tolower(as.character(construct$higher_order_type %||% construct$higherOrderType %||% con_type))
+    if (!(higher_order_type %in% c("reflective", "formative"))) {
+      stop(sprintf("constructs[%s].higher_order_type must be reflective or formative.", idx))
+    }
+
+    dimensions <- character(0)
+    if (is_higher_order) {
+      dimensions <- unique(require_string_array(
+        construct$dimensions %||% construct$lowerOrderConstructs %||% list(),
+        sprintf("constructs[%s].dimensions", idx),
+        min_len = 1L,
+        max_len = max_constructs,
+        max_chars = 120
+      ))
+    }
 
     if (tolower(con_name) %in% tolower(seen_names)) {
       stop(sprintf("Duplicate construct name: %s", con_name))
     }
     seen_names <- c(seen_names, con_name)
 
-    normalized[[idx]] <- list(
+    normalized_construct <- list(
       name = con_name,
       type = if (identical(con_type, "formative")) "Formative" else "Reflective",
       indicators = as.list(indicators)
     )
+
+    if (is_higher_order) {
+      normalized_construct$is_higher_order <- TRUE
+      normalized_construct$higher_order_type <- higher_order_type
+      normalized_construct$dimensions <- as.list(dimensions)
+    }
+
+    normalized[[idx]] <- normalized_construct
   }
 
   normalized
+}
+
+validate_higher_order_dimensions <- function(constructs) {
+  construct_names <- vapply(constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
+  hoc_names <- vapply(constructs, function(con) if (isTRUE(con$is_higher_order)) con$name else "", character(1), USE.NAMES = FALSE)
+  hoc_names <- hoc_names[nzchar(hoc_names)]
+
+  for (idx in seq_along(constructs)) {
+    construct <- constructs[[idx]]
+    if (!isTRUE(construct$is_higher_order)) next
+
+    dimensions <- unlist(construct$dimensions %||% list(), use.names = FALSE)
+    for (dimension in dimensions) {
+      if (!(dimension %in% construct_names)) {
+        stop(sprintf("constructs[%s].dimensions references unknown construct '%s'.", idx, dimension))
+      }
+      if (identical(dimension, construct$name)) {
+        stop(sprintf("constructs[%s].dimensions cannot include the HOC itself.", idx))
+      }
+      if (dimension %in% hoc_names) {
+        stop(sprintf("constructs[%s].dimensions cannot reference another higher-order construct.", idx))
+      }
+    }
+  }
+
+  constructs
 }
 
 validate_paths_payload <- function(paths_payload, construct_names) {
@@ -549,10 +675,13 @@ validate_payload_object <- function(payload) {
   }
 
   dataset_path <- require_scalar_string(payload$datasetPath, "datasetPath", max_chars = 1000)
-  constructs <- validate_constructs_payload(payload$constructs)
+  constructs <- validate_higher_order_dimensions(validate_constructs_payload(payload$constructs))
   construct_names <- vapply(constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
-  paths <- validate_paths_payload(payload$paths, construct_names)
   interactions <- validate_interactions_payload(payload$interactions %||% list(), construct_names)
+  interaction_construct_names <- vapply(interactions, function(interaction) {
+    paste0(interaction$iv, "*", interaction$moderator)
+  }, character(1), USE.NAMES = FALSE)
+  paths <- validate_paths_payload(payload$paths, c(construct_names, interaction_construct_names))
   algorithm <- require_optional_choice(payload$algorithm, "algorithm", c("standard", "consistent"), "standard")
   algorithm_settings <- validate_algorithm_settings_payload(payload$algorithmSettings)
 
@@ -1142,46 +1271,125 @@ read_dataset <- function(file_path) {
   data
 }
 
-build_measurement <- function(constructs_payload, algorithm = "standard", interactions_payload = list()) {
+# Collect the leaf (manifest) indicators for a construct, recursing through the
+# dimensions of higher-order constructs. Used to build a repeated-indicators
+# representation of a HOC for PLSpredict (seminr cannot predict two-stage HOCs).
+# The `seen` guard prevents infinite recursion on malformed/cyclic dimensions.
+gather_leaf_indicators <- function(name, by_name, seen = character(0)) {
+  name <- as.character(name)
+  if (!nzchar(name) || name %in% seen) return(character(0))
+  seen <- c(seen, name)
+  con <- by_name[[name]]
+  if (is.null(con)) return(character(0))
+  if (isTRUE(con$is_higher_order)) {
+    dims <- unlist(con$dimensions)
+    dims <- dims[!is.na(dims) & nzchar(dims)]
+    items <- unlist(lapply(dims, function(d) gather_leaf_indicators(d, by_name, seen)), use.names = FALSE)
+  } else {
+    items <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
+  }
+  items <- items[!is.na(items) & nzchar(items)]
+  unique(items)
+}
+
+build_measurement <- function(constructs_payload, algorithm = "standard", interactions_payload = list(), for_prediction = FALSE) {
   algorithm <- tolower(as.character(algorithm))
   if (!(algorithm %in% c("standard", "consistent"))) {
     algorithm <- "standard"
   }
 
+  by_name <- list()
+  for (con in constructs_payload) {
+    con_name <- as.character(con$name)
+    if (nzchar(con_name)) by_name[[con_name]] <- con
+  }
+
   defs <- lapply(constructs_payload, function(con) {
     con_name <- as.character(con$name)
-    con_type <- tolower(as.character(con$type))
-    items <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
-    items <- items[!is.na(items) & nzchar(items)]
+    is_hoc <- isTRUE(con$is_higher_order)
 
-    if (!length(items)) {
-      stop(sprintf("Construct '%s' has no indicators.", con_name))
-    }
+    if (is_hoc) {
+      dimensions <- unlist(con$dimensions)
+      dimensions <- dimensions[!is.na(dimensions) & nzchar(dimensions)]
+      if (!length(dimensions)) {
+        stop(sprintf("Higher-order construct '%s' has no lower-order dimensions.", con_name))
+      }
+      hoc_type <- tolower(as.character(con$higher_order_type %||% "reflective"))
+      hoc_weights <- if (hoc_type == "formative") seminr::mode_B else seminr::mode_A
 
-    if (con_type == "formative") {
-      seminr::composite(con_name, items)
-    } else {
-      if (algorithm == "consistent") {
-        seminr::reflective(con_name, items)
+      if (isTRUE(for_prediction)) {
+        # seminr's predict_pls() has no published solution for two-stage higher-order
+        # models, so for prediction we represent each HOC with the repeated-indicators
+        # approach: a composite over the leaf indicators of all its dimensions.
+        leaf_items <- gather_leaf_indicators(con_name, by_name)
+        if (!length(leaf_items)) {
+          stop(sprintf("Higher-order construct '%s' has no indicators to predict.", con_name))
+        }
+        seminr::composite(con_name, leaf_items, weights = hoc_weights)
       } else {
-        seminr::composite(con_name, items, weights = seminr::mode_A)
+        seminr::higher_composite(
+          con_name,
+          dimensions = dimensions,
+          method = seminr::two_stage,
+          weights = hoc_weights
+        )
+      }
+    } else {
+      con_type <- tolower(as.character(con$type))
+      items <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
+      items <- items[!is.na(items) & nzchar(items)]
+
+      if (!length(items)) {
+        stop(sprintf("Construct '%s' has no indicators.", con_name))
+      }
+
+      if (length(items) == 1L) {
+        single_item_spec <- seminr::single_item(items[[1]])
+        if (con_type == "formative") {
+          seminr::composite(con_name, single_item_spec, weights = seminr::mode_B)
+        } else if (algorithm == "consistent") {
+          seminr::reflective(con_name, single_item_spec)
+        } else {
+          seminr::composite(con_name, single_item_spec, weights = seminr::mode_A)
+        }
+      } else if (con_type == "formative") {
+        seminr::composite(con_name, items)
+      } else {
+        if (algorithm == "consistent") {
+          seminr::reflective(con_name, items)
+        } else {
+          seminr::composite(con_name, items, weights = seminr::mode_A)
+        }
       }
     }
   })
 
-  interaction_defs <- lapply(interactions_payload %||% list(), function(interaction) {
+  # The same IV x moderator can moderate several outcomes; the frontend sends one
+  # interaction entry per outcome (same iv*moderator, different outcome). Each
+  # interaction term must be created only ONCE — defining the same iv*moderator term
+  # twice makes seminr throw "subscript out of bounds". The structural paths reference
+  # the single interaction construct by name for each outcome.
+  # Collect the UNIQUE pairs as plain data here, then build the terms with lapply:
+  # seminr::interaction_term() returns a closure that captures iv/moderator, and a
+  # for-loop would make every closure share the last iteration's values
+  # ("missing value where TRUE/FALSE needed"). lapply gives each its own frame.
+  seen_interaction_keys <- character(0)
+  unique_interactions <- list()
+  for (interaction in interactions_payload %||% list()) {
     iv <- as.character(interaction$iv %||% interaction$from %||% "")
     moderator <- as.character(interaction$moderator %||% "")
-    if (!nzchar(iv) || !nzchar(moderator)) return(NULL)
-
-    seminr::interaction_term(
-      iv = iv,
-      moderator = moderator,
-      method = seminr::two_stage
-    )
+    if (!nzchar(iv) || !nzchar(moderator)) next
+    key <- paste0(iv, "*", moderator)
+    if (key %in% seen_interaction_keys) next
+    seen_interaction_keys <- c(seen_interaction_keys, key)
+    unique_interactions[[length(unique_interactions) + 1L]] <- list(iv = iv, moderator = moderator)
+  }
+  interaction_defs <- lapply(unique_interactions, function(pair) {
+    iv <- pair$iv
+    moderator <- pair$moderator
+    seminr::interaction_term(iv = iv, moderator = moderator, method = seminr::two_stage)
   })
 
-  interaction_defs <- Filter(Negate(is.null), interaction_defs)
   all_defs <- c(defs, interaction_defs)
   do.call(seminr::constructs, all_defs)
 }
@@ -1447,14 +1655,43 @@ get_cached_pls_core <- function(payload, data) {
   core
 }
 
-run_pls_core <- function(payload, data) {
+ensure_moderator_main_effects <- function(paths_payload, interactions_payload) {
+  if (!length(interactions_payload)) return(paths_payload)
+  existing_keys <- vapply(paths_payload, function(p) {
+    paste0(as.character(p$from %||% ""), "|", as.character(p$to %||% ""))
+  }, character(1))
+  extra <- list()
+  for (interaction in interactions_payload) {
+    moderator <- as.character(interaction$moderator %||% "")
+    outcome   <- as.character(interaction$outcome   %||% "")
+    if (!nzchar(moderator) || !nzchar(outcome)) next
+    key <- paste0(moderator, "|", outcome)
+    if (!(key %in% existing_keys)) {
+      extra <- c(extra, list(list(from = moderator, to = outcome)))
+      existing_keys <- c(existing_keys, key)
+    }
+  }
+  c(paths_payload, extra)
+}
+
+has_higher_order_construct <- function(payload) {
+  constructs <- payload$constructs %||% list()
+  any(vapply(constructs, function(con) isTRUE(con$is_higher_order), logical(1)))
+}
+
+run_pls_core <- function(payload, data, for_prediction = FALSE) {
   algorithm <- if (!is.null(payload$algorithm)) as.character(payload$algorithm) else "standard"
   measurement_model <- build_measurement(
     payload$constructs,
     algorithm = algorithm,
-    interactions_payload = payload$interactions %||% list()
+    interactions_payload = payload$interactions %||% list(),
+    for_prediction = for_prediction
   )
-  structural_model <- build_structural(payload$paths)
+  # two_stage interactions require the moderator to have a direct structural path to the
+  # outcome. The frontend always includes it, but this guard prevents "subscript out of
+  # bounds" from seminr if the path is ever absent.
+  safe_paths <- ensure_moderator_main_effects(payload$paths, payload$interactions %||% list())
+  structural_model <- build_structural(safe_paths)
 
   model <- seminr::estimate_pls(
     data = data,
@@ -1464,6 +1701,32 @@ run_pls_core <- function(payload, data) {
 
   summary_obj <- summary(model)
   list(model = model, summary = summary_obj)
+}
+
+# seminrExtras IPMA/cIPMA (compute_ipma_performance) recurse infinitely when a
+# single-item construct's name equals its indicator column name: the indicator is
+# mistaken for a lower-order construct and the function calls itself forever
+# ("node stack overflow"). Metis names single-item moderators identically to their
+# column (e.g. "Gender transform"), which triggers it. For advanced analysis we point
+# any such construct at a renamed copy of its column so IPMA/cIPMA can run; the
+# construct name (and therefore all IPMA/NCA output labels) is left unchanged.
+rename_colliding_single_item_indicators <- function(payload, data) {
+  constructs <- payload$constructs %||% list()
+  for (i in seq_along(constructs)) {
+    con <- constructs[[i]]
+    if (isTRUE(con$is_higher_order)) next
+    con_name <- as.character(con$name)
+    inds <- unlist(lapply(con$indicators, function(it) as.character(it)), use.names = FALSE)
+    inds <- inds[!is.na(inds) & nzchar(inds)]
+    if (length(inds) == 1L && identical(inds[[1]], con_name) && con_name %in% names(data)) {
+      alias <- paste0(con_name, " (indicator)")
+      while (alias %in% names(data)) alias <- paste0(alias, "_")
+      data[[alias]] <- data[[con_name]]
+      constructs[[i]]$indicators <- list(alias)
+    }
+  }
+  payload$constructs <- constructs
+  list(payload = payload, data = data)
 }
 
 extract_specific_indirect_effects <- function(payload, boot_model, alpha = 0.05) {
@@ -1521,7 +1784,11 @@ extract_specific_indirect_effects <- function(payload, boot_model, alpha = 0.05)
           for (idx in seq_len(length(path_nodes) - 1L)) {
             from_node <- path_nodes[[idx]]
             to_node <- path_nodes[[idx + 1L]]
-            product <- product * suppressWarnings(as.numeric(boot_model$boot_paths[from_node, to_node, k]))
+            if (from_node %in% rownames(boot_model$boot_paths) && to_node %in% colnames(boot_model$boot_paths)) {
+              product <- product * suppressWarnings(as.numeric(boot_model$boot_paths[from_node, to_node, k]))
+            } else {
+              product <- 0
+            }
           }
           product
         }, numeric(1))
@@ -2155,6 +2422,70 @@ extract_quality_criteria <- function(payload, data, core) {
   )
 }
 
+extract_hoc_results <- function(payload, model, summary_obj) {
+  constructs <- payload$constructs %||% list()
+  hoc_constructs <- Filter(function(con) isTRUE(con$is_higher_order), constructs)
+  if (length(hoc_constructs) == 0) return(list())
+
+  ol <- model$outer_loadings
+  ow <- model$outer_weights
+  vif_items <- summary_obj$validity$vif_items %||%
+               summary_obj$validity$VIF_items %||%
+               summary_obj$validity$vifItems %||%
+               summary_obj$validity$VIFItems
+
+  hoc_rows <- list()
+
+  for (con in hoc_constructs) {
+    hoc_name <- as.character(con$name)
+    hoc_type <- tolower(as.character(con$higher_order_type %||% "reflective"))
+    dimensions <- unlist(con$dimensions)
+
+    for (dim_name in dimensions) {
+      loading_val <- NA_real_
+      weight_val <- NA_real_
+      vif_val <- NA_real_
+
+      if (!is.null(ol) && dim_name %in% rownames(ol) && hoc_name %in% colnames(ol)) {
+        loading_val <- safe_num(ol[dim_name, hoc_name])
+      }
+
+      if (!is.null(ow) && dim_name %in% rownames(ow) && hoc_name %in% colnames(ow)) {
+        weight_val <- safe_num(ow[dim_name, hoc_name])
+      }
+
+      if (!is.null(vif_items)) {
+        if (is.list(vif_items) && !is.null(vif_items[[hoc_name]]) && dim_name %in% names(vif_items[[hoc_name]])) {
+          vif_val <- safe_num(vif_items[[hoc_name]][[dim_name]])
+        } else if (is.matrix(vif_items) || is.data.frame(vif_items)) {
+          if (dim_name %in% rownames(vif_items) && hoc_name %in% colnames(vif_items)) {
+            vif_val <- safe_num(vif_items[dim_name, hoc_name])
+          } else if (dim_name %in% names(vif_items)) {
+            vif_val <- safe_num(vif_items[[dim_name]])
+          }
+        } else if (dim_name %in% names(vif_items)) {
+          vif_val <- safe_num(vif_items[[dim_name]])
+        }
+      }
+
+      loc_con <- Filter(function(c) as.character(c$name) == dim_name, constructs)
+      loc_type <- if (length(loc_con) > 0) tolower(as.character(loc_con[[1]]$type %||% "reflective")) else "reflective"
+
+      hoc_rows[[length(hoc_rows) + 1]] <- list(
+        hoc_construct = hoc_name,
+        loc_construct = dim_name,
+        hoc_type = hoc_type,
+        loc_type = loc_type,
+        loading = loading_val,
+        weight = weight_val,
+        vif = vif_val
+      )
+    }
+  }
+
+  hoc_rows
+}
+
 extract_pls_sections <- function(payload, data, core) {
   summary_obj <- core$summary
   model <- core$model
@@ -2172,7 +2503,8 @@ extract_pls_sections <- function(payload, data, core) {
       outer_loadings = as_rows(summary_obj$loadings),
       outer_weights = as_rows(summary_obj$weights),
       latent_variables = extract_latent_variables(summary_obj),
-      residuals = extract_construct_residuals(summary_obj, model)
+      residuals = extract_construct_residuals(summary_obj, model),
+      hoc_results = extract_hoc_results(payload, model, summary_obj)
     ),
     quality_criteria = quality_criteria,
     algorithm = list(
@@ -2432,17 +2764,100 @@ normalize_nca_summary_rows <- function(summary_obj, allowed_names) {
   filter_rows_by_construct(rows, allowed_names)
 }
 
-normalize_bottleneck_rows <- function(summary_obj, method_keys = c("ce_fdh", "cr_fdh")) {
+normalize_bottleneck_name <- function(value) {
+  tolower(gsub("[[:space:]_.()%/-]+", "", as.character(value %||% "")))
+}
+
+is_bottleneck_meta_column <- function(column_name) {
+  normalize_bottleneck_name(column_name) %in% c("method", "ceiling", "ceilingline", "ceilingmethod")
+}
+
+is_bottleneck_outcome_column <- function(column_name) {
+  normalize_bottleneck_name(column_name) %in% c(
+    "outcomelevel",
+    "outcome",
+    "desiredoutcome",
+    "desiredoutcomelevel",
+    "targetlevel",
+    "performancelevel",
+    "level",
+    "row",
+    "rowname"
+  )
+}
+
+looks_like_outcome_levels <- function(values) {
+  nums <- suppressWarnings(as.numeric(unlist(values, use.names = FALSE)))
+  finite <- is.finite(nums)
+  if (sum(finite) < min(3L, length(values))) return(FALSE)
+
+  nums <- nums[finite]
+  if (any(nums < 0 | nums > 100)) return(FALSE)
+  if (length(nums) > 1L && any(diff(nums) < 0)) return(FALSE)
+  length(unique(nums)) >= min(3L, length(nums))
+}
+
+infer_bottleneck_outcome_key <- function(method_rows) {
+  all_keys <- unique(unlist(lapply(method_rows, names), use.names = FALSE))
+  all_keys <- all_keys[!vapply(all_keys, is_bottleneck_meta_column, logical(1))]
+  if (!length(all_keys)) return(NULL)
+
+  explicit <- all_keys[vapply(all_keys, is_bottleneck_outcome_column, logical(1))]
+  if (length(explicit)) return(list(key = explicit[[1]], restore_condition = FALSE))
+
+  first_key <- all_keys[[1]]
+  first_values <- lapply(method_rows, function(row) row[[first_key]] %||% NA)
+  if (looks_like_outcome_levels(first_values)) {
+    return(list(key = first_key, restore_condition = TRUE))
+  }
+
+  NULL
+}
+
+normalize_bottleneck_rows <- function(summary_obj, method_keys = c("ce_fdh", "cr_fdh"), predictor_names = character(0), target_construct = NULL) {
   bottleneck <- summary_obj$bottleneck %||% list()
   rows <- list()
+  predictor_names <- as.character(predictor_names %||% character(0))
+  predictor_names <- predictor_names[!is.na(predictor_names) & nzchar(predictor_names)]
+  target_construct <- as.character(target_construct %||% "")
+  if (nzchar(target_construct)) {
+    predictor_names <- predictor_names[predictor_names != target_construct]
+  }
   for (method_key in method_keys) {
     method_rows <- as_rows(bottleneck[[method_key]])
     if (!length(method_rows)) next
+    outcome_info <- infer_bottleneck_outcome_key(method_rows)
+    outcome_key <- outcome_info$key %||% NULL
+    restore_condition <- isTRUE(outcome_info$restore_condition)
+    all_keys <- unique(unlist(lapply(method_rows, names), use.names = FALSE))
+    raw_condition_keys <- all_keys[
+      !vapply(all_keys, is_bottleneck_meta_column, logical(1)) &
+        !vapply(all_keys, is_bottleneck_outcome_column, logical(1)) &
+        !(all_keys %in% outcome_key)
+    ]
+    if (nzchar(target_construct)) {
+      raw_condition_keys <- raw_condition_keys[raw_condition_keys != target_construct]
+    }
+    condition_keys <- if (length(predictor_names)) predictor_names else raw_condition_keys
+    if (restore_condition && (!length(predictor_names) || outcome_key %in% predictor_names)) {
+      condition_keys <- unique(c(outcome_key, condition_keys))
+    }
+    condition_keys <- unique(condition_keys)
+
     for (row in method_rows) {
-      rows[[length(rows) + 1L]] <- c(
-        list(Method = nca_method_label(method_key), Ceiling = method_key),
-        row
+      normalized <- list(
+        Method = "NCA",
+        Ceiling = nca_method_label(method_key),
+        Outcome_Level = if (!is.null(outcome_key)) row[[outcome_key]] %||% NULL else NULL
       )
+      for (condition_key in condition_keys) {
+        normalized[[condition_key]] <- if (restore_condition && identical(condition_key, outcome_key)) {
+          "NN"
+        } else {
+          row[[condition_key]] %||% "NN"
+        }
+      }
+      rows[[length(rows) + 1L]] <- normalized
     }
   }
   rows
@@ -2586,48 +3001,63 @@ run_advanced_sections <- function(payload, data, core, timings = NULL) {
   nca_summary <- NULL
   cipma_summary <- NULL
 
+  # Each sub-analysis runs in its own tryCatch so a failure in one (including a
+  # `node stack overflow` from seminrExtras on a pathological model) degrades to a
+  # clear note and partial results instead of failing the whole request with a 500.
   if (isTRUE(analyses$ipma)) {
-    ipma_result <- timed_or_direct(timings, "advanced assess_ipma", seminrExtras::assess_ipma(
-      seminr_model = core$model,
-      target = target_construct,
-      scale_min = 1,
-      scale_max = 7,
-      seed = 123
-    ))
-    ipma_summary <- timed_or_direct(timings, "advanced summary ipma", summary(ipma_result))
-    append_log(sprintf("IPMA completed for target '%s'.", target_construct))
+    tryCatch({
+      ipma_result <- timed_or_direct(timings, "advanced assess_ipma", seminrExtras::assess_ipma(
+        seminr_model = core$model,
+        target = target_construct,
+        scale_min = 1,
+        scale_max = 7,
+        seed = 123
+      ))
+      ipma_summary <- timed_or_direct(timings, "advanced summary ipma", summary(ipma_result))
+      append_log(sprintf("IPMA completed for target '%s'.", target_construct))
+    }, error = function(err) {
+      append_log(sprintf("IPMA could not be computed for target '%s': %s", target_construct, conditionMessage(err)))
+    })
   }
 
   if (isTRUE(analyses$nca) && !isTRUE(analyses$cipma)) {
-    nca_result <- timed_or_direct(timings, "advanced assess_nca", seminrExtras::assess_nca(
-      seminr_model = core$model,
-      target = target_construct,
-      predictors = predecessor_names,
-      test.rep = run_depth,
-      steps = bottleneck_step,
-      seed = 123
-    ), details = list(replications = run_depth))
-    nca_summary <- timed_or_direct(timings, "advanced summary nca", summary(nca_result))
-    append_log(sprintf("NCA completed for target '%s' with %s replications.", target_construct, run_depth))
+    tryCatch({
+      nca_result <- timed_or_direct(timings, "advanced assess_nca", seminrExtras::assess_nca(
+        seminr_model = core$model,
+        target = target_construct,
+        predictors = predecessor_names,
+        test.rep = run_depth,
+        steps = bottleneck_step,
+        seed = 123
+      ), details = list(replications = run_depth))
+      nca_summary <- timed_or_direct(timings, "advanced summary nca", summary(nca_result))
+      append_log(sprintf("NCA completed for target '%s' with %s replications.", target_construct, run_depth))
+    }, error = function(err) {
+      append_log(sprintf("NCA could not be computed for target '%s': %s", target_construct, conditionMessage(err)))
+    })
   }
 
   if (isTRUE(analyses$cipma)) {
-    cipma_result <- timed_or_direct(timings, "advanced assess_cipma", seminrExtras::assess_cipma(
-      seminr_model = core$model,
-      target = target_construct,
-      scale_min = 1,
-      scale_max = 7,
-      nca = isTRUE(analyses$nca),
-      nca_ceilings = c("ce_fdh", "cr_fdh"),
-      nca_test.rep = run_depth,
-      nca_steps = bottleneck_step,
-      seed = 123
-    ), details = list(nca = isTRUE(analyses$nca), nca_replications = run_depth))
-    cipma_summary <- timed_or_direct(timings, "advanced summary cipma", summary(cipma_result))
-    append_log(sprintf("cIPMA completed for target '%s'.", target_construct))
-    if (isTRUE(analyses$nca)) {
-      append_log(sprintf("NCA tables reused cIPMA's integrated NCA run for target '%s'.", target_construct))
-    }
+    tryCatch({
+      cipma_result <- timed_or_direct(timings, "advanced assess_cipma", seminrExtras::assess_cipma(
+        seminr_model = core$model,
+        target = target_construct,
+        scale_min = 1,
+        scale_max = 7,
+        nca = isTRUE(analyses$nca),
+        nca_ceilings = c("ce_fdh", "cr_fdh"),
+        nca_test.rep = run_depth,
+        nca_steps = bottleneck_step,
+        seed = 123
+      ), details = list(nca = isTRUE(analyses$nca), nca_replications = run_depth))
+      cipma_summary <- timed_or_direct(timings, "advanced summary cipma", summary(cipma_result))
+      append_log(sprintf("cIPMA completed for target '%s'.", target_construct))
+      if (isTRUE(analyses$nca)) {
+        append_log(sprintf("NCA tables reused cIPMA's integrated NCA run for target '%s'.", target_construct))
+      }
+    }, error = function(err) {
+      append_log(sprintf("cIPMA could not be computed for target '%s': %s", target_construct, conditionMessage(err)))
+    })
   }
 
   priority_map <- if (!is.null(ipma_summary)) {
@@ -2661,7 +3091,7 @@ run_advanced_sections <- function(payload, data, core, timings = NULL) {
     NULL
   }
   bottleneck_table <- if (!is.null(bottleneck_source)) {
-    normalize_bottleneck_rows(bottleneck_source)
+    normalize_bottleneck_rows(bottleneck_source, predictor_names = predecessor_names, target_construct = target_construct)
   } else {
     list()
   }
@@ -3596,6 +4026,26 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
       data <- prepared$data
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
 
+      # seminr::predict_pls() has no published solution for two-stage higher-order
+      # models and returns NULL for them. When the model has a HOC, build a
+      # prediction-only core that represents each HOC with the repeated-indicators
+      # approach so out-of-sample prediction can actually run.
+      uses_hoc <- has_higher_order_construct(payload)
+      predict_core <- core
+      predict_note <- NULL
+      if (uses_hoc) {
+        predict_core <- time_phase(timings, "build prediction (repeated-indicators) model",
+          run_pls_core(payload, data, for_prediction = TRUE))
+        hoc_names <- vapply(
+          Filter(function(con) isTRUE(con$is_higher_order), payload$constructs %||% list()),
+          function(con) as.character(con$name), character(1), USE.NAMES = FALSE
+        )
+        predict_note <- sprintf(
+          "PLSpredict used the repeated-indicators representation of higher-order construct(s) %s because seminr has no published method for predicting two-stage higher-order models.",
+          paste(hoc_names, collapse = ", ")
+        )
+      }
+
       # Use defaults if not provided by the frontend
       folds <- if (!is.null(payload$folds)) as.integer(payload$folds) else 5
       reps <- if (!is.null(payload$repetitions)) as.integer(payload$repetitions) else 3
@@ -3606,19 +4056,46 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
 
       # Execute ACTUAL k-fold out-of-sample prediction
       predict_model <- time_phase(timings, "seminr predict_pls", seminr::predict_pls(
-        model = core$model,
+        model = predict_core$model,
         technique = seminr::predict_DA,
         noFolds = folds,
         reps = reps
       ), details = list(folds = folds, repetitions = reps))
 
-      # Note: We are passing predict_model instead of pred_summary now!
-      results <- time_phase(
-        timings,
-        "extract plspredict response sections",
-        extract_plspredict_sections(payload, data, core, predict_model, folds, reps, timings = timings)
-      )
-      attach_timing_metadata(list(success = TRUE, results = results), timings)
+      if (is.null(predict_model)) {
+        # predict_pls returns NULL for model shapes it cannot handle. Surface a clear
+        # message instead of letting extract_plspredict_sections crash on the NULL.
+        unavailable_note <- "PLSpredict could not be computed for this model. seminr returned no prediction (this can happen for model shapes it does not support)."
+        results <- list(
+          final_results = list(
+            plspredict_mv_summary = list(),
+            plspredict_lv_summary = list(),
+            cvpat_lv_summary = list(),
+            mv_predictions_and_errors = list(),
+            lv_predictions_and_errors = list()
+          ),
+          algorithm = list(
+            settings = list(method = "PLSpredict (k-fold cross-validation)", mode = "PLS-SEM"),
+            execution_log = list(list(message = unavailable_note))
+          ),
+          meta = list(mode = "plspredict", engine = "seminr", rows = nrow(data), columns = ncol(data))
+        )
+        attach_timing_metadata(list(success = TRUE, results = results), timings)
+      } else {
+        # Note: We are passing predict_model instead of pred_summary now!
+        results <- time_phase(
+          timings,
+          "extract plspredict response sections",
+          extract_plspredict_sections(payload, data, predict_core, predict_model, folds, reps, timings = timings)
+        )
+        if (!is.null(predict_note)) {
+          results$algorithm$execution_log <- c(
+            list(list(message = predict_note)),
+            results$algorithm$execution_log %||% list()
+          )
+        }
+        attach_timing_metadata(list(success = TRUE, results = results), timings)
+      }
     }, plspredict_timeout_seconds)
   }, error = function(err) {
     res$status <- 500
@@ -3635,6 +4112,11 @@ pr$handle("POST", "/run-advanced-analysis", function(req, res) {
       prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
       payload <- prepared$payload
       data <- prepared$data
+      # Avoid the seminrExtras IPMA/cIPMA infinite-recursion that occurs when a
+      # single-item construct's name equals its indicator column name.
+      adv_inputs <- rename_colliding_single_item_indicators(payload, data)
+      payload <- adv_inputs$payload
+      data <- adv_inputs$data
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
 
       results <- time_phase(timings, "run advanced response sections", run_advanced_sections(payload, data, core, timings = timings))

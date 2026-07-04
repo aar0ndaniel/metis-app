@@ -1,6 +1,6 @@
 export type VariableKind = 'MET' | 'CAT'
 
-export interface WorkspaceChildBase {
+interface WorkspaceChildBase {
   id: string
   name: string
   type: 'model' | 'dataset' | 'result'
@@ -60,3 +60,4 @@ export function isDatasetChild(child: WorkspaceChild | null | undefined): child 
 export function isModelChild(child: WorkspaceChild | null | undefined): child is WorkspaceModelChild {
   return Boolean(child && child.type === 'model')
 }
+

@@ -22,12 +22,12 @@ function getFileInfo(fileName: string): { label: string; color: string; icon: JS
   const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
   switch (ext) {
     case 'csv':
-      return { label: 'CSV File',   color: '#87976B', icon: <FileCsv size={18} color="#87976B" weight="fill" /> }
+      return { label: 'CSV File',   color: 'var(--color-accent)', icon: <FileCsv size={18} color="var(--color-accent)" weight="fill" /> }
     case 'xlsx':
     case 'xls':
       return { label: 'Excel File', color: '#32D583', icon: <FileXls size={18} color="#32D583" weight="fill" /> }
     default:
-      return { label: 'Data File',  color: '#87976B', icon: <FileCsv size={18} color="#87976B" weight="fill" /> }
+      return { label: 'Data File',  color: 'var(--color-accent)', icon: <FileCsv size={18} color="var(--color-accent)" weight="fill" /> }
   }
 }
 
@@ -98,7 +98,7 @@ function truncateDatasetName(name: string): string {
 }
 
 function getWorkspaceDisplayName(name: string): string {
-  return name.replace(/\.(ada|metis)$/i, '')
+  return name.replace(/\.(ada|metis|metisws)$/i, '')
 }
 
 function countWorkspaceDatasets(workspace: Workspace | null | undefined): number {
@@ -206,7 +206,7 @@ function SelectField({
         {open && (
           <div
             className="absolute z-20 left-0 right-0"
-            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: '4px 0' }}
+            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-modal-popover)', padding: '4px 0' }}
           >
             {options.map(o => (
               <button
@@ -215,7 +215,7 @@ function SelectField({
                 className="w-full flex items-center hover:bg-[rgb(var(--color-hover-rgb)/0.75)] transition-colors text-left"
                 style={{ height: 32, padding: '0 12px' }}
               >
-                <span style={{ color: o === value ? '#87976B' : 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>{o}</span>
+                <span style={{ color: o === value ? 'var(--color-accent)' : 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>{o}</span>
               </button>
             ))}
           </div>
@@ -259,7 +259,7 @@ function WorkspaceSelectField({
         {open && hasOptions && (
           <div
             className="absolute z-20 left-0 right-0"
-            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', padding: '4px 0', maxHeight: 196, overflowY: 'auto' }}
+            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-modal-popover)', padding: '4px 0', maxHeight: 196, overflowY: 'auto' }}
           >
             {options.map((workspace) => {
               const datasetCount = countWorkspaceDatasets(workspace)
@@ -270,7 +270,7 @@ function WorkspaceSelectField({
                   className="w-full flex items-center justify-between hover:bg-[rgb(var(--color-hover-rgb)/0.75)] transition-colors text-left"
                   style={{ minHeight: 34, padding: '6px 12px', gap: 10 }}
                 >
-                  <span style={{ color: workspace.id === value ? '#87976B' : 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: workspace.id === value ? 'var(--color-accent)' : 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {getWorkspaceDisplayName(workspace.name)}
                   </span>
                   <span style={{ color: 'var(--color-text-muted)', fontFamily: 'Inter, sans-serif', fontSize: 10, whiteSpace: 'nowrap' }}>
@@ -322,8 +322,8 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
     if (!hasStateWorkspace && workspaceId && (workspaceName || workspacePath)) {
       options.unshift({
         id: workspaceId,
-        name: workspaceName || 'Workspace.ada',
-        color: '#87976B',
+        name: workspaceName || 'Workspace.metisws',
+        color: 'var(--color-accent)',
         expanded: true,
         path: workspacePath,
         children: [],
@@ -492,7 +492,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
       const finalPath = persisted.internalName || fileName || 'dataset.csv'
       const normalizedWorkspacePath = targetWorkspacePath.replace(/\\/g, '/')
       const absoluteDatasetPath = persisted.datasetTempPath
-        || (normalizedWorkspacePath && !normalizedWorkspacePath.toLowerCase().endsWith('.ada')
+        || (normalizedWorkspacePath && !/\.(ada|metis|metisws)$/i.test(normalizedWorkspacePath)
           ? `${normalizedWorkspacePath}/${finalPath}`
           : finalPath)
 
@@ -614,7 +614,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
           backgroundColor: 'var(--color-surface)',
           borderRadius: 16,
           border: '1px solid var(--color-border)',
-          boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+          boxShadow: 'var(--shadow-modal)',
           overflow: 'hidden',
         }}
       >
@@ -703,13 +703,13 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
             >
               <div className="flex items-center" style={{ gap: 6, padding: '4px 10px', borderRadius: 6, backgroundColor: 'var(--color-input)' }}>
                 <span style={{ color: 'var(--color-text-muted)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>Cases</span>
-                <span style={{ color: '#87976B', fontFamily: 'Inter, sans-serif', fontSize: 12, fontWeight: 700 }}>
+                <span style={{ color: 'var(--color-accent)', fontFamily: 'Inter, sans-serif', fontSize: 12, fontWeight: 700 }}>
                   {parseResult.totalRows.toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center" style={{ gap: 6, padding: '4px 10px', borderRadius: 6, backgroundColor: 'var(--color-input)' }}>
                 <span style={{ color: 'var(--color-text-muted)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>Variables</span>
-                <span style={{ color: '#87976B', fontFamily: 'Inter, sans-serif', fontSize: 12, fontWeight: 700 }}>
+                <span style={{ color: 'var(--color-accent)', fontFamily: 'Inter, sans-serif', fontSize: 12, fontWeight: 700 }}>
                   {parseResult.headers.length}
                 </span>
               </div>
@@ -786,7 +786,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
                             key={i}
                             style={{ padding: '8px 14px', textAlign: 'left', whiteSpace: 'nowrap' }}
                           >
-                            <span style={{ color: '#87976B', fontFamily: 'Inter, sans-serif', fontSize: 11, fontWeight: 700 }}>{h}</span>
+                            <span style={{ color: 'var(--color-accent)', fontFamily: 'Inter, sans-serif', fontSize: 11, fontWeight: 700 }}>{h}</span>
                           </th>
                         ))}
                       </tr>
@@ -841,8 +841,8 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
             className="flex items-center"
             style={{ height: 34, backgroundColor: 'rgba(170,17,85,0.06)', borderRadius: 7, padding: '0 12px', gap: 8, border: '1px solid rgba(170,17,85,0.12)' }}
           >
-            <Info size={13} color="#87976B" />
-            <span style={{ color: '#87976B', fontFamily: 'Inter, sans-serif', fontSize: 11 }}>
+            <Info size={13} color="var(--color-accent)" />
+            <span style={{ color: 'var(--color-accent)', fontFamily: 'Inter, sans-serif', fontSize: 11 }}>
               Define a missing value marker if your file uses a custom symbol for missing values
             </span>
           </div>

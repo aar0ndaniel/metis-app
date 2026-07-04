@@ -33,12 +33,12 @@ export default function CalculatingModal() {
         role="dialog"
         aria-live="polite"
         aria-label={active.title}
-        className="rounded-xl shadow-2xl px-8 py-7 w-[480px] max-w-[90vw]"
+        className="rounded-xl px-8 py-7 w-[480px] max-w-[90vw]"
         style={{
           background: 'var(--color-elevated)',
           border: '1px solid var(--color-border)',
           color: 'var(--color-text-primary)',
-          boxShadow: 'var(--shadow-floating-panel)',
+          boxShadow: 'var(--shadow-modal)',
         }}
       >
         <h2 className="text-lg font-medium mb-1">{active.title}</h2>
