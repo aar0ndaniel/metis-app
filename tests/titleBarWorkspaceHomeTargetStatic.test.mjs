@@ -8,6 +8,7 @@ const workspaceRoot = path.resolve(__dirname, '..')
 
 const appSource = await fs.readFile(path.join(workspaceRoot, 'src/App.tsx'), 'utf8')
 const modelCanvasSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
+const titleBarSource = await fs.readFile(path.join(workspaceRoot, 'src/components/TitleBar.tsx'), 'utf8')
 
 assert.match(
   appSource,
@@ -28,9 +29,15 @@ assert.match(
 )
 
 assert.match(
+  titleBarSource,
+  /action:\s*'toggle-home-canvas'/,
+  'TitleBar logo should use the shared toggle-home-canvas action.',
+)
+
+assert.match(
   modelCanvasSource,
-  /const returnToWorkspaceHome = useCallback\(\(\) => \{\s*onReturnHome\(activeWs\?\.id \?\? null\)\s*\}, \[activeWs\?\.id, onReturnHome\]\)/,
-  'ModelCanvas should return home through the App callback with the owning workspace id.',
+  /const returnToWorkspaceHome = useCallback\(\(\) => \{\s*onReturnHome\(modelId \?\? activeWs\?\.id \?\? null\)\s*\}, \[activeWs\?\.id, modelId, onReturnHome\]\)/,
+  'ModelCanvas should return home through App with the route model id first, so App resolves the owning workspace instead of a fallback active workspace.',
 )
 
 assert.doesNotMatch(

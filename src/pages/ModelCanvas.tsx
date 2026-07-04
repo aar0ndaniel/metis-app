@@ -796,8 +796,8 @@ export default function ModelCanvas({
   const linkedDataset = activeWs ? getLinkedDatasetForModel(activeWs as any, modelId) : undefined
   const electronAPI = (window as any).electronAPI
   const returnToWorkspaceHome = useCallback(() => {
-    onReturnHome(activeWs?.id ?? null)
-  }, [activeWs?.id, onReturnHome])
+    onReturnHome(modelId ?? activeWs?.id ?? null)
+  }, [activeWs?.id, modelId, onReturnHome])
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [dirtyModels, setDirtyModels] = useState<Record<string, boolean>>({})
   const modelDraftsRef = useRef<Record<string, ModelDraftState>>({})
