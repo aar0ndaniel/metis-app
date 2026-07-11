@@ -47,7 +47,13 @@ interface RunPlsR2Result {
   r2: number | null
 }
 
-export interface RunPlsResponse {
+export interface AnalysisErrorMetadata {
+  errorCode?: string
+  userAction?: string
+  backendDetail?: string
+}
+
+export interface RunPlsResponse extends AnalysisErrorMetadata {
   success: boolean
   status?: number
   url?: string
@@ -85,7 +91,7 @@ export interface RunAdvancedAnalysisRequest extends RunPlsRequest {
   bottleneckStepSize?: number
 }
 
-export interface GenericAnalysisResponse {
+export interface GenericAnalysisResponse extends AnalysisErrorMetadata {
   success: boolean
   status?: number
   url?: string
@@ -117,6 +123,9 @@ function bridgeMissingResponse(action: string, availableKeys: string): GenericAn
     success: false,
     status: 0,
     error: `Electron bridge unavailable for ${action}. Preload may not be loaded. Available bridge keys: ${availableKeys}`,
+    errorCode: 'ELECTRON_BRIDGE_MISSING',
+    userAction: 'Restart Metis. If the problem continues, reinstall or run setup so the secure preload bridge is restored.',
+    backendDetail: `Available bridge keys: ${availableKeys}`,
   }
 }
 
@@ -134,6 +143,9 @@ function bridgeMissingPlsResponse(action: string, availableKeys: string): RunPls
     success: false,
     status: 0,
     error: `Electron bridge unavailable for ${action}. Preload may not be loaded. Available bridge keys: ${availableKeys}`,
+    errorCode: 'ELECTRON_BRIDGE_MISSING',
+    userAction: 'Restart Metis. If the problem continues, reinstall or run setup so the secure preload bridge is restored.',
+    backendDetail: `Available bridge keys: ${availableKeys}`,
   }
 }
 
@@ -188,6 +200,9 @@ async function postToLocalPlumber(path: string, payload: unknown, signal?: Abort
         status: 0,
         url: LOCAL_PLUMBER_BASE_URL,
         error: normalizeFetchError(error),
+        errorCode: 'BACKEND_UNREACHABLE',
+        userAction: 'Restart Metis and run the analysis again. If setup recently changed, verify the selected R runtime.',
+        backendDetail: error?.message || 'Local Plumber request failed.',
       }
     }
   }
@@ -197,6 +212,9 @@ async function postToLocalPlumber(path: string, payload: unknown, signal?: Abort
     status: 0,
     url: LOCAL_PLUMBER_BASE_URL,
     error: `Cannot reach local PLS backend at ${LOCAL_PLUMBER_BASE_URL}.`,
+    errorCode: 'BACKEND_UNREACHABLE',
+    userAction: 'Restart Metis and run the analysis again. If setup recently changed, verify the selected R runtime.',
+    backendDetail: `Cannot reach local PLS backend at ${LOCAL_PLUMBER_BASE_URL}.`,
   }
 }
 

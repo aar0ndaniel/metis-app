@@ -25,4 +25,28 @@ assert.match(
   'Plumber responses should tolerate non-JSON error bodies so route failures surface clearly.'
 )
 
+assert.match(
+  source,
+  /function plumberBridgeExceptionResponse\(err: any, action: string\)[\s\S]*errorCode:\s*'BACKEND_STOPPED'[\s\S]*userAction:/,
+  'Unexpected Electron-to-Plumber bridge exceptions should include structured recovery metadata.',
+)
+
+assert.match(
+  source,
+  /errorCode:\s*'BACKEND_NOT_READY'[\s\S]*userAction:\s*getPlumberNotReadyHint\(\)/,
+  'Backend-not-ready responses should include a structured setup/restart action.',
+)
+
+assert.match(
+  source,
+  /errorCode:\s*'BACKEND_RESPONSE_READ_FAILED'/,
+  'Response-read failures should include a stable errorCode.',
+)
+
+assert.match(
+  source,
+  /errorCode:\s*'BACKEND_ROUTE_NOT_FOUND'/,
+  'Repeated missing-route failures should include a stable errorCode.',
+)
+
 console.log('PASS electron plumber route recovery guards')

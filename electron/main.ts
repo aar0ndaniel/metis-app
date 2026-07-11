@@ -237,6 +237,8 @@ function plumberBridgeExceptionResponse(err: any, action: string) {
     url: plumberBaseUrl,
     rscript: resolvedRscript,
     error: `Metis could not complete the ${action} request because the local R analysis engine stopped responding. Try a smaller run, close other heavy apps, or restart Metis and run it again.`,
+    errorCode: 'BACKEND_STOPPED',
+    userAction: 'Try a smaller run, close other heavy apps, restart Metis, and run the analysis again.',
     backendDetail: err?.message || 'Unknown bridge error.',
     runtimeStatus: getBundledPortableRuntimeStatus(),
     recentPlumberLogs: getRecentPlumberLogs(),
@@ -516,7 +518,7 @@ async function notifyCrashReport(kind: string, summary: string, reportPath: stri
 
 function buildSplashHtml(): string {
   const splashTheme = readStoredThemePreference()
-  const splashVersionLabel = app.getVersion() || '0.2.1'
+  const splashVersionLabel = app.getVersion() || '0.2.2'
   const isLightSplash = splashTheme === 'light'
   const logoAssetPath = isLightSplash ? 'src/assets/logo-black.svg' : 'src/assets/logo-primary.svg'
   const splashColors = isLightSplash
@@ -4084,6 +4086,9 @@ ipcMain.handle('plumber:health', async () => {
         url: plumberBaseUrl,
         rscript: resolvedRscript,
         error: 'PLS backend is not ready.',
+        errorCode: 'BACKEND_NOT_READY',
+        userAction: getPlumberNotReadyHint(),
+        backendDetail: 'PLS backend is not ready.',
         runtimeStatus: getBundledPortableRuntimeStatus(),
         recentPlumberLogs: getRecentPlumberLogs(),
       }
@@ -4106,10 +4111,13 @@ ipcMain.handle('plumber:health', async () => {
     return {
       success: false,
       status: 0,
-      url: plumberBaseUrl,
-      rscript: resolvedRscript,
-      error: err.message,
-      runtimeStatus: getBundledPortableRuntimeStatus(),
+        url: plumberBaseUrl,
+        rscript: resolvedRscript,
+        error: err.message,
+        errorCode: 'BACKEND_HEALTH_CHECK_FAILED',
+        userAction: getPlumberNotReadyHint(),
+        backendDetail: err?.message || 'Plumber health check failed.',
+        runtimeStatus: getBundledPortableRuntimeStatus(),
       recentPlumberLogs: getRecentPlumberLogs(),
     }
   }
@@ -4129,6 +4137,9 @@ async function postToPlumber(pathname: string, payload: any) {
         url: plumberBaseUrl,
         rscript: resolvedRscript,
         error: `PLS backend is not ready. ${getPlumberNotReadyHint()}`,
+        errorCode: 'BACKEND_NOT_READY',
+        userAction: getPlumberNotReadyHint(),
+        backendDetail: 'PLS backend is not ready.',
         runtimeStatus: getBundledPortableRuntimeStatus(),
         recentPlumberLogs: getRecentPlumberLogs(),
       }
@@ -4150,6 +4161,8 @@ async function postToPlumber(pathname: string, payload: any) {
         url: plumberBaseUrl,
         rscript: resolvedRscript,
         error: `The R analysis engine stopped responding before it could return results. This can happen when a long bootstrap or prediction run is too heavy for the machine. Try fewer samples, close other heavy apps, or restart Metis and run again.`,
+        errorCode: 'BACKEND_STOPPED',
+        userAction: 'Try fewer samples, close other heavy apps, restart Metis, and run the analysis again.',
         backendDetail: err?.message || 'Local R backend request failed.',
         runtimeStatus: getBundledPortableRuntimeStatus(),
         bridgeTimings: {
@@ -4172,6 +4185,8 @@ async function postToPlumber(pathname: string, payload: any) {
         url: plumberBaseUrl,
         rscript: resolvedRscript,
         error: `The R analysis engine started the response but Metis could not finish receiving it. Try fewer samples, close other heavy apps, or restart Metis and run again.`,
+        errorCode: 'BACKEND_RESPONSE_READ_FAILED',
+        userAction: 'Try fewer samples, close other heavy apps, restart Metis, and run the analysis again.',
         backendDetail: err?.message || 'Could not read the R backend response.',
         runtimeStatus: getBundledPortableRuntimeStatus(),
         bridgeTimings: {
@@ -4230,6 +4245,9 @@ async function postToPlumber(pathname: string, payload: any) {
     url: plumberBaseUrl,
     rscript: resolvedRscript,
     error: `404 - Resource Not Found (${pathname})`,
+    errorCode: 'BACKEND_ROUTE_NOT_FOUND',
+    userAction: 'Restart Metis so the local R analysis routes can reload, then run the analysis again.',
+    backendDetail: `404 - Resource Not Found (${pathname})`,
     runtimeStatus: getBundledPortableRuntimeStatus(),
     recentPlumberLogs: getRecentPlumberLogs(),
   }

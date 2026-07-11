@@ -321,7 +321,13 @@ function(req, res) {
     } else {
       "Forbidden"
     }
-    return(list(success = FALSE, error = message))
+    return(list(
+      success = FALSE,
+      error = message,
+      errorCode = "METIS_AUTH_FAILED",
+      userAction = "Restart Metis and try the analysis again. If this keeps happening, run setup so the local backend token can be refreshed.",
+      backendDetail = message
+    ))
   }
   plumber::forward()
 }
@@ -366,6 +372,80 @@ format_analysis_error_message <- function(err, analysis_label, timeout_seconds) 
     ))
   }
   message
+}
+
+analysis_error_code <- function(raw_message) {
+  message <- tolower(as.character(raw_message %||% ""))
+
+  if (grepl("elapsed time limit|could not finish within", message)) return("TIMEOUT")
+  if (grepl("cannot allocate vector|memory exhausted|cannot allocate memory|ran out of memory", message)) return("MEMORY")
+  if (grepl("dgesv|exactly singular|singular matrix|computationally singular", message)) return("SINGULAR_MATRIX")
+  if (grepl("plspredict could not be computed|seminr returned no prediction", message)) return("PLSPREDICT_UNSUPPORTED")
+  if (grepl("dataset access is disabled|outside trusted metis workspace", message)) return("DATASET_ACCESS")
+  if (grepl("dataset not found|dataset file exceeds|unsupported dataset extension|dataset must be tabular|dataset must contain|missing indicator columns", message)) {
+    return("DATASET_INVALID")
+  }
+  if (grepl("construct.*has no indicators|duplicate construct name|higher-order construct|paths\\[|interactions\\[|targetconstruct|selected target|select at least one advanced analysis", message)) {
+    return("MODEL_SPEC_INVALID")
+  }
+  if (grepl("seminrextras|readxl|package .*required|package .*not installed", message)) return("R_PACKAGE_MISSING")
+  if (grepl("folds must|repetitions must|bootstrap subsamples|must be a whole number|must be at least|must be between|above the current app limit|must be one of", message)) {
+    return("SETTINGS_INVALID")
+  }
+  if (grepl("rscript|plumber|r runtime", message)) return("R_RUNTIME")
+
+  "ANALYSIS_FAILED"
+}
+
+analysis_error_user_action <- function(error_code, analysis_label, timeout_seconds) {
+  if (identical(error_code, "TIMEOUT")) {
+    return(sprintf(
+      "%s took longer than %s seconds. Use fewer bootstrap subsamples or a smaller NCA run depth, close heavy apps, and run it again.",
+      analysis_label,
+      timeout_seconds
+    ))
+  }
+  if (identical(error_code, "MEMORY")) {
+    return("Free memory, close other heavy apps, use fewer bootstrap subsamples or prediction repetitions, then run the analysis again.")
+  }
+  if (identical(error_code, "SINGULAR_MATRIX")) {
+    return("Check for duplicate indicators, constant columns, identical dataset columns, or predictors that move exactly together.")
+  }
+  if (identical(error_code, "PLSPREDICT_UNSUPPORTED")) {
+    return("PLSpredict is not available for this model shape. Check the execution log, simplify unsupported model parts, or continue with PLS-SEM and Bootstrap.")
+  }
+  if (identical(error_code, "DATASET_ACCESS")) {
+    return("Re-import the dataset into the current Metis workspace or choose a dataset inside an allowed workspace folder.")
+  }
+  if (identical(error_code, "DATASET_INVALID")) {
+    return("Re-import a CSV, XLS, or XLSX dataset with headers and make sure the model indicators match the dataset columns.")
+  }
+  if (identical(error_code, "MODEL_SPEC_INVALID")) {
+    return("Check the model canvas for missing indicators, deleted constructs, invalid higher-order dimensions, or targets without incoming paths.")
+  }
+  if (identical(error_code, "R_PACKAGE_MISSING")) {
+    return("Run setup again or install the missing R package in the selected R runtime, then retry the analysis.")
+  }
+  if (identical(error_code, "SETTINGS_INVALID")) {
+    return("Reopen the analysis settings, choose values inside the allowed range, and run the analysis again.")
+  }
+  if (identical(error_code, "R_RUNTIME")) {
+    return("Run setup again, verify the selected Rscript path, restart Metis, and retry the analysis.")
+  }
+
+  "Review the model and dataset, then run the analysis again. If the issue repeats, send the backend detail to support."
+}
+
+analysis_error_response <- function(err, analysis_label, timeout_seconds) {
+  raw_message <- conditionMessage(err)
+  error_code <- analysis_error_code(raw_message)
+  list(
+    success = FALSE,
+    error = format_analysis_error_message(err, analysis_label, timeout_seconds),
+    errorCode = analysis_error_code(raw_message),
+    userAction = analysis_error_user_action(error_code, analysis_label, timeout_seconds),
+    backendDetail = raw_message
+  )
 }
 
 format_configured_max_error <- function(field_label, max_value) {
@@ -3930,10 +4010,7 @@ pr$handle("POST", "/run-pls", function(req, res) {
     }, analysis_timeout_seconds)
   }, error = function(err) {
     res$status <- 500
-    list(
-      success = FALSE,
-      error = format_analysis_error_message(err, "PLS-SEM analysis", analysis_timeout_seconds)
-    )
+    analysis_error_response(err, "PLS-SEM analysis", analysis_timeout_seconds)
   })
 })
 
@@ -4011,7 +4088,7 @@ pr$handle("POST", "/run-bootstrap", function(req, res) {
     }, bootstrap_timeout_seconds)
   }, error = function(err) {
     res$status <- 500
-    list(success = FALSE, error = format_analysis_error_message(err, "Bootstrap analysis", bootstrap_timeout_seconds))
+    analysis_error_response(err, "Bootstrap analysis", bootstrap_timeout_seconds)
   })
 })
 
@@ -4099,7 +4176,7 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
     }, plspredict_timeout_seconds)
   }, error = function(err) {
     res$status <- 500
-    list(success = FALSE, error = format_analysis_error_message(err, "PLSpredict analysis", plspredict_timeout_seconds))
+    analysis_error_response(err, "PLSpredict analysis", plspredict_timeout_seconds)
   })
 })
 
@@ -4124,7 +4201,7 @@ pr$handle("POST", "/run-advanced-analysis", function(req, res) {
     }, advanced_analysis_timeout_seconds)
   }, error = function(err) {
     res$status <- 500
-    list(success = FALSE, error = format_analysis_error_message(err, "Advanced analysis", advanced_analysis_timeout_seconds))
+    analysis_error_response(err, "Advanced analysis", advanced_analysis_timeout_seconds)
   })
 })
 

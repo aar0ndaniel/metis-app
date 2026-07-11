@@ -69,7 +69,16 @@ export default function DatasetManagerModal({
     }
   }, [])
 
+  const getDatasetOperationMessage = (error: unknown, fallback: string) => (
+    error instanceof Error && error.message ? error.message : fallback
+  )
+
   const persistWorkspace = async (nextWorkspace: Workspace) => {
+    const saveResult = await (window as any).electronAPI?.saveWorkspace?.(nextWorkspace)
+    if (saveResult?.success === false) {
+      throw new Error(saveResult.error || 'Could not save workspace changes.')
+    }
+
     const nextWorkspaces = workspaces.map((item) => item.id === nextWorkspace.id ? nextWorkspace : item)
     setWorkspaces(nextWorkspaces)
     window.dispatchEvent(new CustomEvent('pls:workspaces-updated', {
@@ -77,7 +86,6 @@ export default function DatasetManagerModal({
         workspaces: nextWorkspaces,
       },
     }))
-    await (window as any).electronAPI?.saveWorkspace?.(nextWorkspace)
   }
 
   const commitRename = async (datasetId: string) => {
@@ -86,39 +94,59 @@ export default function DatasetManagerModal({
       setRenamingId(null)
       return
     }
-    const nextWorkspace = renameDatasetInWorkspace(hydratedWorkspace, datasetId, cleanName)
-    await persistWorkspace(nextWorkspace)
-    setRenamingId(null)
-    setContextMenu(null)
+    try {
+      const nextWorkspace = renameDatasetInWorkspace(hydratedWorkspace, datasetId, cleanName)
+      await persistWorkspace(nextWorkspace)
+      setRenamingId(null)
+      setContextMenu(null)
+    } catch (error) {
+      dispatchToast(
+        'error',
+        'Dataset update failed',
+        getDatasetOperationMessage(error, 'Could not rename this dataset. Try again, or check that the workspace file is still writable.'),
+      )
+    }
   }
 
   const deleteDatasetIds = async (datasetIds: string[]) => {
     if (!datasetIds.length) return
 
-    for (const datasetId of datasetIds) {
-      await (window as any).electronAPI?.deleteWorkspaceChild?.({
-        workspacePath: hydratedWorkspace.path,
-        childId: datasetId,
-      })
-      clearDatasetViewCache(datasetId)
-    }
-    clearLegacyDatasetViewCacheByWorkspaceName(hydratedWorkspace.name)
+    try {
+      const nextWorkspace = deleteDatasetsFromWorkspace(hydratedWorkspace, datasetIds)
+      await persistWorkspace(nextWorkspace)
 
-    const nextWorkspace = deleteDatasetsFromWorkspace(hydratedWorkspace, datasetIds)
-    await persistWorkspace(nextWorkspace)
-    setSelectedIds((prev) => prev.filter((id) => !datasetIds.includes(id)))
-    setContextMenu(null)
-    dispatchToast(
-      'success',
-      'Datasets updated',
-      datasetIds.length > 1
-        ? 'The selected datasets were removed from this workspace.'
-        : 'The dataset was removed from this workspace.',
-    )
+      for (const datasetId of datasetIds) {
+        const deleteResult = await (window as any).electronAPI?.deleteWorkspaceChild?.({
+          workspacePath: hydratedWorkspace.path,
+          childId: datasetId,
+        })
+        if (deleteResult?.success === false) {
+          throw new Error(deleteResult.error || 'Could not delete this dataset from the workspace.')
+        }
+        clearDatasetViewCache(datasetId)
+      }
+      clearLegacyDatasetViewCacheByWorkspaceName(hydratedWorkspace.name)
+
+      setSelectedIds((prev) => prev.filter((id) => !datasetIds.includes(id)))
+      setContextMenu(null)
+      dispatchToast(
+        'success',
+        'Datasets updated',
+        datasetIds.length > 1
+          ? 'The selected datasets were removed from this workspace.'
+          : 'The dataset was removed from this workspace.',
+      )
+    } catch (error) {
+      dispatchToast(
+        'error',
+        'Dataset update failed',
+        getDatasetOperationMessage(error, 'Could not delete the selected dataset. Try again, or check that the workspace folder is still available.'),
+      )
+    }
   }
 
   const chooseDataset = async (datasetId: string) => {
-    if (datasetId === activeDatasetId) return
+    if (datasetId === activeDatasetId) return false
 
     let nextWorkspace = hydratedWorkspace
     if (context === 'model-canvas' && modelId) {
@@ -130,7 +158,17 @@ export default function DatasetManagerModal({
       }
     }
 
-    await persistWorkspace(nextWorkspace)
+    try {
+      await persistWorkspace(nextWorkspace)
+      return true
+    } catch (error) {
+      dispatchToast(
+        'error',
+        'Dataset update failed',
+        getDatasetOperationMessage(error, 'Could not select this dataset. Try again, or check that the workspace file is still writable.'),
+      )
+      return false
+    }
   }
 
   const getRangeIds = (fromIndex: number, toIndex: number) => {
@@ -417,9 +455,11 @@ export default function DatasetManagerModal({
           <div className="flex items-center" style={{ gap: 8 }}>
             {canUseSelectedDataset && singleSelectedDatasetId && (
               <button
-                onClick={() => void chooseDataset(singleSelectedDatasetId).then(() => {
-                  setSelectedIds([])
-                  setLastSelectedIndex(null)
+                onClick={() => void chooseDataset(singleSelectedDatasetId).then((wasUpdated) => {
+                  if (wasUpdated) {
+                    setSelectedIds([])
+                    setLastSelectedIndex(null)
+                  }
                 })}
                 title="Use selected dataset"
                 style={{

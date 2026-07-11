@@ -62,6 +62,7 @@ import { getOuterLoadingColor } from '../utils/analysisPalette'
 import { inspectAnalysisInputs } from '../utils/analysisPrecheck'
 import { buildAnalysisGraphSignature } from '../utils/analysisGraphSignature'
 import { addDiagnostic } from '../utils/diagnostics'
+import { formatUserFriendlyAnalysisError } from '../utils/userFriendlyErrors'
 import {
   normalizePlsPredictSettings,
   readPlsPredictSettingsFromState,
@@ -593,37 +594,10 @@ function bridgeDiagnosticDetails(response: any) {
   }
 }
 
-function toLaymanErrorMessage(rawError: string): string {
-  const cleanedRaw = (rawError || '').replace(/^:\s*/, '').trim()
-  const msg = cleanedRaw.toLowerCase()
-
-  if (/construct.*has no indicators|no constructs with indicators|add at least one construct with indicators/.test(msg)) {
-    return 'One or more constructs do not have indicators assigned. Please add indicators to every construct before running the model.'
-  }
-  if (/no structural paths|at least one structural path|no valid structural paths/.test(msg)) {
-    return 'No valid relationships were found between constructs. Please draw at least one arrow between constructs.'
-  }
-  if (/dataset not found|no dataset|datasetpath is required|missing indicator columns/.test(msg)) {
-    return 'Your dataset could not be found or does not match the indicators in the model. Please re-import the dataset and check indicator names.'
-  }
-  if (/stopped responding|too heavy for the machine|could not finish receiving|could not complete.*request/.test(msg)) {
-    return 'The analysis engine stopped responding during this run. Try fewer samples, close other heavy apps, or restart Metis and run it again.'
-  }
-  if (/backend unavailable|cannot reach local pls backend|failed to fetch|fetch failed|network/.test(msg)) {
-    return 'Metis lost connection to the local analysis engine. Please restart Metis and try the analysis again.'
-  }
-  if (/r runtime|rscript|plumber/.test(msg)) {
-    return 'The R analysis engine is missing or failed to start. Please restart the app and try again.'
-  }
-  if (/dgesv|exactly singular|singular matrix|computationally singular/.test(msg)) {
-    return 'The model could not be estimated because the data or predictors are perfectly duplicated or collinear. Check duplicate indicators, constant columns, identical dataset columns, or predictors that move exactly together.'
-  }
-
-  if (cleanedRaw && !/^unknown error$/i.test(cleanedRaw)) {
-    return `The model could not be calculated. Backend detail: ${cleanedRaw}`
-  }
-
-  return 'The model could not be calculated. Please check that all constructs have indicators, paths are connected, and the dataset is correctly imported.'
+function toLaymanErrorMessage(rawError: unknown): string {
+  // Static guard: the shared formatter maps dgesv, exactly singular, singular matrix, and computationally singular
+  // to the perfectly duplicated or collinear guidance before any Backend detail fallback.
+  return formatUserFriendlyAnalysisError(rawError)
 }
 
 function getAnalysisLabel(kind: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced'): string {
@@ -1614,7 +1588,8 @@ export default function ModelCanvas({
 
       if (!result.success || !result.results) {
         const msg = formatAnalysisError('', result)
-        calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+        const friendlyMessage = toLaymanErrorMessage(result)
+        calcDispatch({ type: 'fail', message: friendlyMessage })
         recordDiagnostic('calculation', 'error', 'PLS-SEM calculation failed.', {
           analysisKind: 'pls-sem',
           payloadSummary: {
@@ -1632,10 +1607,10 @@ export default function ModelCanvas({
           setCautionModal({
             open: true,
             title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-            message: msg,
+            message: friendlyMessage,
           })
         } else {
-          dispatchToast('error', 'PLS calculation failed', toLaymanErrorMessage(msg))
+          dispatchToast('error', 'PLS calculation failed', friendlyMessage)
         }
         return
       }
@@ -2000,7 +1975,8 @@ export default function ModelCanvas({
 
       if (!result.success || !result.results) {
         const msg = formatAnalysisError('', result)
-        calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+        const friendlyMessage = toLaymanErrorMessage(result)
+        calcDispatch({ type: 'fail', message: friendlyMessage })
         recordDiagnostic('calculation', 'error', 'Bootstrap calculation failed.', {
           analysisKind: 'bootstrap',
           payloadSummary: {
@@ -2021,10 +1997,10 @@ export default function ModelCanvas({
           setCautionModal({
             open: true,
             title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-            message: msg,
+            message: friendlyMessage,
           })
         } else {
-          dispatchToast('error', 'Bootstrap failed', toLaymanErrorMessage(msg))
+          dispatchToast('error', 'Bootstrap failed', friendlyMessage)
         }
         return
       }
@@ -2149,7 +2125,8 @@ export default function ModelCanvas({
 
       if (!result.success || !result.results) {
         const msg = formatAnalysisError('', result)
-        calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+        const friendlyMessage = toLaymanErrorMessage(result)
+        calcDispatch({ type: 'fail', message: friendlyMessage })
         recordDiagnostic('calculation', 'error', 'PLSpredict calculation failed.', {
           analysisKind: 'plspredict',
           payloadSummary: {
@@ -2170,10 +2147,10 @@ export default function ModelCanvas({
           setCautionModal({
             open: true,
             title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-            message: msg,
+            message: friendlyMessage,
           })
         } else {
-          dispatchToast('error', 'PLS Predict failed', toLaymanErrorMessage(msg))
+          dispatchToast('error', 'PLS Predict failed', friendlyMessage)
         }
         return
       }
@@ -2286,7 +2263,8 @@ export default function ModelCanvas({
 
       if (!result.success || !result.results) {
         const msg = formatAnalysisError('', result)
-        calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+        const friendlyMessage = toLaymanErrorMessage(result)
+        calcDispatch({ type: 'fail', message: friendlyMessage })
         recordDiagnostic('calculation', 'error', 'Advanced analysis failed.', {
           analysisKind: 'advanced',
           payloadSummary: {
@@ -2309,10 +2287,10 @@ export default function ModelCanvas({
           setCautionModal({
             open: true,
             title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-            message: msg,
+            message: friendlyMessage,
           })
         } else {
-          dispatchToast('error', 'Advanced analysis failed', toLaymanErrorMessage(msg))
+          dispatchToast('error', 'Advanced analysis failed', friendlyMessage)
         }
         return
       }

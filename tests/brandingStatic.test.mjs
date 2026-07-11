@@ -10,7 +10,7 @@ function read(relPath) {
   return fs.readFileSync(path.join(workspaceRoot, relPath), 'utf8')
 }
 
-const expectedAppVersion = '0.2.1'
+const expectedAppVersion = '0.2.2'
 const pkg = JSON.parse(read('package.json'))
 const packageLock = JSON.parse(read('package-lock.json'))
 const OLD_BRAND_PATTERN = new RegExp([['WYT', 'HAM'].join(''), ['Wyt', 'ham'].join(''), ['wyt', 'ham'].join('')].join('|'))
@@ -42,12 +42,12 @@ assert.match(electronMain, /path\.join\(app\.getPath\('downloads'\), 'metis'\)/)
 assert.match(electronMain, /src\/assets\/logo-primary\.svg/)
 assert.doesNotMatch(electronMain, /src\/assets\/logo-dark-bg\.png/)
 assert.match(electronMain, /gap: 8px;/)
-assert.match(electronMain, /app\.getVersion\(\) \|\| '0\.2\.1'/)
+assert.match(electronMain, /app\.getVersion\(\) \|\| '0\.2\.2'/)
 assert.doesNotMatch(electronMain, /Public Beta v1/)
 assert.doesNotMatch(electronMain, OLD_BRAND_PATTERN)
 
 const mockElectron = read('tests/mockElectron.js')
-assert.match(mockElectron, /getVersion\(\)\s*{\s*return '0\.2\.1'\s*}/)
+assert.match(mockElectron, /getVersion\(\)\s*{\s*return '0\.2\.2'\s*}/)
 
 const preferences = read('src/components/PreferencesModal.tsx')
 assert.doesNotMatch(preferences, /Public Beta v1/)

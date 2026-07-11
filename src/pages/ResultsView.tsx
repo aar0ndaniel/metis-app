@@ -103,6 +103,7 @@ import {
   readPlsPredictSettingsFromState,
   type PlsPredictSettings,
 } from '../utils/plsPredictSettings'
+import { formatUserFriendlyAnalysisError } from '../utils/userFriendlyErrors'
 import { buildPlsModelPayloadParts, type HocPathRole } from '../utils/plsModelPayload'
 import { useCalculationDispatch, useIsCalculating, type CalcPhase } from '../state/calculationContext'
 
@@ -1080,15 +1081,7 @@ function parseExecutionLog(ar: any): string {
 }
 
 function normalizeAnalysisFailureMessage(error: unknown): string {
-  const raw = String(error || '').trim()
-  const msg = raw.toLowerCase()
-  if (/stopped responding|too heavy for the machine|could not finish receiving|could not complete.*request/.test(msg)) {
-    return 'The analysis engine stopped responding during this run. Try fewer samples, close other heavy apps, or restart Metis and run it again.'
-  }
-  if (/failed to fetch|fetch failed|network|cannot reach local pls backend/.test(msg)) {
-    return 'Metis lost connection to the local analysis engine. Please restart Metis and try the analysis again.'
-  }
-  return raw || 'Unknown backend error'
+  return formatUserFriendlyAnalysisError(error)
 }
 
 /** Build DiagramResults from analysisResults for PathDiagramSVG overlay. */
@@ -4951,7 +4944,7 @@ export default function ResultsView() {
       const result = await runBootstrapModel(bootstrapPayload)
 
       if (!result.success || !result.results) {
-        const message = normalizeAnalysisFailureMessage(result.error)
+        const message = normalizeAnalysisFailureMessage(result)
         calcDispatch({ type: 'fail', message })
         dispatchToast('error', 'Bootstrap failed', message)
         return
@@ -5011,7 +5004,7 @@ export default function ResultsView() {
       })
 
       if (!result.success || !result.results) {
-        const message = normalizeAnalysisFailureMessage(result.error)
+        const message = normalizeAnalysisFailureMessage(result)
         calcDispatch({ type: 'fail', message })
         dispatchToast('error', 'PLS Predict failed', message)
         return
@@ -5074,7 +5067,7 @@ export default function ResultsView() {
       })
 
       if (!result.success || !result.results) {
-        const message = normalizeAnalysisFailureMessage(result.error)
+        const message = normalizeAnalysisFailureMessage(result)
         calcDispatch({ type: 'fail', message })
         dispatchToast('error', 'Advanced analysis failed', message)
         return
