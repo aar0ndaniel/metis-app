@@ -74,6 +74,13 @@ import { writeWorkspaceClientCache } from '../utils/workspaceClientCache'
 import { getOuterLoadingColor } from '../utils/analysisPalette'
 import { inspectAnalysisInputs } from '../utils/analysisPrecheck'
 import { buildAnalysisGraphSignature } from '../utils/analysisGraphSignature'
+import {
+  createMicomCacheEntry,
+  resolveMicomOverviewForMgaCache,
+  attachMicomOverviewToMgaResults,
+  putMicomCacheInWorkspaceList,
+  type MicomCacheEntry,
+} from '../utils/micomCache'
 import { addDiagnostic } from '../utils/diagnostics'
 import { formatUserFriendlyAnalysisError } from '../utils/userFriendlyErrors'
 import {
@@ -1290,6 +1297,11 @@ export default function ModelCanvas({
   const bootstrapAbortRef = useRef<AbortController | null>(null)
   const cancelRequestedRef = useRef(false)
   const activeCalcViewRef = useRef<'modal' | 'chip' | 'silenced' | null>(null)
+  const micomCacheRef = useRef<MicomCacheEntry | null>((currentModel?.state?.micomCache as MicomCacheEntry | undefined) ?? null)
+
+  useEffect(() => {
+    micomCacheRef.current = (currentModel?.state?.micomCache as MicomCacheEntry | undefined) ?? null
+  }, [currentModel?.state?.micomCache])
 
   // Real-time calculation
   const [liveLoadings, setLiveLoadings] = useState<Record<string, number>>({})
@@ -1696,6 +1708,8 @@ export default function ModelCanvas({
     advanced?: AdvancedAnalysisSettings
     permutation?: PermutationAnalysisSettings
     mga?: MultiGroupAnalysisSettings
+  }, cacheOptions?: {
+    micomCache?: MicomCacheEntry | null
   }) => {
     const snapshot = getCurrentSnapshot()
     const snapshotGraphSignature = buildAnalysisGraphSignature(snapshot)
@@ -1706,6 +1720,9 @@ export default function ModelCanvas({
 
     if (activeWs && currentModel) {
       const existingState = currentModel.state || {}
+      if (cacheOptions?.micomCache) {
+        micomCacheRef.current = cacheOptions.micomCache
+      }
       const updatedModel = {
         ...currentModel,
         badge: 'Calculated' as const,
@@ -1729,6 +1746,7 @@ export default function ModelCanvas({
           diagramBaseResults: analysisState?.mode === 'pls-sem'
             ? analysisState.results
             : existingState.diagramBaseResults,
+          ...(cacheOptions?.micomCache ? { micomCache: cacheOptions.micomCache } : {}),
         },
       }
       const updatedChildren = activeWs.children.map((child: any) => child.id === modelId ? updatedModel : child)
@@ -1741,6 +1759,18 @@ export default function ModelCanvas({
 
     return snapshot
   }, [activeWs, currentModel, electronAPI, getCurrentSnapshot, modelId, setWorkspaces, workspaces])
+
+  const persistMicomCacheForCurrentModel = useCallback((micomCache: MicomCacheEntry) => {
+    micomCacheRef.current = micomCache
+    if (!activeWs || !modelId) return
+
+    const update = putMicomCacheInWorkspaceList(workspaces as Array<Record<string, unknown>>, activeWs.id, modelId, micomCache)
+    setWorkspaces(update.workspaces as any[])
+    writeWorkspaceClientCache(JSON.stringify(update.workspaces))
+    if (update.workspace) {
+      electronAPI?.saveWorkspace?.(update.workspace as any)
+    }
+  }, [activeWs, electronAPI, modelId, setWorkspaces, workspaces])
 
   const persistedPlsPredictSettings = useMemo(
     () => readPlsPredictSettingsFromState(currentModel?.state),
@@ -2565,7 +2595,7 @@ export default function ModelCanvas({
     try {
       setPermutationConfiguralStatus('checking')
       const basePayload = buildAnalysisPayload('permutation', plsAlgorithm)
-      const result = await runPermutationConfiguralPrecheck({
+      const permutationPayload = {
         ...basePayload,
         groupingVariable: settings.groupingVariable,
         groupA: settings.groupA,
@@ -2573,7 +2603,16 @@ export default function ModelCanvas({
         permutations: settings.permutations,
         alpha: settings.alpha,
         seed: settings.seed,
-      })
+      }
+      const result = await runPermutationConfiguralPrecheck(permutationPayload)
+      if (result.success && result.results) {
+        const micomCache = createMicomCacheEntry({
+          payload: permutationPayload,
+          results: result.results as Record<string, unknown>,
+          graphSignature: currentGraphSignature,
+        })
+        persistMicomCacheForCurrentModel(micomCache)
+      }
       const passed = result?.results?.configuralInvariance && (result.results.configuralInvariance as any).passed === true
       setPermutationConfiguralStatus(passed ? 'passed' : 'failed')
       return result
@@ -2608,6 +2647,15 @@ export default function ModelCanvas({
     try {
       const basePayload = buildAnalysisPayload('permutation', plsAlgorithm)
       calcDispatch({ type: 'setPhase', phaseId: 'permutation' })
+      const permutationPayload = {
+        ...basePayload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: settings.permutations,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      }
       const result = await runPermutationAnalysisModel({
         ...basePayload,
         groupingVariable: settings.groupingVariable,
@@ -2632,12 +2680,20 @@ export default function ModelCanvas({
 
       calcDispatch({ type: 'setPhase', phaseId: 'final' })
       const savedAt = new Date().toISOString()
+      const micomCache = createMicomCacheEntry({
+        payload: permutationPayload,
+        results: result.results as Record<string, unknown>,
+        graphSignature: currentGraphSignature,
+        savedAt,
+      })
       const savedModelSnapshot = persistSnapshotForAnalysis({
         mode: 'permutation',
         results: result.results as Record<string, unknown>,
         savedAt,
       }, {
         permutation: settings,
+      }, {
+        micomCache,
       })
       writeSharedStorageValue('analysis-mode', 'permutation')
       writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
@@ -2710,6 +2766,22 @@ export default function ModelCanvas({
     })
     try {
       const basePayload = buildAnalysisPayload('mga', plsAlgorithm)
+      const cachedMicom = micomCacheRef.current ?? (currentModel?.state?.micomCache as MicomCacheEntry | undefined) ?? null
+      const micomValidationPayload = {
+        ...basePayload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: cachedMicom?.settings.permutations ?? 500,
+        alpha: cachedMicom?.settings.alpha ?? settings.alpha,
+        seed: cachedMicom?.settings.seed ?? settings.seed,
+      }
+      const micomOverview = await resolveMicomOverviewForMgaCache({
+        cache: cachedMicom,
+        payload: micomValidationPayload,
+        graphSignature: currentGraphSignature,
+        runConfiguralPrecheck: runPermutationConfiguralPrecheck,
+      })
       calcDispatch({ type: 'setPhase', phaseId: 'bootstrap' })
       const result = await runMultiGroupAnalysisModel({
         ...basePayload,
@@ -2735,18 +2807,19 @@ export default function ModelCanvas({
 
       calcDispatch({ type: 'setPhase', phaseId: 'final' })
       const savedAt = new Date().toISOString()
+      const mgaResults = attachMicomOverviewToMgaResults(result.results as Record<string, unknown>, micomOverview)
       const savedModelSnapshot = persistSnapshotForAnalysis({
         mode: 'mga',
-        results: result.results as Record<string, unknown>,
+        results: mgaResults,
         savedAt,
       }, {
         mga: settings,
       })
       writeSharedStorageValue('analysis-mode', 'mga')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      writeSharedStorageValue('analysis-results', JSON.stringify(mgaResults))
       recordDiagnostic('calculation', 'info', 'Multi-group analysis succeeded.', {
         analysisKind: 'mga',
-        resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
+        resultSummary: summarizeAnalysisResults(mgaResults),
         settings,
       })
 
@@ -2760,7 +2833,7 @@ export default function ModelCanvas({
           navigationState: {
             savedAnalysis: {
               mode: 'mga',
-              results: result.results,
+              results: mgaResults,
               savedAt,
             },
             savedModelSnapshot,
@@ -2775,7 +2848,7 @@ export default function ModelCanvas({
           state: {
             savedAnalysis: {
               mode: 'mga',
-              results: result.results,
+              results: mgaResults,
               savedAt,
             },
             savedModelSnapshot,

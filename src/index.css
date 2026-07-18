@@ -94,6 +94,10 @@
   --color-title-menu-disabled: #666A72;
   --color-sidebar-bg: var(--color-menu-bg);
   --color-right-panel-bg: #181818;
+  --color-results-table-header-bg: var(--color-accent);
+  --color-results-table-header-text: var(--color-on-accent);
+  --color-results-table-row-bg: #181818;
+  --color-results-table-row-alt-bg: #202020;
   --color-toolbar-bg: rgba(10, 12, 13, 0.88);
   --color-search-bg: var(--color-page);
   --color-toggle-active-bg: var(--color-surface);
@@ -191,6 +195,10 @@
   --color-title-menu-disabled: #A0AABC;
   --color-sidebar-bg: #F4F4F4;
   --color-right-panel-bg: #FAFAFA;
+  --color-results-table-header-bg: var(--color-accent);
+  --color-results-table-header-text: var(--color-on-accent);
+  --color-results-table-row-bg: #FFFFFF;
+  --color-results-table-row-alt-bg: #F4F6F8;
   --color-toolbar-bg: #F4F4F4;
   --color-search-bg: #E4E4E4;
   --color-toggle-active-bg: #FFFFFF;
@@ -235,6 +243,16 @@ body {
   background: var(--color-page);
   color: var(--color-text-primary);
   font-size: 14px;
+}
+
+.metis-results-view thead tr {
+  background: var(--color-results-table-header-bg) !important;
+}
+
+.metis-results-view thead th {
+  background: var(--color-results-table-header-bg) !important;
+  color: var(--color-results-table-header-text) !important;
+  border-bottom-color: rgb(var(--color-accent-rgb) / 0.55);
 }
 
 #root {

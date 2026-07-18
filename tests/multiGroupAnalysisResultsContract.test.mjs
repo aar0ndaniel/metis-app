@@ -64,23 +64,22 @@ assert.deepEqual(
   [
     { id: 'overview', label: 'Overview' },
     {
+      id: 'mga-comparisons',
+      label: 'MULTI GROUP COMPARISON',
+      children: [
+        { id: 'mga-path-coefficients', label: 'Path Coefficients' },
+        { id: 'mga-outer-loadings', label: 'Outer Loadings' },
+        { id: 'mga-outer-weights', label: 'Outer Weights' },
+      ],
+    },
+    {
       id: 'mga-group-specific-results',
-      label: 'Group-Specific Results',
+      label: 'GROUP SPECIFIC RESULTS',
       children: [
         {
           id: 'mga-group-a',
           label: 'Group A',
           children: [
-            {
-              id: 'mga-group-a-structural-effects',
-              label: 'STRUCTURAL EFFECTS',
-              children: [
-                { id: 'mga-group-a-path-coef', label: 'Path Coefficients' },
-                { id: 'mga-group-a-total-indirect', label: 'Total Indirect Effects' },
-                { id: 'mga-group-a-specific-indirect', label: 'Specific Indirect Effects' },
-                { id: 'mga-group-a-total-effects', label: 'Total Effects' },
-              ],
-            },
             {
               id: 'mga-group-a-measurement-model',
               label: 'MEASUREMENT MODEL',
@@ -101,22 +100,22 @@ assert.deepEqual(
                 { id: 'mga-group-a-model-fit', label: 'Model Fit' },
               ],
             },
+            {
+              id: 'mga-group-a-structural-effects',
+              label: 'STRUCTURAL EFFECTS',
+              children: [
+                { id: 'mga-group-a-path-coef', label: 'Path Coefficients' },
+                { id: 'mga-group-a-total-indirect', label: 'Total Indirect Effects' },
+                { id: 'mga-group-a-specific-indirect', label: 'Specific Indirect Effects' },
+                { id: 'mga-group-a-total-effects', label: 'Total Effects' },
+              ],
+            },
           ],
         },
         {
           id: 'mga-group-b',
           label: 'Group B',
           children: [
-            {
-              id: 'mga-group-b-structural-effects',
-              label: 'STRUCTURAL EFFECTS',
-              children: [
-                { id: 'mga-group-b-path-coef', label: 'Path Coefficients' },
-                { id: 'mga-group-b-total-indirect', label: 'Total Indirect Effects' },
-                { id: 'mga-group-b-specific-indirect', label: 'Specific Indirect Effects' },
-                { id: 'mga-group-b-total-effects', label: 'Total Effects' },
-              ],
-            },
             {
               id: 'mga-group-b-measurement-model',
               label: 'MEASUREMENT MODEL',
@@ -137,17 +136,18 @@ assert.deepEqual(
                 { id: 'mga-group-b-model-fit', label: 'Model Fit' },
               ],
             },
+            {
+              id: 'mga-group-b-structural-effects',
+              label: 'STRUCTURAL EFFECTS',
+              children: [
+                { id: 'mga-group-b-path-coef', label: 'Path Coefficients' },
+                { id: 'mga-group-b-total-indirect', label: 'Total Indirect Effects' },
+                { id: 'mga-group-b-specific-indirect', label: 'Specific Indirect Effects' },
+                { id: 'mga-group-b-total-effects', label: 'Total Effects' },
+              ],
+            },
           ],
         },
-      ],
-    },
-    {
-      id: 'mga-comparisons',
-      label: 'Multi-Group Comparisons',
-      children: [
-        { id: 'mga-path-coefficients', label: 'Path Coefficients' },
-        { id: 'mga-outer-loadings', label: 'Outer Loadings' },
-        { id: 'mga-outer-weights', label: 'Outer Weights' },
       ],
     },
   ],
@@ -159,10 +159,9 @@ const mgaComparisonIds = mgaSections
 assert.ok(!mgaComparisonIds.some((panelId) => panelId.includes('indirect') || panelId === 'mga-total-effects'), 'MGA comparison sidebar should only expose path coefficients, outer loadings, and outer weights.')
 assert.deepEqual(mgaPanelIds, [
   'overview',
-  'mga-group-a-path-coef',
-  'mga-group-a-total-indirect',
-  'mga-group-a-specific-indirect',
-  'mga-group-a-total-effects',
+  'mga-path-coefficients',
+  'mga-outer-loadings',
+  'mga-outer-weights',
   'mga-group-a-outer-loadings',
   'mga-group-a-outer-weights',
   'mga-group-a-reliability',
@@ -171,10 +170,10 @@ assert.deepEqual(mgaPanelIds, [
   'mga-group-a-r-square',
   'mga-group-a-vif',
   'mga-group-a-model-fit',
-  'mga-group-b-path-coef',
-  'mga-group-b-total-indirect',
-  'mga-group-b-specific-indirect',
-  'mga-group-b-total-effects',
+  'mga-group-a-path-coef',
+  'mga-group-a-total-indirect',
+  'mga-group-a-specific-indirect',
+  'mga-group-a-total-effects',
   'mga-group-b-outer-loadings',
   'mga-group-b-outer-weights',
   'mga-group-b-reliability',
@@ -183,16 +182,33 @@ assert.deepEqual(mgaPanelIds, [
   'mga-group-b-r-square',
   'mga-group-b-vif',
   'mga-group-b-model-fit',
-  'mga-path-coefficients',
-  'mga-outer-loadings',
-  'mga-outer-weights',
+  'mga-group-b-path-coef',
+  'mga-group-b-total-indirect',
+  'mga-group-b-specific-indirect',
+  'mga-group-b-total-effects',
 ])
 assert.ok(!mgaPanelIds.some((panelId) => panelId.toLowerCase().includes('welch')), 'MGA comparisons should not expose Welch panels.')
+assert.ok(
+  ['mga-group-a-path-coef', 'mga-group-a-total-indirect', 'mga-group-a-specific-indirect', 'mga-group-a-total-effects', 'mga-group-b-path-coef', 'mga-group-b-total-indirect', 'mga-group-b-specific-indirect', 'mga-group-b-total-effects']
+    .every((panelId) => mgaPanelIds.includes(panelId)),
+  'MGA group-specific sidebar should expose structural effect panels for both selected groups.',
+)
+assert.ok(
+  mgaPanelIds.every((panelId) => !(
+    panelId.startsWith('mga-group-') &&
+    (panelId.includes('path-coef') || panelId.includes('indirect') || panelId.includes('total-effects'))
+  ) || panelId.includes('-structural-effects') || ['mga-group-a-path-coef', 'mga-group-a-total-indirect', 'mga-group-a-specific-indirect', 'mga-group-a-total-effects', 'mga-group-b-path-coef', 'mga-group-b-total-indirect', 'mga-group-b-specific-indirect', 'mga-group-b-total-effects'].includes(panelId)),
+  'MGA group-specific structural panels should be the only group-specific path/effect leaves.',
+)
 
 assert.equal(panelExport.getModeResultsLabel('mga'), 'Multi Group Analysis Results')
+assert.equal(panelExport.getPanelTitle('overview'), 'Overview')
+assert.deepEqual(panelExport.getExportSectionTitles('overview', 2), ['Analysis Setup', 'Group Descriptives'])
 assert.equal(panelExport.getPanelTitle('mga-path-coefficients'), 'Path Coefficients - Multi-Group Comparison')
 assert.equal(panelExport.getPanelTitle('mga-outer-loadings'), 'Outer Loadings - Multi-Group Comparison')
 assert.equal(panelExport.getPanelTitle('mga-outer-weights'), 'Outer Weights - Multi-Group Comparison')
+assert.equal(panelExport.getPanelTitle('mga-group-a-path-coef'), 'Path Coefficients - Group A')
+assert.equal(panelExport.getPanelTitle('mga-group-b-total-effects'), 'Total Effects - Group B')
 
 const sampleResults = {
   method: 'MGA',
@@ -205,13 +221,17 @@ const sampleResults = {
     counts: { groupA: 146, groupB: 173 },
   },
   settings: { nboot: 500, alpha: 0.05, seed: 123 },
+  descriptives: [
+    { Group: 'Male', Construct: 'Image', Number: 146, Mean: 0.56, 'Standard Deviation': 0.648074069841, Skewness: -0.12, Kurtosis: 2.31, Variance: 0.42 },
+    { Group: 'Female', Construct: 'Image', Number: 173, Mean: 0.48, 'Standard Deviation': 0.62449979984, Skewness: 0.08, Kurtosis: 2.88, Variance: 0.39 },
+  ],
   groupSpecific: {
     groupA: {
       final_results: {
-        path_coefficients: [{ path: 'Image -> Satisfaction', coefficient: 0.51 }],
-        total_indirect_effects: [{ row_name: 'Image -> Loyalty', value: 0.12 }],
-        specific_indirect_effects: [{ effect: 'Image -> Satisfaction -> Loyalty', value: 0.12 }],
-        total_effects: [{ row_name: 'Image -> Loyalty', value: 0.63 }],
+        path_coefficients: [{ path: 'Image -> Satisfaction', 'Original Est.': 0.51, 'Bootstrap Mean': 0.5, 'Bootstrap SD': 0.08, 'T Stat.': 6.38, 'P Value': 0.001, '2.5% CI': 0.34, '97.5% CI': 0.67, '2.5% CI (BC)': 0.33, '97.5% CI (BC)': 0.68 }],
+        total_indirect_effects: [{ row_name: 'Image -> Loyalty', 'Original Est.': 0.12, 'Bootstrap Mean': 0.11, 'Bootstrap SD': 0.04, 'T Stat.': 3, 'P Value': 0.004 }],
+        specific_indirect_effects: [{ path: 'Image -> Satisfaction -> Loyalty', 'Original Est.': 0.12, 'Bootstrap Mean': 0.11, 'Bootstrap SD': 0.04, 'T Stat.': 3, 'P Value': 0.004 }],
+        total_effects: [{ row_name: 'Image -> Loyalty', 'Original Est.': 0.63, 'Bootstrap Mean': 0.61, 'Bootstrap SD': 0.09, 'T Stat.': 7, 'P Value': 0.001 }],
         outer_loadings: [{ row_name: 'IMAG1', Image: 0.82 }],
         outer_weights: [{ row_name: 'IMAG1', Image: 0.31 }],
       },
@@ -226,7 +246,8 @@ const sampleResults = {
     },
     groupB: {
       final_results: {
-        path_coefficients: [{ path: 'Image -> Satisfaction', coefficient: 0.31 }],
+        path_coefficients: [{ path: 'Image -> Satisfaction', 'Original Est.': 0.31, 'Bootstrap Mean': 0.3, 'Bootstrap SD': 0.09, 'T Stat.': 3.44, 'P Value': 0.002 }],
+        total_effects: [{ row_name: 'Image -> Loyalty', 'Original Est.': 0.38, 'Bootstrap Mean': 0.37, 'Bootstrap SD': 0.1, 'T Stat.': 3.8, 'P Value': 0.001 }],
       },
       quality_criteria: {
         reliability: [{ construct: 'Image', rho_c: 0.88 }],
@@ -352,31 +373,54 @@ const sampleResults = {
   execution_log: [{ message: 'MGA ran for Gender = Male vs Female.' }],
 }
 
-assert.deepEqual(panelData.getPanelDataFromResults('mga', 'overview', sampleResults), [
-  {
-    'Analysis information': 'Grouping variable',
-    Value: 'Gender',
-  },
-  {
-    'Analysis information': 'Selected groups',
-    Value: 'Male vs Female',
-  },
-  {
-    'Analysis information': 'Sample size per group',
-    Value: 'Male: 146, Female: 173',
-  },
-  {
-    'Analysis information': 'MGA settings',
-    Value: '500 bootstrap subsamples, alpha 0.05, seed 123',
-  },
-  {
-    'Analysis information': 'Measurement invariance status',
-    Value: 'Not supplied',
-  },
-])
-assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-path-coef', sampleResults), [
-  { path: 'Image -> Satisfaction', coefficient: 0.51 },
-])
+assert.deepEqual(panelData.getPanelDataFromResults('mga', 'overview', sampleResults), {
+  setup: [
+    { 'Analysis information': 'Grouping variable', Value: 'Gender' },
+    { 'Analysis information': 'Selected groups', Value: 'Male vs Female' },
+    { 'Analysis information': 'Sample size per group', Value: 'Male: 146, Female: 173' },
+    { 'Analysis information': 'MGA settings', Value: '500 bootstrap subsamples, alpha 0.05, seed 123' },
+    { 'Analysis information': 'Measurement invariance status', Value: 'MICOM was not run for this analysis. Interpret results well.' },
+  ],
+  descriptives: [
+    { Group: 'Male', Construct: 'Image', Number: 146, Mean: 0.56, 'Standard Deviation': 0.648074069841, Skewness: -0.12, Kurtosis: 2.31, Variance: 0.42 },
+    { Group: 'Female', Construct: 'Image', Number: 173, Mean: 0.48, 'Standard Deviation': 0.62449979984, Skewness: 0.08, Kurtosis: 2.88, Variance: 0.39 },
+  ],
+})
+assert.equal(
+  panelData.getPanelDataFromResults('mga', 'overview', {
+    ...sampleResults,
+    micomOverview: { status: 'partial', message: 'Partial measurement invariance available from cached MICOM.' },
+  }).setup.find((row) => row['Analysis information'] === 'Measurement invariance status')?.Value,
+  'Partial measurement invariance available from cached MICOM.',
+)
+assert.deepEqual(
+  panelData.getPanelDataFromResults('mga', 'overview', {
+    ...sampleResults,
+    overview: { descriptives: [] },
+    descriptives: [],
+  }, {
+    mgaOverviewFallback: {
+      headers: ['Gender', 'IMAG1', 'IMAG2', 'VAL1'],
+      datasetRows: [
+        ['Male', 1, 2, 4],
+        ['Male', 2, 3, 6],
+        ['Female', 4, 5, 8],
+        ['Female', 6, 7, 10],
+      ],
+      constructs: [
+        { name: 'Image', indicators: [{ name: 'IMAG1' }, { name: 'IMAG2' }] },
+        { name: 'Value', indicators: ['VAL1'] },
+      ],
+    },
+  }).descriptives,
+  [
+    { Group: 'Male', Construct: 'Image', Number: 2, Mean: 2, 'Standard Deviation': 0.707106781187, Skewness: null, Kurtosis: null, Variance: 0.5 },
+    { Group: 'Male', Construct: 'Value', Number: 2, Mean: 5, 'Standard Deviation': 1.414213562373, Skewness: null, Kurtosis: null, Variance: 2 },
+    { Group: 'Female', Construct: 'Image', Number: 2, Mean: 5.5, 'Standard Deviation': 1.414213562373, Skewness: null, Kurtosis: null, Variance: 2 },
+    { Group: 'Female', Construct: 'Value', Number: 2, Mean: 9, 'Standard Deviation': 1.414213562373, Skewness: null, Kurtosis: null, Variance: 2 },
+  ],
+  'MGA overview should derive group descriptives from cached dataset rows when backend descriptives are empty.',
+)
 assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-model-fit', sampleResults), [
   { index: 'SRMR', value: 0.04 },
 ])
@@ -387,9 +431,6 @@ const wrappedGroupSpecificResults = {
     groupB: { results: sampleResults.groupSpecific.groupB },
   },
 }
-assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-path-coef', wrappedGroupSpecificResults), [
-  { path: 'Image -> Satisfaction', coefficient: 0.51 },
-])
 assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-model-fit', wrappedGroupSpecificResults), [
   { index: 'SRMR', value: 0.04 },
 ])
@@ -431,9 +472,6 @@ const nestedWrappedCamelCaseGroupSpecificResults = {
     },
   },
 }
-assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-path-coef', nestedWrappedCamelCaseGroupSpecificResults), [
-  { path: 'Image -> Satisfaction', coefficient: 0.51 },
-])
 assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-r-square', nestedWrappedCamelCaseGroupSpecificResults), [
   { construct: 'Satisfaction', r_squared: 0.58 },
 ])
@@ -443,13 +481,24 @@ assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-b-outer-loa
 assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-b-model-fit', nestedWrappedCamelCaseGroupSpecificResults), [
   { index: 'SRMR', value: 0.05 },
 ])
+assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-path-coef', sampleResults), [
+  { path: 'Image -> Satisfaction', 'Original Est.': 0.51, 'Bootstrap Mean': 0.5, 'Bootstrap SD': 0.08, 'T Stat.': 6.38, 'P Value': 0.001, '2.5% CI': 0.34, '97.5% CI': 0.67, '2.5% CI (BC)': 0.33, '97.5% CI (BC)': 0.68 },
+])
+assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-total-indirect', sampleResults), [
+  { row_name: 'Image -> Loyalty', 'Original Est.': 0.12, 'Bootstrap Mean': 0.11, 'Bootstrap SD': 0.04, 'T Stat.': 3, 'P Value': 0.004 },
+])
+assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-a-specific-indirect', sampleResults), [
+  { path: 'Image -> Satisfaction -> Loyalty', 'Original Est.': 0.12, 'Bootstrap Mean': 0.11, 'Bootstrap SD': 0.04, 'T Stat.': 3, 'P Value': 0.004 },
+])
+assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-group-b-total-effects', sampleResults), [
+  { row_name: 'Image -> Loyalty', 'Original Est.': 0.38, 'Bootstrap Mean': 0.37, 'Bootstrap SD': 0.1, 'T Stat.': 3.8, 'P Value': 0.001 },
+])
 assert.equal(panelData.getMgaGroupPanelBaseId('mga-group-a-path-coef'), 'path-coef')
+assert.equal(panelData.getMgaGroupPanelBaseId('mga-group-a-total-indirect'), 'total-indirect')
+assert.equal(panelData.getMgaGroupPanelBaseId('mga-group-a-specific-indirect'), 'specific-indirect')
+assert.equal(panelData.getMgaGroupPanelBaseId('mga-group-b-total-effects'), 'total-effects')
 assert.equal(panelData.getMgaGroupPanelBaseId('mga-group-b-model-fit'), 'model-fit')
 assert.equal(panelData.getMgaGroupPanelBaseId('mga-path-coefficients'), 'mga-path-coefficients')
-assert.deepEqual(
-  panelData.getMgaGroupSpecificResultsSource('mga-group-a-path-coef', sampleResults)?.final_results?.path_coefficients,
-  [{ path: 'Image -> Satisfaction', coefficient: 0.51 }],
-)
 assert.deepEqual(
   panelData.getMgaGroupSpecificResultsSource('mga-group-a-r-square', nestedWrappedCamelCaseGroupSpecificResults)?.quality_criteria?.r_square,
   [{ construct: 'Satisfaction', r_squared: 0.58 }],
@@ -571,8 +620,8 @@ assert.match(
 
 assert.match(
   resultsViewSource,
-  /section\.id === 'multi-group-results'/,
-  'ResultsView should keep the top-level Multi-Group Results header static instead of a dropdown.',
+  /section\.id === 'multi-group-results' \? null/,
+  'ResultsView should remove the extra Multi-Group Results wrapper label from the MGA sidebar.',
 )
 assert.match(
   resultsViewSource,
@@ -591,8 +640,68 @@ assert.match(
 )
 assert.match(
   resultsViewSource,
-  /getMgaGroupSpecificResultsSource\(selectedPanel, analysisResults\)[\s\S]*parsePathCoefficients\(tableAnalysisResults\)/,
-  'ResultsView should parse group-specific structural, measurement, and quality tables from the selected group result source.',
+  /isMgaGroupStructuralBootstrapPanel[\s\S]*isStructuralEffectPanel\(effectiveSelectedPanel\)[\s\S]*shouldRenderBootstrapSignificanceTable[\s\S]*showBootstrapIntervalControl = shouldRenderBootstrapSignificanceTable[\s\S]*effectiveSelectedPanel === 'path-coef'[\s\S]*shouldRenderBootstrapSignificanceTable[\s\S]*<BootstrapSignificanceTable[\s\S]*\['total-indirect', 'specific-indirect', 'total-effects'\]\.includes\(effectiveSelectedPanel\)/,
+  'ResultsView should render MGA group-specific structural effects as bootstrap significance tables with interval controls.',
+)
+assert.match(
+  resultsViewSource,
+  /isMgaGroupStructuralTable[\s\S]*selectedPanel\.startsWith\('mga-group-'\)[\s\S]*isStructuralEffectPanel\(tableViewPanelId\)[\s\S]*tableViewOptions = isMgaGroupStructuralTable \? \[\] : getPanelTableViews/,
+  'ResultsView should hide matrix/list table controls for MGA group-specific structural significance tables.',
+)
+assert.match(
+  resultsViewSource,
+  /getMgaGroupSpecificResultsSource\(selectedPanel, analysisResults\)[\s\S]*parseReliability\(tableAnalysisResults\)[\s\S]*parseOuterLoadings\(tableAnalysisResults,\s*indicatorConstructMap\)[\s\S]*parseOuterWeights\(tableAnalysisResults,\s*indicatorConstructMap\)[\s\S]*parseModelFit\(tableAnalysisResults\)/,
+  'ResultsView should parse group-specific measurement and quality tables from the selected group result source.',
+)
+assert.match(
+  resultsViewSource,
+  /const indicatorConstructMap = new Map<string, string>\(\)[\s\S]*savedModel\.constructs\.forEach[\s\S]*parseOuterLoadings\(tableAnalysisResults,\s*indicatorConstructMap\)[\s\S]*parseOuterWeights\(tableAnalysisResults,\s*indicatorConstructMap\)/,
+  'ResultsView should build the indicator-to-construct lookup before parsing group-specific outer loadings and weights.',
+)
+assert.match(
+  resultsViewSource,
+  /function parseOuterWeights\(ar: any, constructsMap\?: Map<string, string>\)[\s\S]*const identity = inferMeasurementRowIdentity\(r, constructsMap\)[\s\S]*result\.push\(\{[\s\S]*indicator[\s\S]*construct[\s\S]*loading/,
+  'Outer weights should use the same construct/indicator identity inference as outer loadings instead of showing Unknown or arrow labels.',
+)
+assert.match(
+  resultsViewSource,
+  /function findEstimateCell\(row: Record<string, unknown> \| null \| undefined\): unknown[\s\S]*'loading'[\s\S]*'weight'[\s\S]*function isMeasurementIdentityOrMetricField[\s\S]*normalizeMetricKey\(key\)[\s\S]*metric === 'construct'[\s\S]*metric === 'indicator'[\s\S]*metric === 'loading'[\s\S]*metric === 'weight'[\s\S]*Object\.keys\(r\)\.filter\(k => !isRowField\(k\) && !isMeasurementIdentityOrMetricField\(k\)\)/,
+  'Group-specific measurement parsers should handle normalized construct/indicator/loading rows without treating metric columns as construct names.',
+)
+assert.match(
+  resultsViewSource,
+  /'mga-group-specific-results':\s*(?!Folders)\w+/,
+  'Group specific results should not use the folder icon override.',
+)
+assert.match(
+  resultsViewSource,
+  /useState\(\(\) => item\.id === 'mga-group-specific-results'\)/,
+  'Only the Group Specific Results accordion should start expanded in the MGA sidebar.',
+)
+assert.match(
+  resultsViewSource,
+  /item\.id === 'mga-group-a' \|\| item\.id === 'mga-group-b'[\s\S]*text-text-primary font-bold/,
+  'Actual MGA group values should render bold with theme-primary text in the sidebar.',
+)
+assert.match(
+  resultsViewSource,
+  /isMgaGroupSubsection[\s\S]*mga-group-\[ab\]-\(measurement-model\|model-quality\|structural-effects\)[\s\S]*text-text-primary font-bold uppercase/,
+  'MGA measurement, model quality, and structural accordion headers should be uppercase, bold, and theme-primary.',
+)
+assert.match(
+  resultsViewSource,
+  /getPanelDataFromResults\(analysisMode, selectedPanel, analysisResults, \{[\s\S]*mgaOverviewFallback:\s*\{[\s\S]*datasetRows: resultsGroupingData\.datasetRows[\s\S]*constructs: savedModel\?\.constructs/,
+  'ResultsView should pass cached dataset rows and saved model constructs as an MGA overview descriptive fallback.',
+)
+assert.match(
+  resultsViewSource,
+  /paddingLeft: selectedPanel === child\.id \? 18 \+ \(depth \+ 1\) \* 6 : 20 \+ \(depth \+ 1\) \* 6/,
+  'MGA sidebar indentation should stay compact instead of stepping deeply inward.',
+)
+assert.match(
+  resultsViewSource,
+  /title: section\.id === 'multi-group-results' \? undefined : section\.label/,
+  'Exported MGA HTML should not reintroduce the hidden Multi-Group Results wrapper heading.',
 )
 assert.match(
   resultsViewSource,
@@ -603,6 +712,26 @@ assert.match(
   resultsViewSource,
   /showMgaComparisonMethodTabs[\s\S]*mgaComparisonMethodOptions[\s\S]*onMgaComparisonMethodChange/,
   'ResultsView should render bias-corrected, Henseler, and parametric choices as table-side tabs.',
+)
+assert.match(
+  resultsViewSource,
+  /function MgaOverviewPanel[\s\S]*setup[\s\S]*descriptives[\s\S]*GenericDataTable/,
+  'ResultsView should render MGA overview as setup and group descriptives tables.',
+)
+assert.match(
+  resultsViewSource,
+  /analysisMode === 'mga' && selectedPanel === 'overview'[\s\S]*<MgaOverviewPanel/,
+  'ResultsView should use the dedicated MGA overview renderer for the overview panel.',
+)
+assert.match(
+  resultsViewSource,
+  /function isMgaOverviewGroupBoundary[\s\S]*analysisMode !== 'mga' \|\| selectedPanel !== 'overview'[\s\S]*currentGroup[\s\S]*previousGroup[\s\S]*currentGroup !== previousGroup/,
+  'MGA overview group descriptives should detect when the table moves from one group to the next.',
+)
+assert.match(
+  resultsViewSource,
+  /const hasMgaOverviewGroupGap = isMgaOverviewGroupBoundary\(rows, rowIndex, analysisMode, selectedPanel\)[\s\S]*borderTop: hasMgaOverviewGroupGap \? '8px solid var\(--color-right-panel-bg\)' : undefined[\s\S]*paddingTop: hasMgaOverviewGroupGap \? 14 : undefined/,
+  'MGA overview group descriptives should render a visible space before the second group.',
 )
 
 console.log('PASS multi-group analysis results contract')

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,6 +7,7 @@ import {
   CircleNotch,
   MathOperations,
   SquaresFour,
+  Warning,
   X,
 } from '@phosphor-icons/react'
 
@@ -35,6 +36,11 @@ export interface PermutationAnalysisModalProps {
 interface GroupCount {
   value: string
   count: number
+}
+
+interface ConfiguralCheckItem {
+  label: string
+  status: PermutationConfiguralStatus
 }
 
 const MISSING_TOKENS = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
@@ -100,6 +106,64 @@ function readPrecheckPassed(result: any): boolean {
   return value === true || String(value).toLowerCase() === 'true'
 }
 
+function normalizeConfiguralStatus(status: unknown, passed?: unknown): PermutationConfiguralStatus {
+  if (passed === true || String(passed).toLowerCase() === 'true') return 'passed'
+  if (passed === false || String(passed).toLowerCase() === 'false') return 'failed'
+
+  const normalized = String(status ?? '').trim().toLowerCase()
+  if (normalized === 'passed' || normalized === 'pass' || normalized === 'supported') return 'passed'
+  if (normalized === 'failed' || normalized === 'fail' || normalized === 'not passed' || normalized === 'not supported') return 'failed'
+  if (normalized === 'checking' || normalized === 'running') return 'checking'
+  return 'idle'
+}
+
+function humanizeCheckLabel(value: string): string {
+  const normalized = value.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Configural check'
+}
+
+function readPrecheckChecks(result: any): ConfiguralCheckItem[] {
+  const rawChecks =
+    result?.results?.configuralInvariance?.checks ??
+    result?.configuralInvariance?.checks ??
+    []
+
+  if (!Array.isArray(rawChecks)) return []
+
+  return rawChecks
+    .map((row: {
+      check?: unknown
+      label?: unknown
+      name?: unknown
+      status?: unknown
+      passed?: unknown
+    }) => {
+      const label = humanizeCheckLabel(String(row?.check ?? row?.label ?? row?.name ?? '').trim())
+      return {
+        label,
+        status: normalizeConfiguralStatus(row?.status, row?.passed),
+      }
+    })
+    .filter((item) => Boolean(item.label))
+}
+
+function getConfiguralStatusColor(status: PermutationConfiguralStatus): string {
+  if (status === 'passed') return 'var(--color-success)'
+  if (status === 'failed') return 'var(--color-danger)'
+  return 'var(--color-accent)'
+}
+
+function configuralStatusAriaLabel(status: PermutationConfiguralStatus, label: string): string {
+  const statusLabel = status === 'passed'
+    ? 'passed'
+    : status === 'failed'
+      ? 'failed'
+      : status === 'checking'
+        ? 'checking'
+        : 'waiting'
+  return `${label}: ${statusLabel}`
+}
+
 export default function PermutationAnalysisModal({
   modelName: _modelName,
   groupingOptions,
@@ -115,9 +179,13 @@ export default function PermutationAnalysisModal({
   const [groupingDropdownOpen, setGroupingDropdownOpen] = useState(false)
   const [configuralOpen, setConfiguralOpen] = useState(false)
   const [localConfiguralStatus, setLocalConfiguralStatus] = useState<PermutationConfiguralStatus>('idle')
+  const [configuralCheckItems, setConfiguralCheckItems] = useState<ConfiguralCheckItem[]>([])
   const [permutationsInput, setPermutationsInput] = useState('500')
   const [alphaInput, setAlphaInput] = useState(String(DEFAULT_ALPHA))
   const [seedInput, setSeedInput] = useState(String(DEFAULT_SEED))
+  const onPrecheckRef = useRef(onPrecheck)
+  onPrecheckRef.current = onPrecheck
+  const activePrecheckKeyRef = useRef<string | null>(null)
 
   const cleanGroupingOptions = useMemo(
     () => groupingOptions.map((option) => String(option ?? '').trim()).filter(Boolean),
@@ -145,13 +213,25 @@ export default function PermutationAnalysisModal({
   const permutationsError = validatePositiveWholeNumber(permutationsInput)
   const alphaError = validateAlpha(alphaInput)
   const seedError = validateSeed(seedInput)
-  const configuralStatus = configuralStatusProp ?? localConfiguralStatus
+  const precheckRequestKey = useMemo(
+    () => JSON.stringify({
+      groupingVariable,
+      groupA,
+      groupB,
+      permutations: permutationsInput.trim(),
+      alpha: alphaInput.trim(),
+      seed: seedInput.trim(),
+    }),
+    [alphaInput, groupA, groupB, groupingVariable, permutationsInput, seedInput],
+  )
+  const rawConfiguralStatus = localConfiguralStatus !== 'idle'
+    ? localConfiguralStatus
+    : configuralStatusProp ?? 'idle'
+  const configuralStatus = activePrecheckKeyRef.current === precheckRequestKey
+    ? rawConfiguralStatus
+    : 'idle'
   const configuralPrecheckPassed = configuralStatus === 'passed'
-  const configuralStatusColor = configuralStatus === 'passed'
-    ? 'var(--color-success)'
-    : configuralStatus === 'checking' || configuralStatus === 'idle'
-      ? 'var(--color-text-muted)'
-      : 'var(--color-danger)'
+  const hasPrecheck = Boolean(onPrecheck)
 
   const calculateDisabled =
     isRunning ||
@@ -170,21 +250,31 @@ export default function PermutationAnalysisModal({
   })
 
   useEffect(() => {
-    if (!onPrecheck || !groupingVariable || !hasExactlyTwoGroups || Boolean(permutationsError || alphaError || seedError)) {
+    if (!hasPrecheck || !groupingVariable || !hasExactlyTwoGroups || Boolean(permutationsError || alphaError || seedError)) {
+      activePrecheckKeyRef.current = null
       setLocalConfiguralStatus('idle')
+      setConfiguralCheckItems([])
       return
     }
 
+    if (activePrecheckKeyRef.current === precheckRequestKey) return
+
     let cancelled = false
     const timer = window.setTimeout(() => {
+      activePrecheckKeyRef.current = precheckRequestKey
       setLocalConfiguralStatus('checking')
-      Promise.resolve(onPrecheck(buildSettings()))
+      setConfiguralCheckItems([])
+      Promise.resolve(onPrecheckRef.current?.(buildSettings()))
         .then((result) => {
           if (cancelled) return
+          setConfiguralCheckItems(readPrecheckChecks(result))
           setLocalConfiguralStatus(readPrecheckPassed(result) ? 'passed' : 'failed')
         })
         .catch(() => {
-          if (!cancelled) setLocalConfiguralStatus('failed')
+          if (!cancelled) {
+            setConfiguralCheckItems([])
+            setLocalConfiguralStatus('failed')
+          }
         })
     }, 250)
 
@@ -193,14 +283,10 @@ export default function PermutationAnalysisModal({
       window.clearTimeout(timer)
     }
   }, [
-    onPrecheck,
+    hasPrecheck,
+    precheckRequestKey,
     groupingVariable,
-    groupA,
-    groupB,
     hasExactlyTwoGroups,
-    permutationsInput,
-    alphaInput,
-    seedInput,
     permutationsError,
     alphaError,
     seedError,
@@ -238,19 +324,41 @@ export default function PermutationAnalysisModal({
     fontWeight: 400,
   } as const
 
-  const configuralLabel = configuralStatus === 'checking'
-    ? 'Checking'
-    : configuralStatus === 'passed'
-      ? 'Passed'
-      : configuralStatus === 'failed'
-        ? 'Not passed'
-        : 'Waiting'
-
   const checklistItems = [
     'Same model structure across groups',
     'Same indicators and construct specification',
     'Same data treatment and algorithm settings',
   ]
+  const visibleConfiguralChecks: ConfiguralCheckItem[] = configuralCheckItems.length ? configuralCheckItems : checklistItems.map((label) => ({
+    label,
+    status: configuralStatus,
+  }))
+
+  function renderConfiguralStatusIcon(status: PermutationConfiguralStatus, label: string) {
+    const statusColor = getConfiguralStatusColor(status)
+    return (
+      <span
+        role="img"
+        aria-label={configuralStatusAriaLabel(status, label)}
+        title={configuralStatusAriaLabel(status, label)}
+        className="flex items-center justify-center"
+        style={{
+          width: 14,
+          height: 14,
+          flex: '0 0 14px',
+          color: statusColor,
+        }}
+      >
+        {status === 'passed' ? (
+          <Check size={13} weight="bold" />
+        ) : status === 'failed' ? (
+          <X size={13} weight="bold" />
+        ) : (
+          <Warning size={13} weight="bold" />
+        )}
+      </span>
+    )
+  }
 
   return (
     <div
@@ -511,19 +619,24 @@ export default function PermutationAnalysisModal({
                 gap: 10,
               }}
             >
-              <CaretDown size={15} style={{ transform: configuralOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
               <span style={{ flex: 1 }}>Configural invariance</span>
-              <span style={{ color: configuralStatusColor, fontSize: 12 }}>{configuralLabel}</span>
+              {renderConfiguralStatusIcon(configuralStatus, 'Configural invariance')}
+              <CaretDown size={15} style={{ transform: configuralOpen ? 'rotate(0deg)' : 'rotate(-90deg)' }} />
             </button>
 
             {configuralOpen && (
               <div style={{ borderTop: '1px solid var(--color-border)', padding: '10px 12px 12px', display: 'grid', gap: 8 }}>
-                {checklistItems.map((item) => (
-                  <div key={item} className="flex items-center" style={{ gap: 9, color: configuralStatusColor, fontFamily: 'DM Sans, Inter, sans-serif', fontSize: 12, fontWeight: 400 }}>
-                    <Check size={11} color={configuralStatusColor} />
-                    <span style={{ color: configuralStatusColor }}>{item}</span>
-                  </div>
-                ))}
+                {visibleConfiguralChecks.map((item) => {
+                  const itemColor = getConfiguralStatusColor(item.status)
+                  return (
+                    <div key={item.label} className="flex items-start" style={{ gap: 9, color: itemColor, fontFamily: 'DM Sans, Inter, sans-serif', fontSize: 12, fontWeight: 400 }}>
+                      {renderConfiguralStatusIcon(item.status, item.label)}
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ color: itemColor }}>{item.label}</div>
+                      </div>
+                    </div>
+                  )
+                })}
                 {excludedMissing > 0 && (
                   <div style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, Inter, sans-serif', fontSize: 11, fontWeight: 400 }}>
                     {excludedMissing.toLocaleString()} missing grouping values excluded.

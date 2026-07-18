@@ -2024,17 +2024,28 @@ extract_specific_indirect_effects <- function(payload, boot_model, alpha = 0.05)
   effects
 }
 
-compute_vif_from_data <- function(payload, data) {
+construct_indicators_from_payload <- function(con) {
+  indicators <- con$indicators %||% list()
+  indicators <- unlist(lapply(indicators, function(indicator) {
+    if (is.list(indicator)) {
+      return(as.character(indicator$name %||% indicator$id %||% indicator$label %||% ""))
+    }
+    as.character(indicator)
+  }), use.names = FALSE)
+  indicators[!is.na(indicators) & nzchar(indicators)]
+}
+
+construct_scores_from_payload_data <- function(payload, data) {
   if (is.null(data) || !nrow(data)) return(list())
 
-  raw_df <- to_numeric_frame(as.data.frame(data))
+  raw_df <- to_numeric_frame(as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE))
 
   construct_defs <- payload$constructs %||% list()
   construct_scores <- list()
   for (con in construct_defs) {
     con_name <- as.character(con$name %||% "")
     if (!nzchar(con_name)) next
-    indicators <- unique(unlist(lapply(con$indicators, as.character), use.names = FALSE))
+    indicators <- unique(construct_indicators_from_payload(con))
     indicators <- indicators[indicators %in% names(raw_df)]
     if (!length(indicators)) next
 
@@ -2046,7 +2057,14 @@ compute_vif_from_data <- function(payload, data) {
     }
   }
 
-  score_df <- as.data.frame(construct_scores, stringsAsFactors = FALSE)
+  score_df <- as.data.frame(construct_scores, stringsAsFactors = FALSE, check.names = FALSE)
+  if (!ncol(score_df)) return(list())
+  score_df
+}
+
+compute_vif_from_data <- function(payload, data) {
+  score_df <- construct_scores_from_payload_data(payload, data)
+  if (is.null(score_df) || !is.data.frame(score_df)) return(list())
   if (!ncol(score_df)) return(list())
 
   edges <- lapply(payload$paths, function(p) {
@@ -4362,6 +4380,164 @@ mga_number <- function(value) {
   numeric
 }
 
+mga_descriptive_rows_from_summary <- function(group_label, source) {
+  rows <- as_rows(source)
+  if (!length(rows)) return(list())
+
+  out <- lapply(rows, function(row) {
+    construct_name <- row$Construct %||%
+      row$construct %||%
+      row$row_name %||%
+      row$Row %||%
+      row$name
+    construct_name <- as.character(construct_name %||% "")
+    if (!nzchar(construct_name)) return(NULL)
+
+    variance_value <- mga_number(row$Variance %||% row$variance)
+    sd_value <- mga_number(
+      row[["Standard Deviation"]] %||%
+      row$StandardDeviation %||%
+      row$StdDev %||%
+      row$`Std. Dev.` %||%
+      row$SD %||%
+      row$sd
+    )
+    if (is.null(sd_value) && !is.null(variance_value) && variance_value >= 0) {
+      sd_value <- sqrt(variance_value)
+    }
+
+    list(
+      Group = as.character(group_label),
+      Construct = construct_name,
+      Number = mga_number(row$Number %||% row$N %||% row$n %||% row$count),
+      Mean = mga_number(row$Mean %||% row$mean),
+      `Standard Deviation` = mga_number(sd_value),
+      Skewness = mga_number(row$Skewness %||% row$skewness),
+      Kurtosis = mga_number(row$Kurtosis %||% row$kurtosis),
+      Variance = variance_value
+    )
+  })
+
+  Filter(Negate(is.null), out)
+}
+
+mga_descriptive_rows_from_scores <- function(group_label, construct_scores) {
+  if (is.null(construct_scores)) return(list())
+  score_df <- tryCatch(
+    as.data.frame(construct_scores, stringsAsFactors = FALSE, check.names = FALSE),
+    error = function(e) NULL
+  )
+  if (is.null(score_df) || !ncol(score_df)) return(list())
+
+  rows <- lapply(names(score_df), function(construct_name) {
+    values <- suppressWarnings(as.numeric(score_df[[construct_name]]))
+    values <- values[is.finite(values)]
+    n <- length(values)
+    if (!n) return(NULL)
+
+    mean_value <- mean(values)
+    variance_value <- if (n > 1L) stats::var(values) else NA_real_
+    sd_value <- if (n > 1L) stats::sd(values) else NA_real_
+    centered <- values - mean_value
+    skewness_value <- if (n > 2L && is.finite(sd_value) && sd_value > 0) {
+      mean(centered^3) / (sd_value^3)
+    } else {
+      NA_real_
+    }
+    kurtosis_value <- if (n > 3L && is.finite(sd_value) && sd_value > 0) {
+      mean(centered^4) / (sd_value^4)
+    } else {
+      NA_real_
+    }
+
+    list(
+      Group = as.character(group_label),
+      Construct = as.character(construct_name),
+      Number = n,
+      Mean = mga_number(mean_value),
+      `Standard Deviation` = mga_number(sd_value),
+      Skewness = mga_number(skewness_value),
+      Kurtosis = mga_number(kurtosis_value),
+      Variance = mga_number(variance_value)
+    )
+  })
+
+  Filter(Negate(is.null), rows)
+}
+
+mga_descriptive_rows <- function(group_label, payload = NULL, group_data = NULL, group_model = NULL, group_summary = NULL) {
+  construct_scores <- group_model$construct_scores %||%
+    group_model$constructScores %||%
+    group_model$composite_scores %||%
+    group_model$compositeScores %||%
+    group_model$scores %||%
+    group_summary$construct_scores %||%
+    group_summary$constructScores %||%
+    group_summary$composite_scores %||%
+    group_summary$compositeScores %||%
+    group_summary$scores
+
+  if (is.null(construct_scores)) {
+    summary_construct_descriptives <- group_summary$descriptives$statistics$constructs %||%
+      group_summary$descriptives$statistics$Constructs %||%
+      group_summary$descriptives$constructs %||%
+      group_summary$descriptives$Constructs
+    summary_rows <- mga_descriptive_rows_from_summary(group_label, summary_construct_descriptives)
+    if (length(summary_rows)) return(summary_rows)
+  }
+
+  score_rows <- mga_descriptive_rows_from_scores(group_label, construct_scores)
+  if (length(score_rows)) return(score_rows)
+
+  raw_score_rows <- mga_descriptive_rows_from_scores(
+    group_label,
+    construct_scores_from_payload_data(payload, group_data)
+  )
+  if (length(raw_score_rows)) return(raw_score_rows)
+
+  list()
+}
+
+mga_micom_overview_message <- function(mga_result) {
+  fallback <- "MICOM was not run for this analysis. Interpret results well."
+  micom_overview <- mga_result$micomOverview %||% mga_result$micom_overview
+  if (is.null(micom_overview)) return(fallback)
+
+  if (is.character(micom_overview) && length(micom_overview) && nzchar(trimws(micom_overview[[1]]))) {
+    return(as.character(micom_overview[[1]]))
+  }
+
+  if (is.list(micom_overview)) {
+    value <- micom_overview$message %||% micom_overview$summary %||% micom_overview$statusLabel %||% micom_overview$status
+    if (!is.null(value) && length(value) && nzchar(trimws(as.character(value[[1]])))) {
+      return(as.character(value[[1]]))
+    }
+  }
+
+  fallback
+}
+
+mga_overview_setup_rows <- function(payload, data, mga_result) {
+  list(
+    list("Analysis information" = "Grouping variable", Value = as.character(payload$groupingVariable)),
+    list("Analysis information" = "Selected groups", Value = sprintf("%s vs %s", payload$groupA, payload$groupB)),
+    list("Analysis information" = "Sample size per group", Value = sprintf(
+      "%s: %s, %s: %s",
+      payload$groupA,
+      micom_group_count(data, payload$groupingVariable, payload$groupA),
+      payload$groupB,
+      micom_group_count(data, payload$groupingVariable, payload$groupB)
+    )),
+    list("Analysis information" = "MGA settings", Value = sprintf(
+      "%s bootstrap subsamples, alpha %s, seed %s",
+      payload$nboot,
+      payload$alpha,
+      payload$seed
+    )),
+    list("Analysis information" = "Measurement invariance status", Value = mga_micom_overview_message(mga_result))
+  )
+}
+
 mga_boot_paths_matrix <- function(pls_boot) {
   boot_paths <- seminr:::boot_paths_df(pls_boot)
   if (is.null(dim(boot_paths))) {
@@ -4811,6 +4987,8 @@ run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
   message("Estimating and bootstrapping selected MGA groups...")
   group1_model <- seminr:::rerun(pls_model, data = group1_data)
   group2_model <- seminr:::rerun(pls_model, data = group2_data)
+  group1_summary <- summary(group1_model)
+  group2_summary <- summary(group2_model)
   group1_boot <- seminr::bootstrap_model(seminr_model = group1_model, nboot = nboot, ...)
   group2_boot <- seminr::bootstrap_model(seminr_model = group2_model, nboot = nboot, ...)
 
@@ -4849,6 +5027,10 @@ run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
     groupSpecific = list(
       groupA = mga_group_bootstrap_sections(payload, group1_data, group1_model, group1_boot),
       groupB = mga_group_bootstrap_sections(payload, group2_data, group2_model, group2_boot)
+    ),
+    descriptives = c(
+      mga_descriptive_rows(payload$groupA, payload, group1_data, group1_model, group1_summary),
+      mga_descriptive_rows(payload$groupB, payload, group2_data, group2_model, group2_summary)
     ),
     pathCoefficients = mga_compare_entries(path_entries, payload, "groupA_beta", "groupB_beta", group1_n, group2_n),
     specificIndirectEffects = mga_compare_entries(specific_indirect_entries, payload, "groupA_beta", "groupB_beta", group1_n, group2_n),
@@ -4916,6 +5098,11 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
 
   json_unbox_tree(list(
     method = "MGA",
+    overview = list(
+      setup = mga_overview_setup_rows(payload, data, mga_result),
+      descriptives = mga_result$descriptives %||% list()
+    ),
+    descriptives = mga_result$descriptives %||% list(),
     groupSpecific = mga_result$groupSpecific %||% list(groupA = list(), groupB = list()),
     bootstrapMGA = list(
       pathCoefficients = list(

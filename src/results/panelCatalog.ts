@@ -226,26 +226,25 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       items: [
         { id: 'overview', label: 'Overview', iconKey: 'info' },
         {
+          id: 'mga-comparisons',
+          label: 'MULTI GROUP COMPARISON',
+          iconKey: 'table',
+          children: [
+            { id: 'mga-path-coefficients', label: 'Path Coefficients', iconKey: 'graph' },
+            { id: 'mga-outer-loadings', label: 'Outer Loadings', iconKey: 'table' },
+            { id: 'mga-outer-weights', label: 'Outer Weights', iconKey: 'table' },
+          ],
+        },
+        {
           id: 'mga-group-specific-results',
-          label: 'Group-Specific Results',
-          iconKey: 'folders',
+          label: 'GROUP SPECIFIC RESULTS',
+          iconKey: 'check-circle',
           children: [
             {
               id: 'mga-group-a',
               label: 'Group A',
-              iconKey: 'folders',
+              iconKey: 'info',
               children: [
-                {
-                  id: 'mga-group-a-structural-effects',
-                  label: 'STRUCTURAL EFFECTS',
-                  iconKey: 'graph',
-                  children: [
-                    { id: 'mga-group-a-path-coef', label: 'Path Coefficients', iconKey: 'graph' },
-                    { id: 'mga-group-a-total-indirect', label: 'Total Indirect Effects', iconKey: 'graph' },
-                    { id: 'mga-group-a-specific-indirect', label: 'Specific Indirect Effects', iconKey: 'graph' },
-                    { id: 'mga-group-a-total-effects', label: 'Total Effects', iconKey: 'graph' },
-                  ],
-                },
                 {
                   id: 'mga-group-a-measurement-model',
                   label: 'MEASUREMENT MODEL',
@@ -268,24 +267,24 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
                     { id: 'mga-group-a-model-fit', label: 'Model Fit', iconKey: 'check-circle' },
                   ],
                 },
+                {
+                  id: 'mga-group-a-structural-effects',
+                  label: 'STRUCTURAL EFFECTS',
+                  iconKey: 'graph',
+                  children: [
+                    { id: 'mga-group-a-path-coef', label: 'Path Coefficients', iconKey: 'graph' },
+                    { id: 'mga-group-a-total-indirect', label: 'Total Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-a-specific-indirect', label: 'Specific Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-a-total-effects', label: 'Total Effects', iconKey: 'graph' },
+                  ],
+                },
               ],
             },
             {
               id: 'mga-group-b',
               label: 'Group B',
-              iconKey: 'folders',
+              iconKey: 'info',
               children: [
-                {
-                  id: 'mga-group-b-structural-effects',
-                  label: 'STRUCTURAL EFFECTS',
-                  iconKey: 'graph',
-                  children: [
-                    { id: 'mga-group-b-path-coef', label: 'Path Coefficients', iconKey: 'graph' },
-                    { id: 'mga-group-b-total-indirect', label: 'Total Indirect Effects', iconKey: 'graph' },
-                    { id: 'mga-group-b-specific-indirect', label: 'Specific Indirect Effects', iconKey: 'graph' },
-                    { id: 'mga-group-b-total-effects', label: 'Total Effects', iconKey: 'graph' },
-                  ],
-                },
                 {
                   id: 'mga-group-b-measurement-model',
                   label: 'MEASUREMENT MODEL',
@@ -308,18 +307,19 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
                     { id: 'mga-group-b-model-fit', label: 'Model Fit', iconKey: 'check-circle' },
                   ],
                 },
+                {
+                  id: 'mga-group-b-structural-effects',
+                  label: 'STRUCTURAL EFFECTS',
+                  iconKey: 'graph',
+                  children: [
+                    { id: 'mga-group-b-path-coef', label: 'Path Coefficients', iconKey: 'graph' },
+                    { id: 'mga-group-b-total-indirect', label: 'Total Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-b-specific-indirect', label: 'Specific Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-b-total-effects', label: 'Total Effects', iconKey: 'graph' },
+                  ],
+                },
               ],
             },
-          ],
-        },
-        {
-          id: 'mga-comparisons',
-          label: 'Multi-Group Comparisons',
-          iconKey: 'table',
-          children: [
-            { id: 'mga-path-coefficients', label: 'Path Coefficients', iconKey: 'graph' },
-            { id: 'mga-outer-loadings', label: 'Outer Loadings', iconKey: 'table' },
-            { id: 'mga-outer-weights', label: 'Outer Weights', iconKey: 'table' },
           ],
         },
       ],

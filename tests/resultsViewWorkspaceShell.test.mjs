@@ -16,7 +16,7 @@ assert.doesNotMatch(resultsSource, /Generate AI Report/, 'Results toolbar should
 
 assert.match(
   resultsSource,
-  /<div className="h-full w-full flex flex-col overflow-hidden select-none"\s+style=\{\{ backgroundColor: 'var\(--color-sidebar-bg\)' \}\}/,
+  /<div className="metis-results-view h-full w-full flex flex-col overflow-hidden select-none"\s+style=\{\{ backgroundColor: 'var\(--color-sidebar-bg\)' \}\}/,
   'Results view shell should use the left sidebar background token.'
 )
 
@@ -34,19 +34,19 @@ assert.match(
 
 assert.match(
   resultsSource,
-  /<div className="w-60 flex flex-col shrink-0 overflow-hidden" style=\{\{ background: 'var\(--color-sidebar-bg\)' \}\}>/,
-  'Results sidebar should use the left sidebar background token.'
+  /function useSidebarResize\(initialWidth: number, minWidth: number, maxWidth: number\)[\s\S]*const \{ width: resultsSidebarWidth, onMouseDown: onResultsSidebarResizeStart \} = useSidebarResize\(240, 220, 420\)[\s\S]*className="relative flex flex-col shrink-0 overflow-hidden"[\s\S]*width: resultsSidebarWidth[\s\S]*onMouseDown=\{onResultsSidebarResizeStart\}/,
+  'Results sidebar should use the left sidebar background token and expose a draggable resize handle.'
 )
 
 assert.match(
   cssSource,
-  /:root,\s*\n\[data-theme='dark'\][\s\S]*--color-sidebar-bg:\s*var\(--color-menu-bg\);[\s\S]*--color-right-panel-bg:\s*#181818;/,
+  /:root,\s*\n\[data-theme='dark'\][\s\S]*--color-sidebar-bg:\s*var\(--color-menu-bg\);[\s\S]*--color-right-panel-bg:\s*#181818;[\s\S]*--color-results-table-header-bg:\s*var\(--color-accent\);[\s\S]*--color-results-table-row-bg:\s*#181818;[\s\S]*--color-results-table-row-alt-bg:\s*#202020;/,
   'Dark theme should keep left results/sidebar chrome at #202020 while the right results panel uses #181818.'
 )
 
 assert.match(
   cssSource,
-  /\[data-theme='light'\][\s\S]*--color-sidebar-bg:\s*#F4F4F4;[\s\S]*--color-right-panel-bg:\s*#FAFAFA;/,
+  /\[data-theme='light'\][\s\S]*--color-sidebar-bg:\s*#F4F4F4;[\s\S]*--color-right-panel-bg:\s*#FAFAFA;[\s\S]*--color-results-table-header-bg:\s*var\(--color-accent\);[\s\S]*--color-results-table-row-bg:\s*#FFFFFF;[\s\S]*--color-results-table-row-alt-bg:\s*#F4F6F8;/,
   'Light theme should preserve the visible sidebar/right-panel contrast.'
 )
 
@@ -82,14 +82,20 @@ assert.match(
 
 assert.match(
   resultsSource,
-  /const RESULTS_TABLE_ROW_ALT_BACKGROUND = 'rgb\(var\(--color-accent-rgb\) \/ 0\.025\)'/,
-  'Results tables should use a subtle accent-tinted alternate row background token.'
+  /const RESULTS_TABLE_ROW_BACKGROUND = 'var\(--color-results-table-row-bg\)'[\s\S]*const RESULTS_TABLE_ROW_ALT_BACKGROUND = 'var\(--color-results-table-row-alt-bg\)'/,
+  'Results tables should use theme-specific neutral row background tokens.'
 )
 
 assert.match(
   resultsSource,
   /function resultsTableRowStyle\(index: number\)[\s\S]*index % 2 === 0[\s\S]*RESULTS_TABLE_ROW_BACKGROUND[\s\S]*RESULTS_TABLE_ROW_ALT_BACKGROUND/,
   'Results table rows should alternate between #181818 and the subtle separator tint.'
+)
+
+assert.match(
+  cssSource,
+  /\.metis-results-view thead tr[\s\S]*--color-results-table-header-bg[\s\S]*\.metis-results-view thead th[\s\S]*--color-results-table-header-text/,
+  'Results tables should force accent headers with readable theme-specific header text.'
 )
 
 assert.doesNotMatch(

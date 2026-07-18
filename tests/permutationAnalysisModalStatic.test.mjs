@@ -69,6 +69,26 @@ assert.match(
 
 assert.match(
   modalSource,
+  /const onPrecheckRef = useRef\(onPrecheck\)[\s\S]*onPrecheckRef\.current = onPrecheck/,
+  'Permutation modal should keep the latest precheck callback in a ref so parent status updates do not retrigger the same precheck.',
+)
+
+const precheckEffectMatch = modalSource.match(/useEffect\(\(\) => \{[\s\S]*?Promise\.resolve\([\s\S]*?\n  \}, \[\n([\s\S]*?)\n  \]\)/)
+assert.ok(precheckEffectMatch, 'Permutation modal should run the configural precheck from a dedicated effect.')
+assert.doesNotMatch(
+  precheckEffectMatch[1],
+  /\bonPrecheck\b/,
+  'Configural precheck effect dependencies should not include onPrecheck because parent status changes recreate that callback.',
+)
+
+assert.match(
+  modalSource,
+  /const activePrecheckKeyRef = useRef<string \| null>\(null\)[\s\S]*if \(activePrecheckKeyRef\.current === precheckRequestKey\) return[\s\S]*activePrecheckKeyRef\.current = precheckRequestKey/,
+  'Permutation modal should remember the active settings key and avoid rerunning an identical configural precheck.',
+)
+
+assert.match(
+  modalSource,
   /label: 'Permutations'[\s\S]*label: 'Alpha'[\s\S]*label: 'Seed'/,
   'Permutations, Alpha, and Seed should be rendered together on one compact settings row.',
 )
@@ -201,8 +221,20 @@ assert.match(
 
 assert.match(
   modalSource,
-  /const configuralStatusColor = configuralStatus === 'passed'[\s\S]*var\(--color-success\)[\s\S]*var\(--color-danger\)/,
-  'Configural status text should use green when passed and red when not passed.',
+  /function readPrecheckChecks\(result: any\): ConfiguralCheckItem\[\][\s\S]*configuralInvariance\?\.checks[\s\S]*check\?: unknown[\s\S]*status\?: unknown/,
+  'Permutation modal should retain per-check configural statuses returned by the backend.',
+)
+
+assert.match(
+  modalSource,
+  /setConfiguralCheckItems\(readPrecheckChecks\(result\)\)/,
+  'Permutation modal should store the returned configural check rows when a precheck finishes.',
+)
+
+assert.match(
+  modalSource,
+  /function getConfiguralStatusColor\(status: PermutationConfiguralStatus\)[\s\S]*var\(--color-success\)[\s\S]*var\(--color-danger\)[\s\S]*var\(--color-accent\)/,
+  'Configural status icons should use green when passed, red when failed, and the active accent while waiting/checking.',
 )
 
 assert.doesNotMatch(
@@ -213,8 +245,40 @@ assert.doesNotMatch(
 
 assert.match(
   modalSource,
-  /<Check size=\{11\}[\s\S]*color=\{configuralStatusColor\}[\s\S]*style=\{\{[\s\S]*color: configuralStatusColor/,
-  'Configural checklist rows should use small status-colored icons and status-colored text.',
+  /Warning[\s\S]*function renderConfiguralStatusIcon[\s\S]*<Check size=\{13\}[\s\S]*<X size=\{13\}/,
+  'Configural status should render waiting/checking, passed, and failed as small bare icon states instead of status words.',
+)
+
+const renderConfiguralStatusIconMatch = modalSource.match(/function renderConfiguralStatusIcon[\s\S]*?\n  \}/)
+assert.ok(renderConfiguralStatusIconMatch, 'Permutation modal should keep the configural status icon renderer.')
+assert.doesNotMatch(
+  renderConfiguralStatusIconMatch[0],
+  /borderRadius|border:\s*`1px solid|width:\s*22|height:\s*22|flex:\s*'0 0 22px'/,
+  'Configural status icons should not sit inside a bordered circular wrapper.',
+)
+
+assert.doesNotMatch(
+  modalSource,
+  /WarningCircle/,
+  'Waiting/checking configural status should not use the circular warning icon.',
+)
+
+assert.match(
+  modalSource,
+  /<span style=\{\{ flex: 1 \}\}>Configural invariance<\/span>[\s\S]*\{renderConfiguralStatusIcon\(configuralStatus[\s\S]*<CaretDown size=\{15\}/,
+  'Configural section should move the dropdown caret to the right after the status icon.',
+)
+
+assert.match(
+  modalSource,
+  /configuralCheckItems\.length \? configuralCheckItems : checklistItems\.map[\s\S]*renderConfiguralStatusIcon\(item\.status, item\.label\)/,
+  'Expanded configural details should show each returned check with its own pass/fail icon.',
+)
+
+assert.doesNotMatch(
+  modalSource,
+  /item\.note|row\?\.note|row\?\.message|The same fitted seminr model object|The seminr model settings object is reused|Coding, missing-value handling/,
+  'Expanded configural details should not render verbose backend note/message text under each check.',
 )
 
 assert.match(

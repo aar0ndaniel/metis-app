@@ -85,8 +85,26 @@ assert.match(
 
 assert.match(
   plumberSource,
-  /map_mga_response\s*<-\s*function\(payload, data, mga_result, timings = NULL\)[\s\S]*groupSpecific\s*=\s*mga_result\$groupSpecific[\s\S]*bootstrapMGA[\s\S]*pathCoefficients[\s\S]*specificIndirectEffects[\s\S]*totalIndirectEffects[\s\S]*totalEffects[\s\S]*outerLoadings[\s\S]*outerWeights[\s\S]*biasCorrectedConfidenceIntervals[\s\S]*henselerPlsMga[\s\S]*parametricTest[\s\S]*groups[\s\S]*settings[\s\S]*execution_log/,
-  'Plumber should map group-specific output and all Bootstrap MGA comparison families into the saved JSON.',
+  /construct_scores_from_payload_data\s*<-\s*function\(payload, data\)[\s\S]*to_numeric_frame[\s\S]*payload\$constructs[\s\S]*rowMeans[\s\S]*mga_descriptive_rows_from_scores\s*<-\s*function\(group_label, construct_scores\)[\s\S]*Group[\s\S]*Construct[\s\S]*Number[\s\S]*Mean[\s\S]*Standard Deviation[\s\S]*Skewness[\s\S]*Kurtosis[\s\S]*Variance[\s\S]*mga_descriptive_rows\s*<-\s*function\(group_label, payload = NULL, group_data = NULL, group_model = NULL, group_summary = NULL\)[\s\S]*group_model\$construct_scores[\s\S]*group_model\$constructScores[\s\S]*group_model\$composite_scores[\s\S]*group_summary\$construct_scores[\s\S]*group_summary\$descriptives\$statistics\$constructs[\s\S]*mga_descriptive_rows_from_scores\(group_label, construct_scores\)[\s\S]*construct_scores_from_payload_data\(payload, group_data\)/,
+  'Plumber should compute construct score descriptives with standard deviation for each selected MGA group from seminr score shapes, summary descriptives, or raw grouped indicator data.',
+)
+
+assert.match(
+  plumberSource,
+  /run_mga_bootstrap_tables\s*<-\s*function\(pls_model,\s*condition,\s*payload,\s*\.\.\.\)[\s\S]*descriptives\s*=\s*c\([\s\S]*mga_descriptive_rows\(payload\$groupA, payload, group1_data, group1_model, group1_summary\)[\s\S]*mga_descriptive_rows\(payload\$groupB, payload, group2_data, group2_model, group2_summary\)/,
+  'MGA table generation should pass each selected group dataset into robust descriptive extraction.',
+)
+
+assert.match(
+  plumberSource,
+  /mga_overview_setup_rows\s*<-\s*function\(payload, data, mga_result\)[\s\S]*"Analysis information" = "Grouping variable"[\s\S]*"Analysis information" = "Selected groups"[\s\S]*"Analysis information" = "Sample size per group"[\s\S]*"Analysis information" = "MGA settings"[\s\S]*"Analysis information" = "Measurement invariance status"[\s\S]*mga_micom_overview_message\(mga_result\)/,
+  'MGA overview setup should expose grouping, selected groups, sample size, settings, and cached MICOM status rows.',
+)
+
+assert.match(
+  plumberSource,
+  /map_mga_response\s*<-\s*function\(payload, data, mga_result, timings = NULL\)[\s\S]*overview\s*=\s*list\([\s\S]*setup\s*=\s*mga_overview_setup_rows\(payload, data, mga_result\)[\s\S]*descriptives\s*=\s*mga_result\$descriptives[\s\S]*groupSpecific\s*=\s*mga_result\$groupSpecific[\s\S]*bootstrapMGA[\s\S]*pathCoefficients[\s\S]*specificIndirectEffects[\s\S]*totalIndirectEffects[\s\S]*totalEffects[\s\S]*outerLoadings[\s\S]*outerWeights[\s\S]*biasCorrectedConfidenceIntervals[\s\S]*henselerPlsMga[\s\S]*parametricTest[\s\S]*groups[\s\S]*settings[\s\S]*execution_log/,
+  'Plumber should map the MGA overview, group-specific output, and all Bootstrap MGA comparison families into the saved JSON.',
 )
 
 assert.doesNotMatch(

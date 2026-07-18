@@ -1,6 +1,7 @@
 import { type AnalysisMode } from './panelCatalog'
 
 const PANEL_TITLES: Record<string, string> = {
+  overview: 'Overview',
   'path-coef': 'Path Coefficients',
   'total-indirect': 'Total Indirect Effects',
   'specific-indirect': 'Specific Indirect Effects',
@@ -45,9 +46,18 @@ const PANEL_TITLES: Record<string, string> = {
   'mga-path-coefficients': 'Path Coefficients - Multi-Group Comparison',
   'mga-outer-loadings': 'Outer Loadings - Multi-Group Comparison',
   'mga-outer-weights': 'Outer Weights - Multi-Group Comparison',
+  'mga-group-a-path-coef': 'Path Coefficients - Group A',
+  'mga-group-a-total-indirect': 'Total Indirect Effects - Group A',
+  'mga-group-a-specific-indirect': 'Specific Indirect Effects - Group A',
+  'mga-group-a-total-effects': 'Total Effects - Group A',
+  'mga-group-b-path-coef': 'Path Coefficients - Group B',
+  'mga-group-b-total-indirect': 'Total Indirect Effects - Group B',
+  'mga-group-b-specific-indirect': 'Specific Indirect Effects - Group B',
+  'mga-group-b-total-effects': 'Total Effects - Group B',
 }
 
 const PANEL_EXPORT_TABLE_TITLES: Record<string, string[]> = {
+  overview: ['Analysis Setup', 'Group Descriptives'],
   'path-coef': ['Path Coefficient Matrix', 'Path Coefficient Details'],
   'vif': ['Inner VIF', 'Outer VIF'],
   'discriminant': ['Fornell-Larcker', 'HTMT'],

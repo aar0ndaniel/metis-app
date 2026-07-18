@@ -187,6 +187,206 @@ function getMgaGroupLabels(results: any): { groupA: string; groupB: string; comp
   }
 }
 
+function rowsFromUnknown(value: any): Array<Record<string, unknown>> {
+  if (!value) return []
+  if (Array.isArray(value)) {
+    return value
+      .filter((row) => row && typeof row === 'object' && !Array.isArray(row))
+      .map((row) => row as Record<string, unknown>)
+  }
+  if (typeof value === 'object') return [value as Record<string, unknown>]
+  return []
+}
+
+type MgaDatasetRow = Record<string, unknown> | unknown[]
+
+interface MgaOverviewFallbackInput {
+  headers?: string[]
+  datasetRows?: MgaDatasetRow[]
+  constructs?: Array<{
+    name?: unknown
+    indicators?: Array<string | { name?: unknown }>
+  }>
+}
+
+const MGA_MICOM_NOT_RUN_MESSAGE = 'MICOM was not run for this analysis. Interpret results well.'
+
+function getMgaMicomOverviewValue(results: any): string {
+  const micomOverview = results?.micomOverview ?? results?.micom_overview
+  if (typeof micomOverview === 'string' && micomOverview.trim()) return micomOverview.trim()
+  if (micomOverview && typeof micomOverview === 'object' && !Array.isArray(micomOverview)) {
+    for (const key of ['message', 'summary', 'statusLabel', 'status']) {
+      const value = getOwnValue(micomOverview, [key])
+      if (typeof value === 'string' && value.trim()) return value.trim()
+    }
+  }
+
+  const invarianceStatus = results?.measurementInvarianceStatus ?? results?.measurement_invariance_status ?? results?.invarianceStatus
+  if (typeof invarianceStatus === 'string' && invarianceStatus.trim()) return invarianceStatus.trim()
+  return MGA_MICOM_NOT_RUN_MESSAGE
+}
+
+function findRowValue(row: MgaDatasetRow, fieldName: string, headers: string[] = []): unknown {
+  if (Array.isArray(row)) {
+    const index = headers.findIndex((header) => normalizeKey(header) === normalizeKey(fieldName))
+    return index >= 0 ? row[index] : undefined
+  }
+
+  if (fieldName in row) return row[fieldName]
+  const target = normalizeKey(fieldName)
+  for (const [key, value] of Object.entries(row)) {
+    if (normalizeKey(key) === target) return value
+  }
+  return undefined
+}
+
+function toFiniteNumericValue(value: unknown): number | null {
+  if (value == null) return null
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  const raw = String(value).trim()
+  if (!raw) return null
+  const numeric = Number(raw.replace(/,/g, ''))
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+function roundDescriptiveValue(value: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null
+  return Math.round(value * 1e12) / 1e12
+}
+
+function sampleVariance(values: number[]): number | null {
+  if (values.length <= 1) return null
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length
+  return values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (values.length - 1)
+}
+
+function constructIndicatorNames(construct: NonNullable<MgaOverviewFallbackInput['constructs']>[number]): string[] {
+  return (construct.indicators ?? [])
+    .map((indicator) => typeof indicator === 'string' ? indicator : String(indicator?.name ?? '').trim())
+    .filter(Boolean)
+}
+
+function constructScoreForRow(row: MgaDatasetRow, indicators: string[], headers: string[]): number | null {
+  const values = indicators
+    .map((indicator) => toFiniteNumericValue(findRowValue(row, indicator, headers)))
+    .filter((value): value is number => value != null)
+  if (!values.length) return null
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function descriptiveRow(group: string, construct: string, values: number[]): Record<string, unknown> | null {
+  if (!values.length) return null
+  const n = values.length
+  const mean = values.reduce((sum, value) => sum + value, 0) / n
+  const variance = sampleVariance(values)
+  const sd = variance == null ? null : Math.sqrt(variance)
+  const centered = values.map((value) => value - mean)
+  const skewness = n > 2 && sd != null && sd > 0
+    ? centered.reduce((sum, value) => sum + (value ** 3), 0) / n / (sd ** 3)
+    : null
+  const kurtosis = n > 3 && sd != null && sd > 0
+    ? centered.reduce((sum, value) => sum + (value ** 4), 0) / n / (sd ** 4)
+    : null
+
+  return {
+    Group: group,
+    Construct: construct,
+    Number: n,
+    Mean: roundDescriptiveValue(mean),
+    'Standard Deviation': roundDescriptiveValue(sd),
+    Skewness: roundDescriptiveValue(skewness),
+    Kurtosis: roundDescriptiveValue(kurtosis),
+    Variance: roundDescriptiveValue(variance),
+  }
+}
+
+function readNumericRowField(row: Record<string, unknown>, fields: string[]): number | null {
+  for (const field of fields) {
+    const value = toFiniteNumericValue(findRowValue(row, field))
+    if (value != null) return value
+  }
+  return null
+}
+
+function readStringRowField(row: Record<string, unknown>, fields: string[]): string {
+  for (const field of fields) {
+    const value = findRowValue(row, field)
+    const text = String(value ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+function normalizeMgaDescriptiveRows(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return rows
+    .map((row) => {
+      const variance = readNumericRowField(row, ['Variance', 'variance'])
+      const sd = readNumericRowField(row, [
+        'Standard Deviation',
+        'StandardDeviation',
+        'Std Dev',
+        'Std. Dev.',
+        'StdDev',
+        'SD',
+        'sd',
+      ])
+      const standardDeviation = sd ?? (variance != null && variance >= 0 ? Math.sqrt(variance) : null)
+
+      return {
+        Group: readStringRowField(row, ['Group', 'group']),
+        Construct: readStringRowField(row, ['Construct', 'construct', 'row_name', 'Row', 'name']),
+        Number: readNumericRowField(row, ['Number', 'N', 'n', 'count']),
+        Mean: readNumericRowField(row, ['Mean', 'mean']),
+        'Standard Deviation': roundDescriptiveValue(standardDeviation),
+        Skewness: readNumericRowField(row, ['Skewness', 'skewness']),
+        Kurtosis: readNumericRowField(row, ['Kurtosis', 'kurtosis']),
+        Variance: variance == null ? null : roundDescriptiveValue(variance),
+      }
+    })
+    .filter((row) => String(row.Group ?? '').trim() || String(row.Construct ?? '').trim())
+}
+
+export function deriveMgaGroupDescriptives(
+  results: any,
+  datasetRows: MgaDatasetRow[] = [],
+  constructs: MgaOverviewFallbackInput['constructs'] = [],
+  headers: string[] = [],
+): Array<Record<string, unknown>> {
+  if (!Array.isArray(datasetRows) || !datasetRows.length || !Array.isArray(constructs) || !constructs.length) return []
+
+  const groups = results?.groups ?? {}
+  const groupingVariable = String(groups.groupingVariable ?? groups.grouping_variable ?? '').trim()
+  if (!groupingVariable) return []
+
+  const labels = getMgaGroupLabels(results)
+  const selectedGroups = [labels.groupA, labels.groupB].filter((label) => label && !label.startsWith('Group '))
+  if (!selectedGroups.length) return []
+
+  const constructDefs = constructs
+    .map((construct) => ({
+      name: String(construct?.name ?? '').trim(),
+      indicators: constructIndicatorNames(construct),
+    }))
+    .filter((construct) => construct.name && construct.indicators.length)
+  if (!constructDefs.length) return []
+
+  const rows: Array<Record<string, unknown>> = []
+  selectedGroups.forEach((group) => {
+    const groupRows = datasetRows.filter((row) => String(findRowValue(row, groupingVariable, headers) ?? '').trim() === group)
+    if (!groupRows.length) return
+
+    constructDefs.forEach((construct) => {
+      const scores = groupRows
+        .map((row) => constructScoreForRow(row, construct.indicators, headers))
+        .filter((value): value is number => value != null)
+      const row = descriptiveRow(group, construct.name, scores)
+      if (row) rows.push(row)
+    })
+  })
+
+  return rows
+}
+
 function normalizeGroupSpecificSource(source: any): any {
   const unwrapped = unwrapAnalysisResults(source)
   if (!unwrapped || typeof unwrapped !== 'object' || Array.isArray(unwrapped)) return unwrapped
@@ -217,10 +417,6 @@ function normalizeGroupSpecificSource(source: any): any {
 }
 
 const MGA_GROUP_PANEL_BASE_IDS: Record<string, string> = {
-  'path-coef': 'path-coef',
-  'total-indirect': 'total-indirect',
-  'specific-indirect': 'specific-indirect',
-  'total-effects': 'total-effects',
   'outer-loadings': 'outer-loadings',
   'outer-weights': 'outer-weights',
   reliability: 'reliability',
@@ -229,6 +425,10 @@ const MGA_GROUP_PANEL_BASE_IDS: Record<string, string> = {
   'r-square': 'r-square',
   vif: 'vif',
   'model-fit': 'model-fit',
+  'path-coef': 'path-coef',
+  'total-indirect': 'total-indirect',
+  'specific-indirect': 'specific-indirect',
+  'total-effects': 'total-effects',
 }
 
 export function getMgaGroupPanelBaseId(panelId: string): string {
@@ -246,19 +446,41 @@ export function getMgaGroupSpecificResultsSource(panelId: string, analysisResult
   return normalizeGroupSpecificSource(source)
 }
 
-function getMgaOverview(results: any): Array<Record<string, unknown>> {
+function getMgaOverview(
+  results: any,
+  fallback?: MgaOverviewFallbackInput,
+): { setup: Array<Record<string, unknown>>; descriptives: Array<Record<string, unknown>> } {
+  const suppliedOverview = results?.overview ?? results?.mgaOverview ?? results?.mga_overview
+  const suppliedDescriptiveRows = rowsFromUnknown(
+    suppliedOverview?.descriptives ??
+    results?.descriptives ??
+    results?.groupDescriptives ??
+    results?.group_descriptives
+  )
+  const fallbackDescriptiveRows = suppliedDescriptiveRows.length
+    ? []
+    : deriveMgaGroupDescriptives(results, fallback?.datasetRows, fallback?.constructs, fallback?.headers)
+  const descriptiveRows = suppliedDescriptiveRows.length ? suppliedDescriptiveRows : fallbackDescriptiveRows
+
   const labels = getMgaGroupLabels(results)
   const groups = results?.groups ?? {}
   const counts = groups?.counts ?? {}
   const settings = results?.settings ?? {}
-  const invariance = results?.measurementInvarianceStatus ?? results?.measurement_invariance_status ?? results?.invarianceStatus ?? 'Not supplied'
-  return [
-    { 'Analysis information': 'Grouping variable', Value: groups.groupingVariable ?? '' },
-    { 'Analysis information': 'Selected groups', Value: labels.comparisonLabel },
-    { 'Analysis information': 'Sample size per group', Value: `${labels.groupA}: ${counts.groupA ?? '—'}, ${labels.groupB}: ${counts.groupB ?? '—'}` },
-    { 'Analysis information': 'MGA settings', Value: `${settings.nboot ?? '—'} bootstrap subsamples, alpha ${settings.alpha ?? '—'}, seed ${settings.seed ?? '—'}` },
-    { 'Analysis information': 'Measurement invariance status', Value: invariance },
-  ]
+  const groupACount = counts.groupA ?? groups.groupACount ?? '—'
+  const groupBCount = counts.groupB ?? groups.groupBCount ?? '—'
+  const nboot = settings.nboot ?? results?.nboot ?? '—'
+  const alpha = settings.alpha ?? results?.alpha ?? '—'
+  const seed = settings.seed ?? results?.seed ?? '—'
+  return {
+    setup: [
+      { 'Analysis information': 'Grouping variable', Value: groups.groupingVariable ?? '—' },
+      { 'Analysis information': 'Selected groups', Value: labels.comparisonLabel },
+      { 'Analysis information': 'Sample size per group', Value: `${labels.groupA}: ${groupACount}, ${labels.groupB}: ${groupBCount}` },
+      { 'Analysis information': 'MGA settings', Value: `${nboot} bootstrap subsamples, alpha ${alpha}, seed ${seed}` },
+      { 'Analysis information': 'Measurement invariance status', Value: getMgaMicomOverviewValue(results) },
+    ],
+    descriptives: normalizeMgaDescriptiveRows(descriptiveRows),
+  }
 }
 
 function getMgaComparisonFamily(results: any, panelId: string): any {
@@ -422,7 +644,7 @@ export function getPanelDataFromResults(
   mode: AnalysisMode,
   panelId: string,
   analysisResults: any,
-  options: { mgaComparisonMethod?: string } = {},
+  options: { mgaComparisonMethod?: string; mgaOverviewFallback?: MgaOverviewFallbackInput } = {},
 ): any {
   const results = unwrapAnalysisResults(analysisResults)
 
@@ -434,7 +656,7 @@ export function getPanelDataFromResults(
   }
 
   if (mode === 'mga') {
-    if (panelId === 'overview') return getMgaOverview(results)
+    if (panelId === 'overview') return getMgaOverview(results, options.mgaOverviewFallback)
     if (panelId.startsWith('mga-group-')) {
       const source = getMgaGroupSpecificResultsSource(panelId, results)
       const basePanelId = getMgaGroupPanelBaseId(panelId)

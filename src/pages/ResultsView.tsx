@@ -72,6 +72,13 @@ import { ResultChart } from '../components/ResultsCharts'
 import { APP_BRAND_NAME } from '../config/appBranding'
 import { stripModelDisplayName } from '../utils/displayNames'
 import { buildAnalysisGraphSignature } from '../utils/analysisGraphSignature'
+import {
+  createMicomCacheEntry,
+  resolveMicomOverviewForMgaCache,
+  attachMicomOverviewToMgaResults,
+  putMicomCacheInWorkspaceList,
+  type MicomCacheEntry,
+} from '../utils/micomCache'
 import { getPanelSectionsForMode, type AnalysisMode, type PanelIconKey } from '../results/panelCatalog'
 import {
   getPanelDataFromResults,
@@ -237,8 +244,8 @@ interface SidebarSection {
 }
 
 const RESULTS_PANEL_BACKGROUND = 'var(--color-right-panel-bg)'
-const RESULTS_TABLE_ROW_BACKGROUND = RESULTS_PANEL_BACKGROUND
-const RESULTS_TABLE_ROW_ALT_BACKGROUND = 'rgb(var(--color-accent-rgb) / 0.025)'
+const RESULTS_TABLE_ROW_BACKGROUND = 'var(--color-results-table-row-bg)'
+const RESULTS_TABLE_ROW_ALT_BACKGROUND = 'var(--color-results-table-row-alt-bg)'
 
 function resultsTableRowStyle(index: number) {
   return {
@@ -297,9 +304,19 @@ const PANEL_ICON_OVERRIDES: Record<string, ElementType> = {
   'equality-means': Table,
   'equality-variances': Table,
   'invariance-classification': CheckCircle,
-  'mga-group-specific-results': Folders,
-  'mga-group-a': Folders,
-  'mga-group-b': Folders,
+  'mga-group-specific-results': ListChecks,
+  'mga-group-a': Info,
+  'mga-group-b': Info,
+  'mga-group-a-structural-effects': GitBranch,
+  'mga-group-b-structural-effects': GitBranch,
+  'mga-group-a-path-coef': Graph,
+  'mga-group-a-total-indirect': GitBranch,
+  'mga-group-a-specific-indirect': TreeStructure,
+  'mga-group-a-total-effects': FlowArrow,
+  'mga-group-b-path-coef': Graph,
+  'mga-group-b-total-indirect': GitBranch,
+  'mga-group-b-specific-indirect': TreeStructure,
+  'mga-group-b-total-effects': FlowArrow,
   'mga-comparisons': Table,
   'mga-path-coefficients': Graph,
   'mga-outer-loadings': ChartBar,
@@ -319,7 +336,7 @@ function buildSidebarItems(items: ReturnType<typeof getPanelSectionsForMode>[num
     let label = item.label
     if (item.id === 'mga-group-a') label = mgaGroupLabels?.groupA || item.label
     if (item.id === 'mga-group-b') label = mgaGroupLabels?.groupB || item.label
-    if (item.id === 'mga-comparisons' && mgaGroupLabels?.comparisonLabel) label = `Multi-Group Comparisons (${mgaGroupLabels.comparisonLabel})`
+    if (item.id === 'mga-comparisons') label = 'MULTI GROUP COMPARISON'
     return {
       id: item.id,
       label,
@@ -350,6 +367,37 @@ function getMgaGroupLabels(analysisResults: any): MgaGroupLabels {
     groupB,
     comparisonLabel: `${groupA} vs ${groupB}`,
   }
+}
+
+function useSidebarResize(initialWidth: number, minWidth: number, maxWidth: number) {
+  const [width, setWidth] = useState(initialWidth)
+  const isDragging = useRef(false)
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    isDragging.current = true
+    const startX = e.clientX
+    const startW = width
+
+    const onMouseMove = (event: MouseEvent) => {
+      if (!isDragging.current) return
+      setWidth(Math.max(minWidth, Math.min(maxWidth, startW + event.clientX - startX)))
+    }
+    const onMouseUp = () => {
+      isDragging.current = false
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [width, minWidth, maxWidth])
+
+  return { width, onMouseDown }
 }
 
 function modelHasMediationPaths(savedModel: any): boolean {
@@ -593,7 +641,22 @@ function findEstimateCell(row: Record<string, unknown> | null | undefined): unkn
     'original coefficient',
     'bootstrap mean',
     'estimate',
+    'loading',
+    'weight',
   ])
+}
+
+function isMeasurementIdentityOrMetricField(key: string): boolean {
+  const metric = normalizeMetricKey(key)
+  return (
+    metric === 'construct' ||
+    metric === 'indicator' ||
+    metric === 'loading' ||
+    metric === 'weight' ||
+    metric === 'tstat' ||
+    metric === 'tstatistic' ||
+    metric === 'pvalue'
+  )
 }
 
 function findCiLowerCell(row: Record<string, unknown> | null | undefined): unknown {
@@ -878,7 +941,7 @@ function parseOuterLoadings(ar: any, constructsMap?: Map<string, string>): Outer
     const identity = inferMeasurementRowIdentity(r, constructsMap)
     const indicator = identity.indicator
     if (!indicator) return
-    Object.keys(r).filter(k => !isRowField(k)).forEach(construct => {
+    Object.keys(r).filter(k => !isRowField(k) && !isMeasurementIdentityOrMetricField(k)).forEach(construct => {
       const v = r[construct]
       const loading = toNum(v, Number.NaN)
       if (!Number.isFinite(loading) || loading === 0) return
@@ -930,12 +993,20 @@ function parseOuterWeights(ar: any, constructsMap?: Map<string, string>): OuterL
   }
 
   raw.forEach((r: any) => {
-    const indicator = String(getRowValue(r) || (r.indicator ?? '')).trim()
+    const identity = inferMeasurementRowIdentity(r, constructsMap)
+    const indicator = identity.indicator
     if (!indicator) return
-    Object.keys(r).filter(k => !isRowField(k)).forEach(construct => {
+    Object.keys(r).filter(k => !isRowField(k) && !isMeasurementIdentityOrMetricField(k)).forEach(construct => {
       const loading = toNum(r[construct], Number.NaN)
       if (!Number.isFinite(loading) || loading === 0) return
-      result.push({ indicator, construct, loading, tStatistic: Number.NaN, pValue: '—', status: 'neutral' })
+      result.push({
+        indicator,
+        construct: identity.construct || construct,
+        loading,
+        tStatistic: Number.NaN,
+        pValue: '—',
+        status: 'neutral',
+      })
     })
   })
   return result
@@ -1395,12 +1466,28 @@ function rowsFromData(data: any): Array<Record<string, unknown>> {
   return [{ value: data }]
 }
 
+function getMgaOverviewGroupValue(row: Record<string, unknown> | undefined): string {
+  return String(row?.Group ?? row?.group ?? '').trim()
+}
+
+function isMgaOverviewGroupBoundary(
+  rows: Array<Record<string, unknown>>,
+  rowIndex: number,
+  analysisMode?: string,
+  selectedPanel?: string,
+): boolean {
+  if (analysisMode !== 'mga' || selectedPanel !== 'overview' || rowIndex <= 0) return false
+  const currentGroup = getMgaOverviewGroupValue(rows[rowIndex])
+  const previousGroup = getMgaOverviewGroupValue(rows[rowIndex - 1])
+  return Boolean(currentGroup && previousGroup && currentGroup !== previousGroup)
+}
+
 function shouldFormatOverviewInteger(header?: string, selectedPanel?: string): boolean {
   const normalized = normalizeMetricKey(header ?? '')
   const roundedProbe = Math.round(0)
   return roundedProbe === 0 &&
     selectedPanel === 'overview' &&
-    ['groupacount', 'groupbcount', 'permutations', 'seed'].includes(normalized)
+    ['groupacount', 'groupbcount', 'number', 'permutations', 'seed'].includes(normalized)
 }
 
 function getPermutationDecisionTextColor(value: unknown): string | undefined {
@@ -2094,6 +2181,22 @@ function buildExportTableHtml(
   return `<div class="table-wrap"><table>${thead}${tbody}</table></div>`
 }
 
+function buildMgaOverviewExportHtml(data: any): string {
+  const overviewData = isMgaOverviewPanelData(data) ? data : { setup: data, descriptives: [] }
+  const titles = getExportSectionTitles('overview', 2)
+  const sections = [
+    { title: titles[0] ?? 'Analysis Setup', rows: rowsFromData(overviewData.setup) },
+    { title: titles[1] ?? 'Group Descriptives', rows: rowsFromData(overviewData.descriptives) },
+  ]
+
+  return sections.map((section) => `
+    <div style="margin-bottom: 24px;">
+      <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #f0f0f5; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(section.title)}</h3>
+      ${buildExportTableHtml(section.rows, 'overview')}
+    </div>
+  `).join('')
+}
+
 function buildExportTableFromRows(headers: string[], rows: Array<Array<string | number | null | undefined>>): string {
   if (!rows.length) {
     return '<div class="empty">No data available for this section.</div>'
@@ -2135,6 +2238,7 @@ function SidebarSectionComponent({
     const Icon = item.icon
     const hasChildren = Boolean(item.children?.length)
     const sel = selectedPanel === item.id
+    const isTopLevelMgaItem = section.id === 'multi-group-results' && depth === 0
 
     if (hasChildren) {
       return (
@@ -2154,8 +2258,10 @@ function SidebarSectionComponent({
         className={`flex items-center gap-2 pr-3 py-1.5 cursor-pointer text-xs transition-colors
           ${sel
             ? 'bg-primary/15 text-text-primary border-l-2 border-primary'
-            : 'text-text-muted hover:text-text-secondary hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
-        style={{ paddingLeft: sel ? 22 + depth * 12 : 24 + depth * 12 }}
+            : isTopLevelMgaItem
+              ? 'text-primary font-semibold uppercase hover:text-primary hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'
+              : 'text-text-muted hover:text-text-secondary hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
+        style={{ paddingLeft: sel ? 18 + depth * 6 : 20 + depth * 6 }}
         onClick={() => onSelectPanel(item.id)}
       >
         <Icon size={13} className="shrink-0 opacity-70" />
@@ -2166,13 +2272,7 @@ function SidebarSectionComponent({
 
   return (
     <div className={section.tone === 'subtle' ? 'mt-3 border-t border-white/5 pt-2' : ''}>
-      {section.id === 'multi-group-results' ? (
-        <div className="flex items-center gap-1.5 px-3 py-1.5 select-none">
-          <span className={`text-[10px] font-semibold uppercase tracking-wider truncate ${sectionLabelClass}`}>
-            {section.label}
-          </span>
-        </div>
-      ) : (
+      {section.id === 'multi-group-results' ? null : (
         <button
           type="button"
           className="flex w-full items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-[rgb(var(--color-hover-rgb)/0.75)] select-none"
@@ -2204,15 +2304,25 @@ function SidebarAccordionItem({
   selectedPanel: string
   onSelectPanel: (id: string) => void
 }) {
-  const [isOpen, setIsOpen] = useState(true)
+  const [isOpen, setIsOpen] = useState(() => item.id === 'mga-group-specific-results')
   const Icon = item.icon
+  const isTopLevelMgaItem = depth === 0 && (item.id === 'mga-group-specific-results' || item.id === 'mga-comparisons')
+  const isMgaGroupValue = item.id === 'mga-group-a' || item.id === 'mga-group-b'
+  const isMgaGroupSubsection = /^mga-group-[ab]-(measurement-model|model-quality|structural-effects)$/.test(item.id)
+  const accordionTextClass = isTopLevelMgaItem
+    ? 'text-primary font-semibold uppercase'
+    : isMgaGroupValue
+      ? 'text-text-primary font-bold'
+      : isMgaGroupSubsection
+        ? 'text-text-primary font-bold uppercase'
+        : 'text-text-muted'
 
   return (
     <div>
       <button
         type="button"
-        className="flex w-full items-center gap-1.5 pr-3 py-1.5 text-xs text-text-muted transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.75)] hover:text-text-secondary"
-        style={{ paddingLeft: 14 + depth * 12 }}
+        className={`flex w-full items-center gap-1.5 pr-3 py-1.5 text-xs transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.75)] hover:text-text-secondary ${accordionTextClass}`}
+        style={{ paddingLeft: 12 + depth * 6 }}
         onClick={() => setIsOpen((current) => !current)}
         aria-expanded={isOpen}
       >
@@ -2243,7 +2353,7 @@ function SidebarAccordionItem({
               ${selectedPanel === child.id
                 ? 'bg-primary/15 text-text-primary border-l-2 border-primary'
                 : 'text-text-muted hover:text-text-secondary hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
-            style={{ paddingLeft: selectedPanel === child.id ? 22 + (depth + 1) * 12 : 24 + (depth + 1) * 12 }}
+            style={{ paddingLeft: selectedPanel === child.id ? 18 + (depth + 1) * 6 : 20 + (depth + 1) * 6 }}
             onClick={() => onSelectPanel(child.id)}
           >
             <ChildIcon size={13} className="shrink-0 opacity-70" />
@@ -4121,6 +4231,7 @@ function GenericDataTable({
         <tbody>
           {rows.map((row, rowIndex) => {
             const pTone = pValueHeader ? pSignificanceTone(row[pValueHeader]) : null
+            const hasMgaOverviewGroupGap = isMgaOverviewGroupBoundary(rows, rowIndex, analysisMode, selectedPanel)
 
             return (
               <tr key={rowIndex} style={resultsTableRowStyle(rowIndex)}>
@@ -4137,12 +4248,17 @@ function GenericDataTable({
                   const value = formatDisplayValue(row[header], header, selectedPanel, cellContext)
                   const decisionTextColor = getPermutationDecisionTextColor(value)
                   const isModerationInteractionCell = selectedPanel?.startsWith('moderation') && normalizeMetricKey(header) === 'interaction'
+                  const cellStyle = {
+                    color: decisionTextColor,
+                    borderTop: hasMgaOverviewGroupGap ? '8px solid var(--color-right-panel-bg)' : undefined,
+                    paddingTop: hasMgaOverviewGroupGap ? 14 : undefined,
+                  }
                   
                   return (
                     <td
                       key={`${rowIndex}-${header}`}
                       className={`px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words ${significanceColorClass || rowClass}`}
-                      style={decisionTextColor ? { color: decisionTextColor } : undefined}
+                      style={decisionTextColor || hasMgaOverviewGroupGap ? cellStyle : undefined}
                     >
                       {isAdvancedTable
                         ? renderAdvancedResultCell({ header, rawValue: row[header], displayValue: value, isLastColumn: headerIndex === headers.length - 1 })
@@ -4164,6 +4280,62 @@ function GenericDataTable({
           })}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function isMgaOverviewPanelData(data: any): data is { setup?: any; descriptives?: any } {
+  return Boolean(data && typeof data === 'object' && !Array.isArray(data) && ('setup' in data || 'descriptives' in data))
+}
+
+function MgaOverviewPanel({
+  data,
+  emptyLabel,
+  savedModel,
+  analysisResults,
+}: {
+  data: any
+  emptyLabel?: string
+  savedModel?: any
+  analysisResults?: any
+}) {
+  const overviewData = isMgaOverviewPanelData(data) ? data : { setup: data, descriptives: [] }
+  const setupRows = rowsFromData(overviewData.setup)
+  const descriptiveRows = rowsFromData(overviewData.descriptives)
+
+  if (!setupRows.length && !descriptiveRows.length) {
+    return <EmptyTableState label={emptyLabel || 'No MGA overview available for this run.'} />
+  }
+
+  return (
+    <div className="flex flex-col gap-5 p-4">
+      <section className="min-w-0">
+        <h3 className="px-1 pb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Analysis Setup
+        </h3>
+        <GenericDataTable
+          data={setupRows}
+          analysisMode="mga"
+          selectedPanel="overview"
+          emptyLabel="No setup details available."
+          savedModel={savedModel}
+          analysisResults={analysisResults}
+        />
+      </section>
+
+      <section className="min-w-0">
+        <h3 className="px-1 pb-2 text-[11px] font-semibold uppercase tracking-wider text-text-muted">
+          Group Descriptives
+        </h3>
+        <GenericDataTable
+          data={descriptiveRows}
+          analysisMode="mga"
+          selectedPanel="overview"
+          emptyLabel="No group descriptives available."
+          savedModel={savedModel}
+          analysisResults={analysisResults}
+        />
+      </section>
     </div>
   )
 }
@@ -4206,6 +4378,11 @@ function ModerationSlopeChartPanel({
 type AdvancedPanelViewMode = 'table' | 'chart'
 
 const SUPPORTED_PANELS = ['path-coef','r-square','reliability','outer-loadings','outer-weights','cross-loadings','vif','discriminant','model-fit','q2-predict','pls-lm-comparison','execution-log','moderation-slope-chart']
+const STRUCTURAL_EFFECT_PANEL_IDS = ['path-coef', 'total-indirect', 'specific-indirect', 'total-effects']
+
+function isStructuralEffectPanel(panelId: string): boolean {
+  return STRUCTURAL_EFFECT_PANEL_IDS.includes(panelId)
+}
 const ADVANCED_INLINE_CHART_PANELS = new Set([
   'path-coef',
   'priority-map',
@@ -4307,10 +4484,16 @@ function TablePanel({
   const effectiveSelectedPanel = analysisMode === 'mga'
     ? getMgaGroupPanelBaseId(selectedPanel)
     : selectedPanel
-  const tableAnalysisResults = analysisMode === 'mga' && selectedPanel.startsWith('mga-group-')
+  const isMgaGroupSpecificPanel = analysisMode === 'mga' && selectedPanel.startsWith('mga-group-')
+  const isMgaGroupStructuralBootstrapPanel = isMgaGroupSpecificPanel && isStructuralEffectPanel(effectiveSelectedPanel)
+  const shouldRenderBootstrapSignificanceTable = (
+    analysisMode === 'bootstrap' ||
+    isMgaGroupStructuralBootstrapPanel
+  ) && isBootstrapSignificancePanel(effectiveSelectedPanel)
+  const tableAnalysisResults = isMgaGroupSpecificPanel
     ? getMgaGroupSpecificResultsSource(selectedPanel, analysisResults)
     : analysisResults
-  const showBootstrapIntervalControl = analysisMode === 'bootstrap' && isBootstrapSignificancePanel(effectiveSelectedPanel)
+  const showBootstrapIntervalControl = shouldRenderBootstrapSignificanceTable
   const showMgaComparisonMethodTabs = analysisMode === 'mga' &&
     ['mga-path-coefficients', 'mga-outer-loadings', 'mga-outer-weights'].includes(selectedPanel)
   const mgaComparisonMethodOptions: Array<{ value: MgaComparisonMethod; label: string }> = [
@@ -4318,20 +4501,6 @@ function TablePanel({
     { value: 'henselerPlsMga', label: 'Henseler' },
     { value: 'parametricTest', label: 'Parametric' },
   ]
-  // Derive real data from analysisResults
-  const pathRows      = parsePathCoefficients(tableAnalysisResults)
-  const rSquareRows   = parseRSquare(tableAnalysisResults)
-  const moderationR2Rows = analysisMode === 'pls-sem'
-    ? deriveModerationR2ChangeRows(savedModel, tableAnalysisResults)
-    : []
-  const reliRows      = parseReliability(tableAnalysisResults)
-  const loadingRows   = parseOuterLoadings(tableAnalysisResults)
-  const weightRows    = parseOuterWeights(tableAnalysisResults)
-  const hocRows       = parseHOCResults(tableAnalysisResults)
-  const vifSections   = parseVIF(tableAnalysisResults, savedModel)
-  const modelFitRows  = parseModelFit(tableAnalysisResults)
-  const execLog       = parseExecutionLog(tableAnalysisResults)
-
   const indicatorConstructMap = new Map<string, string>()
   if (savedModel?.constructs) {
     savedModel.constructs.forEach((c: any) => {
@@ -4340,6 +4509,20 @@ function TablePanel({
       })
     })
   }
+
+  // Derive real data from analysisResults
+  const pathRows      = parsePathCoefficients(tableAnalysisResults)
+  const rSquareRows   = parseRSquare(tableAnalysisResults)
+  const moderationR2Rows = analysisMode === 'pls-sem'
+    ? deriveModerationR2ChangeRows(savedModel, tableAnalysisResults)
+    : []
+  const reliRows      = parseReliability(tableAnalysisResults)
+  const loadingRows   = parseOuterLoadings(tableAnalysisResults, indicatorConstructMap)
+  const weightRows    = parseOuterWeights(tableAnalysisResults, indicatorConstructMap)
+  const hocRows       = parseHOCResults(tableAnalysisResults)
+  const vifSections   = parseVIF(tableAnalysisResults, savedModel)
+  const modelFitRows  = parseModelFit(tableAnalysisResults)
+  const execLog       = parseExecutionLog(tableAnalysisResults)
 
   const parseBootstrapMeasurements = (rows: any[]) => {
     const normalizedRows = normalizeBootstrapSignificanceRows(rows || [])
@@ -4457,7 +4640,7 @@ function TablePanel({
   const isSemResultsMode = analysisMode === 'pls-sem' || analysisMode === 'bootstrap' || analysisMode === 'advanced' || analysisMode === 'mga'
   const titlePanelId = analysisMode === 'mga' && selectedPanel.startsWith('mga-group-') ? effectiveSelectedPanel : selectedPanel
   const basePanelTitle = getPanelTitle(titlePanelId)
-  const panelTitle = analysisMode === 'bootstrap' && isBootstrapSignificancePanel(selectedPanel) && bootstrapIntervalView !== 'stats'
+  const panelTitle = shouldRenderBootstrapSignificanceTable && bootstrapIntervalView !== 'stats'
     ? `${basePanelTitle} - ${bootstrapIntervalView === 'bc' ? 'Confidence intervals bias corrected' : 'Confidence intervals'}`
     : basePanelTitle
   const hasAdvancedPanelChart = analysisMode === 'advanced' && ADVANCED_INLINE_CHART_PANELS.has(selectedPanel)
@@ -4476,6 +4659,7 @@ function TablePanel({
     )
   const shouldRenderTableContent = !isAdvancedChartOnlyPanel && !(hasAdvancedPanelChart && advancedPanelViewMode === 'chart')
   const shouldRenderTableActions = !isAdvancedChartOnlyPanel
+  const isMgaOverviewPanel = analysisMode === 'mga' && selectedPanel === 'overview'
 
   const getVisibleTableSections = useCallback(() => {
     return extractTableSectionsFromDom(panelBodyRef.current, selectedPanel)
@@ -4743,8 +4927,16 @@ function TablePanel({
         {isSemResultsMode ? (
           shouldRenderTableContent ? (
             <>
+            {isMgaOverviewPanel && (
+              <MgaOverviewPanel
+                data={displayPanelData}
+                emptyLabel={emptyStateLabel}
+                savedModel={savedModel}
+                analysisResults={analysisResults}
+              />
+            )}
             {effectiveSelectedPanel === 'path-coef' && (
-              analysisMode === 'bootstrap'
+              shouldRenderBootstrapSignificanceTable
                 ? <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
                 : <PathCoefficientTable rows={pathRows} view={tableView} />
             )}
@@ -4794,10 +4986,10 @@ function TablePanel({
                 label={emptyStateLabel}
               />
             )}
-            {analysisMode === 'bootstrap' && ['total-indirect', 'specific-indirect', 'total-effects'].includes(effectiveSelectedPanel) && (
+            {shouldRenderBootstrapSignificanceTable && ['total-indirect', 'specific-indirect', 'total-effects'].includes(effectiveSelectedPanel) && (
               <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
             )}
-            {!SUPPORTED_PANELS.includes(effectiveSelectedPanel) && !(analysisMode === 'bootstrap' && isBootstrapSignificancePanel(effectiveSelectedPanel)) && (
+            {!isMgaOverviewPanel && !SUPPORTED_PANELS.includes(effectiveSelectedPanel) && !shouldRenderBootstrapSignificanceTable && (
               <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} analysisResults={analysisResults} />
             )}
             </>
@@ -4977,21 +5169,6 @@ export default function ResultsView() {
     setTableViewPreferences({})
   }, [analysisMode, analysisResults])
 
-  const derivedModerationPanelData = getDerivedModerationPanelData(analysisMode, selectedPanel, savedModel, analysisResults)
-  const panelData = derivedModerationPanelData ?? getPanelDataFromResults(analysisMode, selectedPanel, analysisResults, { mgaComparisonMethod })
-  const tableViewKey = `${analysisMode}:${selectedPanel}`
-  const tableViewPanelId = analysisMode === 'mga' ? getMgaGroupPanelBaseId(selectedPanel) : selectedPanel
-  const tableViewOptions = getPanelTableViews(tableViewPanelId, analysisMode)
-  const tableView = tableViewOptions.length
-    ? tableViewPreferences[tableViewKey] ?? getDefaultPanelTableView(tableViewPanelId)
-    : 'list'
-  const handleTableViewChange = useCallback((nextView: ResultsTableView) => {
-    setTableViewPreferences((previous) => ({
-      ...previous,
-      [tableViewKey]: nextView,
-    }))
-  }, [tableViewKey])
-
   const resolveWorkspaceContext = useCallback(() => {
     const raw = readWorkspaceClientCache()
     const all = raw ? JSON.parse(raw) : []
@@ -5063,6 +5240,7 @@ export default function ResultsView() {
       permutation?: PermutationAnalysisSettings
       mga?: MultiGroupAnalysisSettings
     }
+    micomCache?: MicomCacheEntry | null
   }) => {
     const { allWorkspaces, migratedWorkspace, modelChild } = resolveWorkspaceContext()
     if (!migratedWorkspace || !modelChild) return
@@ -5083,6 +5261,7 @@ export default function ResultsView() {
           ...(existingState.analysisSettings || {}),
           ...(options.analysisSettings || {}),
         },
+        ...(options.micomCache ? { micomCache: options.micomCache } : {}),
       },
     }
 
@@ -5092,6 +5271,18 @@ export default function ResultsView() {
     writeWorkspaceClientCache(JSON.stringify(updatedAll))
     window.dispatchEvent(new CustomEvent('pls:workspaces-updated', { detail: { workspaces: updatedAll } }))
     ;(window as any).electronAPI?.saveWorkspace?.(updatedWorkspace)
+  }, [modelId, resolveWorkspaceContext])
+
+  const persistMicomCacheToWorkspace = useCallback((micomCache: MicomCacheEntry) => {
+    const { allWorkspaces, migratedWorkspace } = resolveWorkspaceContext()
+    if (!migratedWorkspace) return
+
+    const update = putMicomCacheInWorkspaceList(allWorkspaces, migratedWorkspace.id, modelId, micomCache)
+    writeWorkspaceClientCache(JSON.stringify(update.workspaces))
+    window.dispatchEvent(new CustomEvent('pls:workspaces-updated', { detail: { workspaces: update.workspaces } }))
+    if (update.workspace) {
+      ;(window as any).electronAPI?.saveWorkspace?.(update.workspace)
+    }
   }, [modelId, resolveWorkspaceContext])
 
   const resolveRunPayload = useCallback((): RunPlsRequest | null => {
@@ -5366,9 +5557,35 @@ export default function ResultsView() {
         : []
     return {
       groupingOptions: groupingOptions.map((header: unknown) => String(header ?? '').trim()).filter(Boolean),
+      headers: groupingOptions.map((header: unknown) => String(header ?? '').trim()),
       datasetRows: Array.isArray(cached?.allRows) ? cached.allRows : [],
     }
   }, [resolveWorkspaceContext, analysisResults])
+
+  const derivedModerationPanelData = getDerivedModerationPanelData(analysisMode, selectedPanel, savedModel, analysisResults)
+  const panelData = derivedModerationPanelData ?? getPanelDataFromResults(analysisMode, selectedPanel, analysisResults, {
+    mgaComparisonMethod,
+    mgaOverviewFallback: {
+      headers: resultsGroupingData.headers,
+      datasetRows: resultsGroupingData.datasetRows,
+      constructs: savedModel?.constructs,
+    },
+  })
+  const tableViewKey = `${analysisMode}:${selectedPanel}`
+  const tableViewPanelId = analysisMode === 'mga' ? getMgaGroupPanelBaseId(selectedPanel) : selectedPanel
+  const isMgaGroupStructuralTable = analysisMode === 'mga' &&
+    selectedPanel.startsWith('mga-group-') &&
+    isStructuralEffectPanel(tableViewPanelId)
+  const tableViewOptions = isMgaGroupStructuralTable ? [] : getPanelTableViews(tableViewPanelId, analysisMode)
+  const tableView = tableViewOptions.length
+    ? tableViewPreferences[tableViewKey] ?? getDefaultPanelTableView(tableViewPanelId)
+    : 'list'
+  const handleTableViewChange = useCallback((nextView: ResultsTableView) => {
+    setTableViewPreferences((previous) => ({
+      ...previous,
+      [tableViewKey]: nextView,
+    }))
+  }, [tableViewKey])
 
   const handlePermutationConfiguralPrecheckFromResults = useCallback(async (settings: PermutationAnalysisSettings) => {
     const payload = resolveRunPayload()
@@ -5379,6 +5596,15 @@ export default function ResultsView() {
 
     try {
       setPermutationConfiguralStatus('checking')
+      const permutationPayload = {
+        ...payload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: settings.permutations,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      }
       const result = await runPermutationConfiguralPrecheck({
         ...payload,
         groupingVariable: settings.groupingVariable,
@@ -5388,6 +5614,14 @@ export default function ResultsView() {
         alpha: settings.alpha,
         seed: settings.seed,
       })
+      if (result.success && result.results) {
+        const micomCache = createMicomCacheEntry({
+          payload: permutationPayload,
+          results: result.results as Record<string, unknown>,
+          graphSignature: savedModel ? buildAnalysisGraphSignature(savedModel) : undefined,
+        })
+        persistMicomCacheToWorkspace(micomCache)
+      }
       const passed = (result.results?.configuralInvariance as any)?.passed === true
       setPermutationConfiguralStatus(passed ? 'passed' : 'failed')
       return result
@@ -5395,7 +5629,7 @@ export default function ResultsView() {
       setPermutationConfiguralStatus('failed')
       return { success: false, error: error?.message || 'Configural precheck failed.' }
     }
-  }, [resolveRunPayload])
+  }, [persistMicomCacheToWorkspace, resolveRunPayload, savedModel])
 
   const handleRunPermutationFromResults = useCallback(async (settings: PermutationAnalysisSettings) => {
     if (isAnalysisRunning) return
@@ -5417,6 +5651,15 @@ export default function ResultsView() {
     )
     try {
       calcDispatch({ type: 'setPhase', phaseId: 'permutation' })
+      const permutationPayload = {
+        ...payload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: settings.permutations,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      }
       const result = await runPermutationAnalysisModel({
         ...payload,
         groupingVariable: settings.groupingVariable,
@@ -5436,6 +5679,12 @@ export default function ResultsView() {
 
       calcDispatch({ type: 'setPhase', phaseId: 'final' })
       const savedAt = new Date().toISOString()
+      const micomCache = createMicomCacheEntry({
+        payload: permutationPayload,
+        results: result.results as Record<string, unknown>,
+        graphSignature: savedModel ? buildAnalysisGraphSignature(savedModel) : undefined,
+        savedAt,
+      })
       writeSharedStorageValue('analysis-mode', 'permutation')
       writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
       setAnalysisMode('permutation')
@@ -5448,6 +5697,7 @@ export default function ResultsView() {
         analysisSettings: {
           permutation: settings,
         },
+        micomCache,
       })
       calcDispatch({
         type: 'complete',
@@ -5462,7 +5712,7 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, savedModel, startResultsCalculation])
 
   const handleRunMultiGroupFromResults = useCallback(async (settings: MultiGroupAnalysisSettings) => {
     if (isAnalysisRunning) return
@@ -5483,6 +5733,23 @@ export default function ResultsView() {
       `${settings.nboot.toLocaleString()} bootstrap subsamples`,
     )
     try {
+      const { modelChild } = resolveWorkspaceContext()
+      const cachedMicom = (modelChild?.state?.micomCache as MicomCacheEntry | undefined) ?? null
+      const micomValidationPayload = {
+        ...payload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: cachedMicom?.settings.permutations ?? 500,
+        alpha: cachedMicom?.settings.alpha ?? settings.alpha,
+        seed: cachedMicom?.settings.seed ?? settings.seed,
+      }
+      const micomOverview = await resolveMicomOverviewForMgaCache({
+        cache: cachedMicom,
+        payload: micomValidationPayload,
+        graphSignature: savedModel ? buildAnalysisGraphSignature(savedModel) : undefined,
+        runConfiguralPrecheck: runPermutationConfiguralPrecheck,
+      })
       calcDispatch({ type: 'setPhase', phaseId: 'bootstrap' })
       const result = await runMultiGroupAnalysisModel({
         ...payload,
@@ -5503,14 +5770,15 @@ export default function ResultsView() {
 
       calcDispatch({ type: 'setPhase', phaseId: 'final' })
       const savedAt = new Date().toISOString()
+      const mgaResults = attachMicomOverviewToMgaResults(result.results as Record<string, unknown>, micomOverview)
       writeSharedStorageValue('analysis-mode', 'mga')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      writeSharedStorageValue('analysis-results', JSON.stringify(mgaResults))
       setAnalysisMode('mga')
       setSelectedPanel('overview')
-      setAnalysisResults(result.results)
+      setAnalysisResults(mgaResults)
       persistResultsToWorkspace({
         mode: 'mga',
-        results: result.results as Record<string, unknown>,
+        results: mgaResults,
         savedAt,
         analysisSettings: {
           mga: settings,
@@ -5529,7 +5797,7 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, resolveWorkspaceContext, savedModel, startResultsCalculation])
 
   const generateRScript = useCallback(() => {
     if (!savedModel?.constructs?.length) {
@@ -5683,7 +5951,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
       const tabSections: Array<{ title?: string; items: Array<{ id: string; label: string }> }> = [
         { items: [{ id: 'path-diagram', label: 'Path diagram' }] },
         ...sidebarData.map((section) => ({
-          title: section.label,
+          title: section.id === 'multi-group-results' ? undefined : section.label,
           items: flattenSidebarItems(section.items).map((item) => ({ id: item.id, label: item.label })),
         })),
       ]
@@ -5707,6 +5975,9 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
 
         const derivedModerationRows = getDerivedModerationPanelData(analysisMode, item.id, savedModel, analysisResults)
         const data = derivedModerationRows ?? getPanelDataFromResults(analysisMode, item.id, analysisResults, { mgaComparisonMethod })
+        if (analysisMode === 'mga' && item.id === 'overview' && isMgaOverviewPanelData(data)) {
+          return `<section id="sec-${item.id}" class="result-section"><div class="section-head"><h2>${escapeHtml(item.label)}</h2></div>${buildMgaOverviewExportHtml(data)}</section>`
+        }
         const rows = rowsFromData(data)
         const derivedRows = analysisMode === 'pls-sem' && item.id === 'specific-indirect' && !rows.length
           ? deriveSpecificIndirectRows(savedModel, analysisResults)
@@ -6205,6 +6476,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
   const showDiagramTools = analysisMode === 'pls-sem' || analysisMode === 'bootstrap' || analysisMode === 'advanced'
   const showDiagram = showDiagramTools && !diagramCollapsed
   const sidebarModeLabel = getModeResultsLabel(analysisMode)
+  const { width: resultsSidebarWidth, onMouseDown: onResultsSidebarResizeStart } = useSidebarResize(240, 220, 420)
 
   const zoomIn  = useCallback(() => setZoom(z => Math.min(300, z + 10)), [])
   const zoomOut = useCallback(() => setZoom(z => Math.max(20,  z - 10)), [])
@@ -6240,7 +6512,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
   }, [canRunAdvancedAnalysis, handleExportRScript, isAnalysisRunning])
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden select-none" style={{ backgroundColor: 'var(--color-sidebar-bg)' }}>
+    <div className="metis-results-view h-full w-full flex flex-col overflow-hidden select-none" style={{ backgroundColor: 'var(--color-sidebar-bg)' }}>
 
       {/* ══════════════════════════════════════════════════════════════
           SINGLE FULL-WIDTH TOOLBAR
@@ -6419,8 +6691,11 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
       ══════════════════════════════════════════════════════════════ */}
       <div className="flex-1 flex overflow-hidden min-h-0">
 
-        {/* ── Left sidebar — fixed 240px, no divider border ── */}
-        <div className="w-60 flex flex-col shrink-0 overflow-hidden" style={{ background: 'var(--color-sidebar-bg)' }}>
+        {/* ── Left sidebar ── */}
+        <div
+          className="relative flex flex-col shrink-0 overflow-hidden"
+          style={{ width: resultsSidebarWidth, background: 'var(--color-sidebar-bg)' }}
+        >
           <div className="h-10 px-3 flex items-center gap-2 shrink-0">
             <button
               onClick={() => navigate(-1)}
@@ -6444,6 +6719,12 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
               />
             ))}
           </div>
+          <div
+            className="absolute top-2 bottom-2 right-0 w-1 cursor-col-resize hover:bg-primary/40 transition-colors z-10"
+            onMouseDown={onResultsSidebarResizeStart}
+            title="Drag to resize results sidebar"
+            aria-hidden="true"
+          />
         </div>
 
         {/* ── Content area ── */}
