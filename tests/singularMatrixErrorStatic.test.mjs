@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = path.resolve(__dirname, '..')
 const canvasSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
+const userFriendlyErrorsSource = await fs.readFile(path.join(workspaceRoot, 'src/utils/userFriendlyErrors.ts'), 'utf8')
 const plumberSource = await fs.readFile(path.join(workspaceRoot, 'r-api/plumber.R'), 'utf8')
 
 function sliceBetween(source, startMarker, endMarker) {
@@ -17,18 +18,26 @@ function sliceBetween(source, startMarker, endMarker) {
 }
 
 const laymanErrorFormatter = sliceBetween(canvasSource, 'function toLaymanErrorMessage', 'function getAnalysisLabel')
-const backendDetailIndex = laymanErrorFormatter.indexOf('Backend detail:')
-const canvasSingularIndex = laymanErrorFormatter.indexOf('perfectly duplicated or collinear')
 
-assert.notEqual(canvasSingularIndex, -1, 'ModelCanvas should explain singular matrix backend failures in plain language.')
-assert.ok(
-  canvasSingularIndex < backendDetailIndex,
-  'ModelCanvas should map singular matrix failures before falling back to raw Backend detail text.',
-)
 assert.match(
   laymanErrorFormatter,
+  /return formatUserFriendlyAnalysisError\(rawError\)/,
+  'ModelCanvas should delegate analysis error wording to the shared user-friendly formatter.',
+)
+
+const sharedErrorFormatter = sliceBetween(userFriendlyErrorsSource, 'export function formatUserFriendlyAnalysisError', '\n}')
+const backendDetailIndex = sharedErrorFormatter.indexOf('Backend detail:')
+const sharedSingularIndex = sharedErrorFormatter.indexOf('perfectly duplicated or collinear')
+
+assert.notEqual(sharedSingularIndex, -1, 'Shared formatter should explain singular matrix backend failures in plain language.')
+assert.ok(
+  sharedSingularIndex < backendDetailIndex,
+  'Shared formatter should map singular matrix failures before falling back to raw Backend detail text.',
+)
+assert.match(
+  sharedErrorFormatter,
   /dgesv|exactly singular|singular matrix|computationally singular/,
-  'ModelCanvas should recognize common singular-matrix backend wording.',
+  'Shared formatter should recognize common singular-matrix backend wording.',
 )
 
 const rErrorFormatter = sliceBetween(plumberSource, 'format_analysis_error_message <- function', 'format_configured_max_error <- function')

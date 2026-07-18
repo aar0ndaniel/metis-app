@@ -84,8 +84,14 @@ assert.doesNotMatch(
 
 assert.match(
   nativeMenuSource,
-  /label:\s*'Analysis'[\s\S]*nativeMenuAction\('Run PLS-SEM', 'run-pls'[\s\S]*nativeMenuAction\('Run Bootstrap', 'run-bootstrap'[\s\S]*nativeMenuAction\('PLS Predict', 'run-pls-predict'[\s\S]*nativeMenuAction\('Advanced analysis', 'run-advanced-analysis'[\s\S]*label:\s*'Algorithm Settings', enabled:\s*false/,
+  /label:\s*'Analysis'[\s\S]*nativeMenuAction\('Run PLS-SEM', 'run-pls'[\s\S]*nativeMenuAction\('Run Bootstrap', 'run-bootstrap'[\s\S]*nativeMenuAction\('PLS Predict', 'run-pls-predict'[\s\S]*nativeMenuAction\('NCA and IPMA', 'run-advanced-analysis'[\s\S]*nativeMenuAction\('Permutation Analysis \(MICOM\) Beta', 'run-permutation-analysis'[\s\S]*nativeMenuAction\('Multi Group Analysis \(MGA\)', 'run-multi-group-analysis'[\s\S]*label:\s*'Algorithm Settings', enabled:\s*false/,
   'Native macOS Analysis menu should expose the same explicit renderer Analysis menu children and actions.'
+)
+
+assert.doesNotMatch(
+  nativeMenuSource,
+  /nativeMenuAction\('Advanced analysis', 'run-advanced-analysis'\)/,
+  'Native macOS Analysis menu should not keep the old Advanced analysis item.'
 )
 
 assert.match(

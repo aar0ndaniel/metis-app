@@ -133,16 +133,10 @@ for (const iconOverride of [
   assert.match(resultsSource, iconOverride, `Missing expected unique sidebar icon override: ${iconOverride}`)
 }
 
-assert.match(
+assert.doesNotMatch(
   titleBarSource,
-  /const showTitleBarDivider = currentScreen === 'canvas'/,
-  'Results should not inherit the workbench title bar divider.'
-)
-
-assert.match(
-  titleBarSource,
-  /borderBottom: showTitleBarDivider \? '1px solid var\(--color-border\)' : '1px solid transparent'/,
-  'TitleBar should only render the divider on screens that still need it.'
+  /showTitleBarDivider|borderBottom:/,
+  'TitleBar should not render a bottom divider on canvas, results, preferences, or workspace screens.'
 )
 
 assert.match(

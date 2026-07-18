@@ -84,6 +84,8 @@ const CHART_REGISTRY: Record<AnalysisMode, Record<string, ChartConfig>> = {
     'cipma-priorities': makeChartConfig('scatter-quadrant', { defaultPreviewHeight: 340 }),
     'bottleneck-table': makeChartConfig('heatmap', { defaultPreviewHeight: 360 }),
   },
+  permutation: {},
+  mga: {},
 }
 
 export function getChartConfig(mode: AnalysisMode, panelId: string): ChartConfig | null {

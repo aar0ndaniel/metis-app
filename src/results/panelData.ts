@@ -67,6 +67,12 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'cipma-priorities': 'final_results.cipma_priorities',
     'execution-log': 'algorithm.execution_log',
   },
+  permutation: {
+    'compositional-invariance': 'compositionalInvariance',
+    'invariance-classification': 'invarianceClassification',
+    'execution-log': 'execution_log',
+  },
+  mga: {},
 }
 
 const BOOTSTRAP_BASE_MODEL_REFERENCE_PANELS = new Set([
@@ -102,9 +108,261 @@ function unwrapAnalysisResults(analysisResults: any): any {
     analysisResults.results &&
     typeof analysisResults.results === 'object'
   ) {
-    return analysisResults.results
+    return unwrapAnalysisResults(analysisResults.results)
   }
   return analysisResults
+}
+
+function normalizeKey(key: string): string {
+  return String(key ?? '').replace(/[^a-z0-9]+/gi, '').toLowerCase()
+}
+
+function getOwnValue(obj: any, candidates: string[]): any {
+  if (!obj || typeof obj !== 'object') return undefined
+  const normalizedCandidates = new Set(candidates.map(normalizeKey))
+  for (const [key, value] of Object.entries(obj)) {
+    if (normalizedCandidates.has(normalizeKey(key))) return value
+  }
+  return undefined
+}
+
+function formatCiOverlap(value: unknown): string {
+  if (value === true) return 'Yes'
+  if (value === false) return 'No'
+  if (value == null) return '—'
+  const normalized = String(value).trim().toLowerCase()
+  if (normalized === 'true' || normalized === 'yes') return 'Yes'
+  if (normalized === 'false' || normalized === 'no') return 'No'
+  return String(value)
+}
+
+function getPermutationOverview(results: any): Array<Record<string, unknown>> {
+  const groups = results?.groups ?? {}
+  const counts = groups?.counts ?? {}
+  const settings = results?.settings ?? {}
+  return [{
+    groupingVariable: groups.groupingVariable ?? '',
+    groupA: groups.leftValue ?? groups.groupA ?? '',
+    groupACount: counts.groupA ?? groups.groupACount ?? null,
+    groupB: groups.rightValue ?? groups.groupB ?? '',
+    groupBCount: counts.groupB ?? groups.groupBCount ?? null,
+    permutations: settings.permutations ?? results?.permutations ?? null,
+    alpha: settings.alpha ?? results?.alpha ?? null,
+    seed: settings.seed ?? results?.seed ?? null,
+  }]
+}
+
+function getPermutationEqualityRows(results: any, kind: 'mean' | 'variance'): Array<Record<string, unknown>> | null {
+  const rows = Array.isArray(results?.equalityAssessment) ? results.equalityAssessment : null
+  if (!rows) return null
+  return rows.map((row: any) => (
+    kind === 'mean'
+      ? {
+          construct: row.construct,
+          mean_diff: row.mean_diff,
+          mean_ci_lower: row.mean_ci_lower,
+          mean_ci_upper: row.mean_ci_upper,
+          mean_p_value: row.mean_p_value,
+          mean_decision: row.mean_decision,
+        }
+      : {
+          construct: row.construct,
+          variance_diff: row.variance_diff,
+          variance_ci_lower: row.variance_ci_lower,
+          variance_ci_upper: row.variance_ci_upper,
+          variance_p_value: row.variance_p_value,
+          variance_decision: row.variance_decision,
+        }
+  ))
+}
+
+function getMgaGroupLabels(results: any): { groupA: string; groupB: string; comparisonLabel: string } {
+  const groups = results?.groups ?? {}
+  const groupA = String(groups.leftValue ?? groups.groupA ?? 'Group A')
+  const groupB = String(groups.rightValue ?? groups.groupB ?? 'Group B')
+  return {
+    groupA,
+    groupB,
+    comparisonLabel: `${groupA} vs ${groupB}`,
+  }
+}
+
+function normalizeGroupSpecificSource(source: any): any {
+  const unwrapped = unwrapAnalysisResults(source)
+  if (!unwrapped || typeof unwrapped !== 'object' || Array.isArray(unwrapped)) return unwrapped
+
+  const finalResults = getOwnValue(unwrapped, ['final_results', 'finalResults']) ?? {}
+  const qualityCriteria = getOwnValue(unwrapped, ['quality_criteria', 'qualityCriteria']) ?? {}
+  return {
+    ...unwrapped,
+    final_results: {
+      ...finalResults,
+      path_coefficients: getOwnValue(finalResults, ['path_coefficients', 'pathCoefficients']) ?? finalResults.path_coefficients,
+      total_indirect_effects: getOwnValue(finalResults, ['total_indirect_effects', 'totalIndirectEffects']) ?? finalResults.total_indirect_effects,
+      specific_indirect_effects: getOwnValue(finalResults, ['specific_indirect_effects', 'specificIndirectEffects']) ?? finalResults.specific_indirect_effects,
+      total_effects: getOwnValue(finalResults, ['total_effects', 'totalEffects']) ?? finalResults.total_effects,
+      outer_loadings: getOwnValue(finalResults, ['outer_loadings', 'outerLoadings']) ?? finalResults.outer_loadings,
+      outer_weights: getOwnValue(finalResults, ['outer_weights', 'outerWeights']) ?? finalResults.outer_weights,
+    },
+    quality_criteria: {
+      ...qualityCriteria,
+      reliability: getOwnValue(qualityCriteria, ['reliability']) ?? qualityCriteria.reliability,
+      discriminant_validity: getOwnValue(qualityCriteria, ['discriminant_validity', 'discriminantValidity']) ?? qualityCriteria.discriminant_validity,
+      cross_loadings: getOwnValue(qualityCriteria, ['cross_loadings', 'crossLoadings']) ?? qualityCriteria.cross_loadings,
+      r_square: getOwnValue(qualityCriteria, ['r_square', 'rSquare']) ?? qualityCriteria.r_square,
+      vif: getOwnValue(qualityCriteria, ['vif']) ?? qualityCriteria.vif,
+      model_fit: getOwnValue(qualityCriteria, ['model_fit', 'modelFit']) ?? qualityCriteria.model_fit,
+    },
+  }
+}
+
+const MGA_GROUP_PANEL_BASE_IDS: Record<string, string> = {
+  'path-coef': 'path-coef',
+  'total-indirect': 'total-indirect',
+  'specific-indirect': 'specific-indirect',
+  'total-effects': 'total-effects',
+  'outer-loadings': 'outer-loadings',
+  'outer-weights': 'outer-weights',
+  reliability: 'reliability',
+  discriminant: 'discriminant',
+  'cross-loadings': 'cross-loadings',
+  'r-square': 'r-square',
+  vif: 'vif',
+  'model-fit': 'model-fit',
+}
+
+export function getMgaGroupPanelBaseId(panelId: string): string {
+  const match = panelId.match(/^mga-group-[ab]-(.+)$/)
+  if (!match) return panelId
+  return MGA_GROUP_PANEL_BASE_IDS[match[1]] ?? panelId
+}
+
+export function getMgaGroupSpecificResultsSource(panelId: string, analysisResults: any): any {
+  const results = unwrapAnalysisResults(analysisResults)
+  const groupKey = panelId.includes('mga-group-a-') ? 'groupA' : panelId.includes('mga-group-b-') ? 'groupB' : ''
+  if (!groupKey) return null
+  const groupSpecific = results?.groupSpecific ?? results?.group_specific ?? {}
+  const source = groupSpecific[groupKey] ?? groupSpecific[groupKey === 'groupA' ? 'group_a' : 'group_b']
+  return normalizeGroupSpecificSource(source)
+}
+
+function getMgaOverview(results: any): Array<Record<string, unknown>> {
+  const labels = getMgaGroupLabels(results)
+  const groups = results?.groups ?? {}
+  const counts = groups?.counts ?? {}
+  const settings = results?.settings ?? {}
+  const invariance = results?.measurementInvarianceStatus ?? results?.measurement_invariance_status ?? results?.invarianceStatus ?? 'Not supplied'
+  return [
+    { 'Analysis information': 'Grouping variable', Value: groups.groupingVariable ?? '' },
+    { 'Analysis information': 'Selected groups', Value: labels.comparisonLabel },
+    { 'Analysis information': 'Sample size per group', Value: `${labels.groupA}: ${counts.groupA ?? '—'}, ${labels.groupB}: ${counts.groupB ?? '—'}` },
+    { 'Analysis information': 'MGA settings', Value: `${settings.nboot ?? '—'} bootstrap subsamples, alpha ${settings.alpha ?? '—'}, seed ${settings.seed ?? '—'}` },
+    { 'Analysis information': 'Measurement invariance status', Value: invariance },
+  ]
+}
+
+function getMgaComparisonFamily(results: any, panelId: string): any {
+  const bootstrapMGA = results?.bootstrapMGA ?? results?.bootstrap_mga ?? {}
+  if (panelId === 'mga-path-coefficients') return bootstrapMGA.pathCoefficients ?? bootstrapMGA.path_coefficients
+  if (panelId === 'mga-outer-loadings') return bootstrapMGA.outerLoadings ?? bootstrapMGA.outer_loadings
+  if (panelId === 'mga-outer-weights') return bootstrapMGA.outerWeights ?? bootstrapMGA.outer_weights
+  return null
+}
+
+function mapMgaPathComparisonRows(rows: any[], method: string, labels: { groupA: string; groupB: string }): Array<Record<string, unknown>> {
+  if (method === 'henselerPlsMga') {
+    return rows.map((row) => ({
+      Path: row.path ?? row.Path,
+      [`${labels.groupA} β`]: row.groupA_beta,
+      [`${labels.groupB} β`]: row.groupB_beta,
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      'PLS-MGA p': row.pls_mga_p ?? row.p_value,
+      Result: row.result,
+    }))
+  }
+  if (method === 'parametricTest') {
+    return rows.map((row) => ({
+      Path: row.path ?? row.Path,
+      [`${labels.groupA} β`]: row.groupA_beta,
+      [`${labels.groupB} β`]: row.groupB_beta,
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      't-value': row.t_value,
+      'p-value': row.p_value,
+      Result: row.result,
+    }))
+  }
+  return rows.map((row) => ({
+    Path: row.path ?? row.Path,
+    [`${labels.groupA} β`]: row.groupA_beta,
+    [`${labels.groupA} CI lower`]: row.groupA_ci_lower,
+    [`${labels.groupA} CI upper`]: row.groupA_ci_upper,
+    [`${labels.groupB} β`]: row.groupB_beta,
+    [`${labels.groupB} CI lower`]: row.groupB_ci_lower,
+    [`${labels.groupB} CI upper`]: row.groupB_ci_upper,
+    'CI overlap': formatCiOverlap(row.ci_overlap),
+    Result: row.result,
+  }))
+}
+
+function mapMgaMeasurementComparisonRows(
+  rows: any[],
+  method: string,
+  labels: { groupA: string; groupB: string },
+  metric: 'loading' | 'weight',
+): Array<Record<string, unknown>> {
+  const groupAKey = `groupA_${metric}`
+  const groupBKey = `groupB_${metric}`
+  if (method === 'henselerPlsMga') {
+    return rows.map((row) => ({
+      Construct: row.construct,
+      Indicator: row.indicator,
+      [`${labels.groupA} ${metric}`]: row[groupAKey],
+      [`${labels.groupB} ${metric}`]: row[groupBKey],
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      'PLS-MGA p': row.pls_mga_p ?? row.p_value,
+      Result: row.result,
+    }))
+  }
+  if (method === 'parametricTest') {
+    return rows.map((row) => ({
+      Construct: row.construct,
+      Indicator: row.indicator,
+      [`${labels.groupA} ${metric}`]: row[groupAKey],
+      [`${labels.groupB} ${metric}`]: row[groupBKey],
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      't-value': row.t_value,
+      'p-value': row.p_value,
+      Result: row.result,
+    }))
+  }
+  return rows.map((row) => ({
+    Construct: row.construct,
+    Indicator: row.indicator,
+    [`${labels.groupA} ${metric}`]: row[groupAKey],
+    [`${labels.groupA} CI lower`]: row.groupA_ci_lower,
+    [`${labels.groupA} CI upper`]: row.groupA_ci_upper,
+    [`${labels.groupB} ${metric}`]: row[groupBKey],
+    [`${labels.groupB} CI lower`]: row.groupB_ci_lower,
+    [`${labels.groupB} CI upper`]: row.groupB_ci_upper,
+    'CI overlap': formatCiOverlap(row.ci_overlap),
+    Result: row.result,
+  }))
+}
+
+function getMgaComparisonData(
+  panelId: string,
+  results: any,
+  method = 'biasCorrectedConfidenceIntervals',
+): Array<Record<string, unknown>> | null {
+  const family = getMgaComparisonFamily(results, panelId)
+  if (!family) return null
+  const rows = family[method] ?? []
+  if (!Array.isArray(rows)) return null
+  const labels = getMgaGroupLabels(results)
+  if (panelId === 'mga-path-coefficients') return mapMgaPathComparisonRows(rows, method, labels)
+  if (panelId === 'mga-outer-loadings') return mapMgaMeasurementComparisonRows(rows, method, labels, 'loading')
+  if (panelId === 'mga-outer-weights') return mapMgaMeasurementComparisonRows(rows, method, labels, 'weight')
+  return null
 }
 
 const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, string[]>>> = {
@@ -160,8 +418,32 @@ const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, str
   },
 }
 
-export function getPanelDataFromResults(mode: AnalysisMode, panelId: string, analysisResults: any): any {
+export function getPanelDataFromResults(
+  mode: AnalysisMode,
+  panelId: string,
+  analysisResults: any,
+  options: { mgaComparisonMethod?: string } = {},
+): any {
   const results = unwrapAnalysisResults(analysisResults)
+
+  if (mode === 'permutation') {
+    if (panelId === 'overview') return getPermutationOverview(results)
+    if (panelId === 'configural-invariance') return null
+    if (panelId === 'equality-means') return getPermutationEqualityRows(results, 'mean')
+    if (panelId === 'equality-variances') return getPermutationEqualityRows(results, 'variance')
+  }
+
+  if (mode === 'mga') {
+    if (panelId === 'overview') return getMgaOverview(results)
+    if (panelId.startsWith('mga-group-')) {
+      const source = getMgaGroupSpecificResultsSource(panelId, results)
+      const basePanelId = getMgaGroupPanelBaseId(panelId)
+      return getByPath(source, PANEL_DATA_PATHS['pls-sem'][basePanelId])
+    }
+    if (panelId === 'mga-path-welch' || panelId === 'mga-specific-indirect-ci') return null
+    return getMgaComparisonData(panelId, results, options.mgaComparisonMethod)
+  }
+
   const fallbackPaths = PANEL_DATA_FALLBACK_PATHS[mode]?.[panelId]
   if (fallbackPaths?.length) {
     for (const path of fallbackPaths) {

@@ -17,7 +17,7 @@ import { stripModelDisplayName } from '../utils/displayNames'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type MenuItem =
-  | { type: 'item'; label: string; shortcut?: string; icon?: string; disabled?: boolean; color?: string; action?: string }
+  | { type: 'item'; label: string; shortcut?: string; icon?: string; badge?: string; disabled?: boolean; color?: string; action?: string }
   | { type: 'separator' }
   | { type: 'checked'; label: string; checked: boolean; disabled?: boolean; action?: string }
   | { type: 'submenu'; label: string; items?: MenuItem[]; disabled?: boolean }
@@ -126,7 +126,9 @@ function buildAnalysisMenu(screen: string, status: any): MenuItem[] {
     { type: 'item', label: 'Run PLS-SEM',       shortcut: 'Ctrl+Enter', disabled: noCanvas || !status.hasCanvasItems, action: 'run-pls' },
     { type: 'item', label: 'Run Bootstrap',      shortcut: 'Ctrl+B',    disabled: noCanvas || !status.hasCanvasItems, action: 'run-bootstrap' },
     { type: 'item', label: 'PLS Predict',       disabled: noCanvas || !status.hasCanvasItems, action: 'run-pls-predict' },
-    { type: 'item', label: 'Advanced analysis', disabled: noCanvas || !status.canRunAdvanced, action: 'run-advanced-analysis' },
+    { type: 'item', label: 'NCA and IPMA', disabled: noCanvas || !status.canRunAdvanced, action: 'run-advanced-analysis' },
+    { type: 'item', label: 'Permutation Analysis (MICOM)', badge: 'Beta', disabled: noCanvas || !status.canRunAdvanced, action: 'run-permutation-analysis' },
+    { type: 'item', label: 'Multi Group Analysis (MGA)', disabled: noCanvas || !status.canRunAdvanced, action: 'run-multi-group-analysis' },
     { type: 'separator' },
     { type: 'item', label: 'Algorithm Settings', disabled: noCanvas || !status.hasCanvasItems },
   ]
@@ -242,12 +244,32 @@ function MenuDropdown({
             className={`titlebar-menu-row w-full flex items-center justify-between gap-2 px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled cursor-default' : ''}`}
             onClick={handleClick}
           >
-            <span className="flex items-center gap-2">
+            <span className="flex min-w-0 items-center gap-2 whitespace-nowrap">
               {item.icon === 'folders' && <Folders size={14} color={item.disabled ? menuDisabledColor : menuItemColor} />}
               {item.icon === 'note-pencil' && <NotePencil size={14} color={item.disabled ? menuDisabledColor : menuItemColor} />}
-              <span className="text-[13px]" style={{ color: textColor, fontFamily: 'Inter, DM Sans, sans-serif' }}>
+              <span className="text-[13px] whitespace-nowrap" style={{ color: textColor, fontFamily: 'Inter, DM Sans, sans-serif' }}>
                 {item.label}
               </span>
+              {item.badge && (
+                <span
+                  className="shrink-0 whitespace-nowrap"
+                  style={{
+                    height: 18,
+                    padding: '1px 7px 0',
+                    borderRadius: 999,
+                    border: `1px solid ${item.disabled ? 'var(--color-title-menu-disabled)' : 'rgb(var(--color-accent-rgb) / 0.44)'}`,
+                    backgroundColor: 'rgb(var(--color-accent-rgb) / 0.16)',
+                    color: 'var(--color-accent)',
+                    fontFamily: 'Inter, DM Sans, sans-serif',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    lineHeight: '15px',
+                    letterSpacing: 0,
+                  }}
+                >
+                  {item.badge}
+                </span>
+              )}
             </span>
             {item.shortcut && (
               <span className="text-[11px]" style={{ color: scColor, fontFamily: 'Inter, DM Sans, sans-serif' }}>
@@ -417,13 +439,12 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
     { label: 'File', items: buildFileMenu(currentScreen, recentModels, status), width: 240 },
     { label: 'Edit', items: buildEditMenu(currentScreen, status), width: 220 },
     { label: 'View', items: buildViewMenu(currentScreen, showVars, showProps, showZoomControl), width: 230 },
-    { label: 'Analysis', items: buildAnalysisMenu(currentScreen, status), width: 230 },
+    { label: 'Analysis', items: buildAnalysisMenu(currentScreen, status), width: 320 },
     { label: 'Tark it', items: buildTarkMenu(), width: 220 },
     { label: 'Help', items: buildHelpMenu(), width: 240 },
   ]
 
   const logoVariant = theme === 'Light' ? 'black' : 'white'
-  const showTitleBarDivider = currentScreen === 'canvas'
   const isMac = typeof window !== 'undefined' && window.electronAPI?.platform === 'darwin'
   const activeModelTitle = activeModelName.trim()
   const showActiveModelTitle = isMac && (currentScreen === 'canvas' || currentScreen === 'results') && activeModelTitle.length > 0
@@ -511,7 +532,6 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
         height: 36,
         padding: isMac ? (isFullScreen ? '0 16px' : '0 16px 0 80px') : '0 0 0 16px',
         gap: isMac ? 16 : 24,
-        borderBottom: showTitleBarDivider ? '1px solid var(--color-border)' : '1px solid transparent',
         ...(theme === 'Light'
           ? { background: 'var(--color-titlebar-bg)' }
           : { background: '#202020' }),
@@ -610,7 +630,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
                       whiteSpace: 'nowrap',
                     }}
                   >
-                    Click here for NCA and cIPMA in Advanced analysis
+                    Click here for NCA and IPMA
                   </span>
                 </div>
               </div>

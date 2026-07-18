@@ -4,12 +4,20 @@ function stringField(error: unknown, key: string): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
+function structuredField(error: unknown, key: string): string {
+  if (!error || typeof error !== 'object') return ''
+  const value = (error as Record<string, unknown>)[key]
+  if (typeof value === 'string') return value.trim()
+  if (value && typeof value === 'object') return normalizeErrorText(value)
+  return ''
+}
+
 function normalizeErrorText(error: unknown): string {
   if (error instanceof Error) {
     return error.message.replace(/^:\s*/, '').trim()
   }
   if (error && typeof error === 'object') {
-    const structuredMessage = stringField(error, 'error') || stringField(error, 'backendDetail') || stringField(error, 'message')
+    const structuredMessage = structuredField(error, 'error') || structuredField(error, 'backendDetail') || structuredField(error, 'message')
     if (structuredMessage) return structuredMessage.replace(/^:\s*/, '').trim()
   }
   return String(error ?? '').replace(/^:\s*/, '').trim()

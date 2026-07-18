@@ -28,6 +28,12 @@ assert.match(
 
 assert.match(
   electronMainSource,
+  /if \(process\.env\.METIS_DISABLE_HARDWARE_ACCELERATION === '1'\) \{[\s\S]*app\.disableHardwareAcceleration\(\)[\s\S]*\}/,
+  'Electron startup should support an env-gated hardware-acceleration disable path for GPU-hostile verification and support environments.'
+)
+
+assert.match(
+  electronMainSource,
   /\/usr\/bin\/Rscript[\s\S]*\/usr\/local\/bin\/Rscript/,
   'Unix R detection should check common system Rscript locations.'
 )
@@ -130,6 +136,24 @@ assert.match(
 
 assert.match(
   electronMainSource,
+  /const BUNDLED_PORTABLE_REQUIRED_PACKAGES = \[[^\]]*'seminrExtras'[^\]]*\]/,
+  'Bundle runtime readiness should share an explicit required package set that includes seminrExtras.'
+)
+
+assert.match(
+  electronMainSource,
+  /function getMissingBundledPortablePackages\(runtimeDir: string\): string\[\] \{[\s\S]*BUNDLED_PORTABLE_REQUIRED_PACKAGES[\s\S]*DESCRIPTION/,
+  'Bundle runtime readiness should inspect extracted R library package DESCRIPTION files.'
+)
+
+assert.match(
+  electronMainSource,
+  /function isBundledPortableRuntimeReady\(\): boolean \{[\s\S]*const missingRequiredPackages = getMissingBundledPortablePackages\(runtimeDir\)[\s\S]*if \(missingRequiredPackages\.length > 0\) return false[\s\S]*probeRscriptExecutable/,
+  'Bundle runtime readiness should reject stale extracted runtimes that are missing required packages before probing Rscript.'
+)
+
+assert.match(
+  electronMainSource,
   /function isBundledPortableRuntimeReady\(\): boolean \{[\s\S]*if \(fs\.existsSync\(archivePath\)\) return false[\s\S]*return isLiteBuild\(\)/,
   'A packaged Bundle with no runtime archive should stay in setup instead of being treated as runtime-ready.'
 )
@@ -148,8 +172,20 @@ assert.match(
 
 assert.match(
   electronMainSource,
+  /function getBundledPortableRuntimeStatus\(\)[\s\S]*requiredPackages: BUNDLED_PORTABLE_REQUIRED_PACKAGES[\s\S]*missingRequiredPackages: getMissingBundledPortablePackages\(runtimeDir\)/,
+  'Bundle runtime diagnostics should report missing required packages from the extracted runtime.'
+)
+
+assert.match(
+  electronMainSource,
   /function verifyBundledPortableRuntimeCanStart[\s\S]*Bundled R runtime could not start[\s\S]*verifyBundledPortableRuntimeCanStart\(extractedRscriptPath\)/,
   'Bundle setup should smoke-check the extracted Rscript before accepting the runtime as installed.'
+)
+
+assert.match(
+  electronMainSource,
+  /if \(fs\.existsSync\(extractedRscriptPath\)\) \{[\s\S]*const missingRequiredPackages = getMissingBundledPortablePackages\(runtimeDir\)[\s\S]*if \(!missingRequiredPackages\.length\) \{[\s\S]*Bundled R runtime already extracted, skipping[\s\S]*return[\s\S]*missing required packages/,
+  'Bundle installer extraction should refresh a stale extracted runtime when required packages such as seminrExtras are missing.'
 )
 
 assert.match(

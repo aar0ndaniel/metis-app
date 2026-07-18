@@ -4,6 +4,7 @@ host <- Sys.getenv("METIS_PLUMBER_HOST", "127.0.0.1")
 port <- as.integer(Sys.getenv("METIS_PLUMBER_PORT", "8765"))
 metis_token <- Sys.getenv("METIS_PLUMBER_TOKEN", "")
 trusted_metis_dataset_roots_raw <- Sys.getenv("METIS_ALLOWED_DATA_ROOTS", "")
+micom_script_path <- Sys.getenv("METIS_MICOM_R_PATH", "")
 max_dataset_bytes <- suppressWarnings(as.numeric(Sys.getenv("METIS_MAX_DATASET_BYTES", "209715200")))
 max_dataset_rows <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_DATASET_ROWS", "100000")))
 max_dataset_cols <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_DATASET_COLS", "500")))
@@ -28,6 +29,8 @@ analysis_timeout_seconds <- read_timeout_seconds("METIS_ANALYSIS_TIMEOUT_SECONDS
 bootstrap_timeout_seconds <- read_timeout_seconds("METIS_BOOTSTRAP_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
 plspredict_timeout_seconds <- read_timeout_seconds("METIS_PLSPREDICT_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
 advanced_analysis_timeout_seconds <- read_timeout_seconds("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
+permutation_analysis_timeout_seconds <- read_timeout_seconds("METIS_PERMUTATION_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
+multi_group_analysis_timeout_seconds <- read_timeout_seconds("METIS_MULTI_GROUP_ANALYSIS_TIMEOUT_SECONDS", max(bootstrap_timeout_seconds, 900))
 
 if (is.na(max_dataset_bytes) || max_dataset_bytes <= 0) max_dataset_bytes <- 209715200
 if (is.na(max_dataset_rows) || max_dataset_rows < 1L) max_dataset_rows <- 100000L
@@ -60,6 +63,33 @@ if (requireNamespace("seminr", quietly = TRUE)) {
 pr <- plumber$new()
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
+
+ensure_micom_loaded <- function() {
+  if (exists("metis_micom", mode = "function", inherits = TRUE)) {
+    return(invisible(TRUE))
+  }
+
+  if (nzchar(micom_script_path) && file.exists(micom_script_path)) {
+    source(micom_script_path, local = globalenv())
+  }
+
+  if (!exists("metis_micom", mode = "function", inherits = TRUE)) {
+    fallback_paths <- unique(c(
+      file.path(getwd(), "r-api", "micom.R"),
+      file.path(getwd(), "..", "micom.R")
+    ))
+    fallback_paths <- fallback_paths[file.exists(fallback_paths)]
+    if (length(fallback_paths)) {
+      source(fallback_paths[[1]], local = globalenv())
+    }
+  }
+
+  if (!exists("metis_micom", mode = "function", inherits = TRUE)) {
+    stop("MICOM backend is unavailable because micom.R could not be loaded.")
+  }
+
+  invisible(TRUE)
+}
 
 new_timing_collector <- function(operation) {
   timings <- new.env(parent = emptyenv())
@@ -749,6 +779,82 @@ validate_advanced_analyses_payload <- function(analyses_payload) {
   normalized
 }
 
+validate_permutation_analysis_payload <- function(payload, construct_names, data_columns) {
+  if (!is.list(payload) || is.null(names(payload))) {
+    stop("Permutation analysis payload must be a JSON object.")
+  }
+  if (!length(construct_names)) {
+    stop("Permutation analysis requires at least one construct.")
+  }
+
+  grouping_variable <- require_scalar_string(payload$groupingVariable, "groupingVariable", max_chars = 200)
+  if (!(grouping_variable %in% data_columns)) {
+    stop(sprintf("groupingVariable '%s' was not found in the linked dataset.", grouping_variable))
+  }
+
+  group_a <- require_scalar_string(payload$groupA, "groupA", max_chars = 200)
+  group_b <- require_scalar_string(payload$groupB, "groupB", max_chars = 200)
+  if (identical(group_a, group_b)) {
+    stop("groupA and groupB must be different grouping-variable values.")
+  }
+
+  permutations <- require_scalar_integer(payload$permutations, "Permutations", 1L, Inf)
+  if (!is_scalar_number(payload$alpha) || payload$alpha <= 0 || payload$alpha >= 1) {
+    stop("alpha must be a number greater than 0 and less than 1.")
+  }
+  seed <- require_scalar_integer(payload$seed, "seed", -2147483647L, 2147483647L)
+
+  list(
+    groupingVariable = grouping_variable,
+    groupA = group_a,
+    groupB = group_b,
+    permutations = permutations,
+    alpha = as.numeric(payload$alpha),
+    seed = seed
+  )
+}
+
+validate_multi_group_analysis_payload <- function(payload, construct_names, data_columns) {
+  if (!is.list(payload) || is.null(names(payload))) {
+    stop("Multi-group analysis payload must be a JSON object.")
+  }
+  if (!length(construct_names)) {
+    stop("Multi-group analysis requires at least one construct.")
+  }
+
+  grouping_variable <- require_scalar_string(payload$groupingVariable, "groupingVariable", max_chars = 200)
+  if (!(grouping_variable %in% data_columns)) {
+    stop(sprintf("groupingVariable '%s' was not found in the linked dataset.", grouping_variable))
+  }
+
+  group_a <- require_scalar_string(payload$groupA, "groupA", max_chars = 200)
+  group_b <- require_scalar_string(payload$groupB, "groupB", max_chars = 200)
+  if (identical(group_a, group_b)) {
+    stop("groupA and groupB must be different grouping-variable values.")
+  }
+
+  nboot <- require_scalar_integer(
+    payload$nboot,
+    "Bootstrap subsamples",
+    50L,
+    bootstrap_sample_ceiling(),
+    configured_max_label = "Bootstrap subsamples"
+  )
+  if (!is_scalar_number(payload$alpha) || payload$alpha <= 0 || payload$alpha >= 1) {
+    stop("alpha must be a number greater than 0 and less than 1.")
+  }
+  seed <- require_scalar_integer(payload$seed, "seed", -2147483647L, 2147483647L)
+
+  list(
+    groupingVariable = grouping_variable,
+    groupA = group_a,
+    groupB = group_b,
+    nboot = nboot,
+    alpha = as.numeric(payload$alpha),
+    seed = seed
+  )
+}
+
 validate_payload_object <- function(payload) {
   if (!is.list(payload) || is.null(names(payload))) {
     stop("Request body must be a JSON object.")
@@ -896,6 +1002,20 @@ row_scalar_value <- function(value) {
 
   if (is.na(value)) return(NULL)
   unname(value)
+}
+
+json_unbox_tree <- function(value) {
+  if (is.null(value)) return(NULL)
+  if (inherits(value, "AsIs")) return(value)
+  if (is.data.frame(value) || is.matrix(value)) return(json_unbox_tree(as_rows(value)))
+  if (is.list(value)) return(lapply(value, json_unbox_tree))
+
+  scalar <- row_scalar_value(value)
+  if (is.null(scalar)) return(NULL)
+  if (is.list(scalar)) return(lapply(scalar, json_unbox_tree))
+  if (length(scalar) == 1L) return(jsonlite::unbox(scalar))
+
+  lapply(scalar, json_unbox_tree)
 }
 
 dataframe_to_rows <- function(df) {
@@ -1638,9 +1758,21 @@ prepare_payload <- function(req) {
     stop("Request body must be a non-empty JSON string.")
   }
 
-  payload <- validate_payload_object(jsonlite::fromJSON(request_body, simplifyVector = FALSE))
+  raw_payload <- jsonlite::fromJSON(request_body, simplifyVector = FALSE)
+  payload <- validate_payload_object(raw_payload)
   dataset_path <- as.character(payload$datasetPath)
   data <- read_dataset(dataset_path)
+
+  permutation_fields <- c("groupingVariable", "groupA", "groupB", "permutations", "alpha", "seed")
+  if (all(permutation_fields %in% names(raw_payload))) {
+    construct_names <- vapply(payload$constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
+    payload <- c(payload, validate_permutation_analysis_payload(raw_payload, construct_names, colnames(data)))
+  }
+  multi_group_fields <- c("groupingVariable", "groupA", "groupB", "nboot", "alpha", "seed")
+  if (all(multi_group_fields %in% names(raw_payload))) {
+    construct_names <- vapply(payload$constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
+    payload <- c(payload, validate_multi_group_analysis_payload(raw_payload, construct_names, colnames(data)))
+  }
 
   used_items <- unique(unlist(
     lapply(payload$constructs, function(c) unlist(lapply(c$indicators, as.character), use.names = FALSE)),
@@ -3994,6 +4126,880 @@ assemble_bootstrap_response <- function(payload, data, core, boot_model, boot_su
   list(success = TRUE, results = results)
 }
 
+micom_group_count <- function(data, grouping_variable, group_value) {
+  labels <- as.character(data[[grouping_variable]])
+  sum(!is.na(labels) & nzchar(labels) & labels == group_value)
+}
+
+is_supported_decision <- function(value) {
+  identical(tolower(as.character(value %||% "")), "supported")
+}
+
+classify_micom_constructs <- function(step2_rows, step3_rows) {
+  if (!length(step2_rows)) return(list())
+
+  step3_by_construct <- list()
+  for (row in step3_rows) {
+    construct <- as.character(row$construct %||% "")
+    if (nzchar(construct)) step3_by_construct[[construct]] <- row
+  }
+
+  lapply(step2_rows, function(row) {
+    construct <- as.character(row$construct %||% "")
+    step3 <- step3_by_construct[[construct]]
+    classification <- "none"
+    if (is_supported_decision(row$decision)) {
+      classification <- if (
+        !is.null(step3) &&
+        is_supported_decision(step3$mean_decision) &&
+        is_supported_decision(step3$variance_decision)
+      ) "full" else "partial"
+    }
+
+    list(
+      construct = construct,
+      classification = classification,
+      compositionalDecision = row$decision %||% NULL,
+      meanDecision = if (!is.null(step3)) step3$mean_decision %||% NULL else NULL,
+      varianceDecision = if (!is.null(step3)) step3$variance_decision %||% NULL else NULL
+    )
+  })
+}
+
+micom_admissibility_execution_log <- function(admissibility_rows) {
+  if (!length(admissibility_rows)) return(list())
+  lapply(admissibility_rows, function(row) {
+    list(message = sprintf(
+      "Permutation admissibility for %s: %s requested, %s admissible, %s dropped (%s%%).",
+      as.character(row$construct %||% "construct"),
+      as.character(row$requested %||% "0"),
+      as.character(row$admissible %||% "0"),
+      as.character(row$dropped %||% "0"),
+      as.character(row$dropped_pct %||% "0")
+    ))
+  })
+}
+
+micom_admissibility_warnings <- function(admissibility_rows) {
+  rows_with_drops <- Filter(function(row) {
+    dropped <- suppressWarnings(as.numeric(row$dropped %||% 0))
+    !is.na(dropped) && dropped > 0
+  }, admissibility_rows)
+  lapply(rows_with_drops, function(row) {
+    list(
+      code = "MICOM_INADMISSIBLE_PERMUTATIONS_DROPPED",
+      message = sprintf(
+        "%s dropped %s inadmissible permutation re-estimation(s).",
+        as.character(row$construct %||% "A construct"),
+        as.character(row$dropped %||% "0")
+      )
+    )
+  })
+}
+
+micom_step1_passed <- function(step1_rows) {
+  length(step1_rows) > 0L && all(vapply(step1_rows, function(row) {
+    identical(tolower(as.character(row$status %||% "")), "passed")
+  }, logical(1)))
+}
+
+map_micom_step1_response <- function(payload, data, step1_result, timings = NULL) {
+  step1_rows <- as_rows(step1_result %||% list())
+  passed <- micom_step1_passed(step1_rows)
+  status <- if (passed) "passed" else "failed"
+  execution_log <- list(list(message = sprintf(
+    "MICOM configural precheck ran for %s = %s vs %s.",
+    payload$groupingVariable,
+    payload$groupA,
+    payload$groupB
+  )))
+
+  json_unbox_tree(list(
+    method = "MICOM",
+    status = status,
+    groups = list(
+      groupingVariable = payload$groupingVariable,
+      groupA = payload$groupA,
+      groupB = payload$groupB,
+      leftValue = payload$groupA,
+      rightValue = payload$groupB,
+      counts = list(
+        groupA = micom_group_count(data, payload$groupingVariable, payload$groupA),
+        groupB = micom_group_count(data, payload$groupingVariable, payload$groupB)
+      )
+    ),
+    configuralInvariance = list(
+      checks = step1_rows,
+      passed = passed,
+      status = status
+    ),
+    execution_log = execution_log,
+    algorithm = list(
+      settings = list(
+        method = "MICOM",
+        mode = "permutation-configural-precheck",
+        group_var = payload$groupingVariable,
+        group_a = payload$groupA,
+        group_b = payload$groupB
+      ),
+      execution_log = execution_log
+    ),
+    meta = list(
+      mode = "permutation",
+      engine = "metis_micom_step1",
+      rows = nrow(data),
+      columns = ncol(data),
+      analysis_settings = list(
+        permutation = list(
+          groupingVariable = payload$groupingVariable,
+          groupA = payload$groupA,
+          groupB = payload$groupB,
+          permutations = payload$permutations,
+          alpha = payload$alpha,
+          seed = payload$seed
+        )
+      )
+    )
+  ))
+}
+
+map_micom_response <- function(payload, data, micom_result, timings = NULL) {
+  step1_rows <- as_rows(micom_result$step1 %||% list())
+  step2_rows <- as_rows(micom_result$step2 %||% list())
+  step3_rows <- as_rows(micom_result$step3 %||% list())
+  admissibility_rows <- as_rows(micom_result$admissibility %||% list())
+  execution_log <- c(
+    list(list(message = sprintf(
+      "MICOM ran for %s = %s vs %s with %s permutations, alpha %s, and seed %s.",
+      payload$groupingVariable,
+      payload$groupA,
+      payload$groupB,
+      payload$permutations,
+      payload$alpha,
+      payload$seed
+    ))),
+    micom_admissibility_execution_log(admissibility_rows)
+  )
+
+  json_unbox_tree(list(
+    method = "MICOM",
+    groups = list(
+      groupingVariable = payload$groupingVariable,
+      groupA = payload$groupA,
+      groupB = payload$groupB,
+      leftValue = payload$groupA,
+      rightValue = payload$groupB,
+      counts = list(
+        groupA = micom_group_count(data, payload$groupingVariable, payload$groupA),
+        groupB = micom_group_count(data, payload$groupingVariable, payload$groupB)
+      )
+    ),
+    settings = list(
+      permutations = payload$permutations,
+      alpha = payload$alpha,
+      seed = payload$seed
+    ),
+    configuralInvariance = list(
+      checks = step1_rows,
+      passed = micom_step1_passed(step1_rows),
+      status = if (micom_step1_passed(step1_rows)) "passed" else "failed"
+    ),
+    compositionalInvariance = step2_rows,
+    equalityAssessment = step3_rows,
+    invarianceClassification = classify_micom_constructs(step2_rows, step3_rows),
+    admissibility = admissibility_rows,
+    invariance = micom_result$invariance %||% list(),
+    warnings = micom_admissibility_warnings(admissibility_rows),
+    execution_log = execution_log,
+    algorithm = list(
+      settings = list(
+        method = "MICOM",
+        mode = "permutation",
+        group_var = payload$groupingVariable,
+        group_a = payload$groupA,
+        group_b = payload$groupB,
+        permutations = payload$permutations,
+        alpha = payload$alpha,
+        seed = payload$seed
+      ),
+      execution_log = execution_log
+    ),
+    meta = list(
+      mode = "permutation",
+      engine = "metis_micom",
+      rows = nrow(data),
+      columns = ncol(data),
+      analysis_settings = list(
+        permutation = list(
+          groupingVariable = payload$groupingVariable,
+          groupA = payload$groupA,
+          groupB = payload$groupB,
+          permutations = payload$permutations,
+          alpha = payload$alpha,
+          seed = payload$seed
+        )
+      )
+    )
+  ))
+}
+
+selected_group_rows <- function(data, grouping_variable, group_a, group_b) {
+  labels <- trimws(as.character(data[[grouping_variable]]))
+  keep <- !is.na(labels) & nzchar(labels) & labels %in% c(group_a, group_b)
+  data[keep, , drop = FALSE]
+}
+
+mga_group_condition <- function(data, grouping_variable, group_a) {
+  labels <- trimws(as.character(data[[grouping_variable]]))
+  condition <- !is.na(labels) & nzchar(labels) & labels == group_a
+  condition[is.na(condition)] <- FALSE
+  condition
+}
+
+mga_number <- function(value) {
+  numeric <- suppressWarnings(as.numeric(value))[1]
+  if (is.na(numeric) || !is.finite(numeric)) return(NULL)
+  numeric
+}
+
+mga_boot_paths_matrix <- function(pls_boot) {
+  boot_paths <- seminr:::boot_paths_df(pls_boot)
+  if (is.null(dim(boot_paths))) {
+    path_names <- seminr:::to_path_labels(pls_boot$smMatrix)
+    boot_paths <- matrix(boot_paths, ncol = 1L)
+    colnames(boot_paths) <- path_names[seq_len(ncol(boot_paths))]
+  }
+  boot_paths
+}
+
+mga_clean_boot_values <- function(values) {
+  vals <- suppressWarnings(as.numeric(values))
+  vals[is.finite(vals)]
+}
+
+mga_result_label <- function(significant) {
+  if (isTRUE(significant)) "Significant" else "Not significant"
+}
+
+mga_direction <- function(diff, group_a, group_b) {
+  if (is.null(diff) || !nzchar(group_a) || !nzchar(group_b)) return(NULL)
+  if (diff >= 0) sprintf("%s > %s", group_a, group_b) else sprintf("%s > %s", group_b, group_a)
+}
+
+mga_ci_values <- function(boot_values, original, alpha) {
+  interval <- bias_corrected_interval(boot_values, original, alpha)
+  list(
+    lower = mga_number(interval[[1]]),
+    upper = mga_number(interval[[2]])
+  )
+}
+
+mga_ci_overlap <- function(a_ci, b_ci) {
+  if (is.null(a_ci$lower) || is.null(a_ci$upper) || is.null(b_ci$lower) || is.null(b_ci$upper)) return(NULL)
+  max(a_ci$lower, b_ci$lower) <= min(a_ci$upper, b_ci$upper)
+}
+
+mga_pls_mga_p <- function(group_a_mean, group_b_mean, group_a_boot, group_b_boot) {
+  boot_a <- mga_clean_boot_values(group_a_boot)
+  boot_b <- mga_clean_boot_values(group_b_boot)
+  j <- min(length(boot_a), length(boot_b))
+  if (j < 1L || is.null(group_a_mean) || is.null(group_b_mean)) return(NULL)
+  boot_a <- boot_a[seq_len(j)]
+  boot_b <- boot_b[seq_len(j)]
+  comparison <- outer(
+    boot_a,
+    boot_b,
+    FUN = function(a, b) 2 * group_a_mean - a - 2 * group_b_mean + b
+  )
+  1 - (sum(ifelse(comparison > 0, 1, 0), na.rm = TRUE) / (j ^ 2))
+}
+
+mga_parametric_stats <- function(diff, group_a_boot, group_b_boot, alpha, group_a_n, group_b_n, welch = FALSE) {
+  boot_a <- mga_clean_boot_values(group_a_boot)
+  boot_b <- mga_clean_boot_values(group_b_boot)
+  rep_a <- length(boot_a)
+  rep_b <- length(boot_b)
+  n_a <- suppressWarnings(as.numeric(group_a_n))[1]
+  n_b <- suppressWarnings(as.numeric(group_b_n))[1]
+  if (is.null(diff) || n_a < 2L || n_b < 2L) {
+    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
+  }
+  if (rep_a < 2L || rep_b < 2L) {
+    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
+  }
+
+  sd_a <- stats::sd(boot_a)
+  sd_b <- stats::sd(boot_b)
+  if (!is.finite(sd_a) || !is.finite(sd_b)) {
+    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
+  }
+
+  if (isTRUE(welch)) {
+    variance_a <- (sd_a ^ 2) / n_a
+    variance_b <- (sd_b ^ 2) / n_b
+    se <- sqrt(variance_a + variance_b)
+    df <- ((variance_a + variance_b) ^ 2) /
+      (((variance_a ^ 2) / (n_a - 1L)) + ((variance_b ^ 2) / (n_b - 1L)))
+  } else {
+    df <- n_a + n_b - 2L
+    pooled <- sqrt((((n_a - 1L) * (sd_a ^ 2)) + ((n_b - 1L) * (sd_b ^ 2))) / df)
+    se <- pooled * sqrt((1 / n_a) + (1 / n_b))
+  }
+
+  if (!is.finite(se) || se <= 0 || !is.finite(df) || df <= 0) {
+    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
+  }
+
+  t_value <- diff / se
+  p_value <- 2 * stats::pt(-abs(t_value), df = df)
+  list(
+    t_value = mga_number(t_value),
+    df = mga_number(df),
+    p_value = mga_number(p_value),
+    significant = !is.null(p_value) && is.finite(p_value) && p_value <= alpha
+  )
+}
+
+mga_compare_entries <- function(entries, payload, group_a_field, group_b_field, group_a_n, group_b_n) {
+  alpha <- payload$alpha
+  ci_rows <- list()
+  henseler_rows <- list()
+  parametric_rows <- list()
+
+  for (entry in entries) {
+    estimate_a <- mga_number(entry$estimate_a)
+    estimate_b <- mga_number(entry$estimate_b)
+    diff <- if (!is.null(estimate_a) && !is.null(estimate_b)) estimate_a - estimate_b else NULL
+    boot_a <- mga_clean_boot_values(entry$boot_a)
+    boot_b <- mga_clean_boot_values(entry$boot_b)
+    mean_a <- if (length(boot_a)) mean(boot_a) else NULL
+    mean_b <- if (length(boot_b)) mean(boot_b) else NULL
+    pls_mga_p <- mga_pls_mga_p(mean_a, mean_b, boot_a, boot_b)
+    p_value_inverse <- if (!is.null(pls_mga_p)) 1 - pls_mga_p else NULL
+    pls_significant <- !is.null(pls_mga_p) && (
+      pls_mga_p <= alpha ||
+      (!is.null(p_value_inverse) && p_value_inverse <= alpha)
+    )
+    direction <- mga_direction(diff, payload$groupA, payload$groupB)
+    a_ci <- mga_ci_values(boot_a, estimate_a, alpha)
+    b_ci <- mga_ci_values(boot_b, estimate_b, alpha)
+    ci_overlap <- mga_ci_overlap(a_ci, b_ci)
+    ci_significant <- !is.null(ci_overlap) && !isTRUE(ci_overlap)
+    parametric <- mga_parametric_stats(diff, boot_a, boot_b, alpha, group_a_n, group_b_n, welch = FALSE)
+
+    ci_values <- list()
+    ci_values[[group_a_field]] <- estimate_a
+    ci_values$groupA_ci_lower <- a_ci$lower
+    ci_values$groupA_ci_upper <- a_ci$upper
+    ci_values[[group_b_field]] <- estimate_b
+    ci_values$groupB_ci_lower <- b_ci$lower
+    ci_values$groupB_ci_upper <- b_ci$upper
+    ci_values$ci_overlap <- ci_overlap
+    ci_values$result <- mga_result_label(ci_significant)
+
+    base_values <- list()
+    base_values[[group_a_field]] <- estimate_a
+    base_values[[group_b_field]] <- estimate_b
+    base_values$diff <- diff
+
+    ci_rows[[length(ci_rows) + 1L]] <- c(entry$identity, ci_values)
+    henseler_rows[[length(henseler_rows) + 1L]] <- c(
+      entry$identity,
+      base_values,
+      list(
+        groupA_boot_mean = mga_number(mean_a),
+        groupB_boot_mean = mga_number(mean_b),
+        pls_mga_p = mga_number(pls_mga_p),
+        p_value = mga_number(pls_mga_p),
+        p_value_inverse = mga_number(p_value_inverse),
+        significant = pls_significant,
+        direction = direction,
+        result = mga_result_label(pls_significant),
+        decision = mga_result_label(pls_significant)
+      )
+    )
+    parametric_rows[[length(parametric_rows) + 1L]] <- c(
+      entry$identity,
+      base_values,
+      list(
+        t_value = parametric$t_value,
+        p_value = parametric$p_value,
+        significant = parametric$significant,
+        result = mga_result_label(parametric$significant)
+      )
+    )
+  }
+
+  list(
+    biasCorrectedConfidenceIntervals = ci_rows,
+    henselerPlsMga = henseler_rows,
+    parametricTest = parametric_rows
+  )
+}
+
+mga_path_entries <- function(pls_model, group1_model, group2_model, group1_boot, group2_boot) {
+  sm_matrix <- pls_model$smMatrix
+  sources <- seminr:::path_sources(sm_matrix)
+  targets <- seminr:::path_targets(sm_matrix)
+  path_names <- seminr:::to_path_labels(sm_matrix)
+  boot1_betas <- mga_boot_paths_matrix(group1_boot)
+  boot2_betas <- mga_boot_paths_matrix(group2_boot)
+  lookup_paths <- function(path_coef) {
+    mapply(function(s, t) path_coef[s, t], sources, targets)
+  }
+  group1_betas <- lookup_paths(group1_model$path_coef)
+  group2_betas <- lookup_paths(group2_model$path_coef)
+
+  lapply(seq_along(path_names), function(index) {
+    path_name <- path_names[[index]]
+    boot1_index <- match(path_name, colnames(boot1_betas))
+    boot2_index <- match(path_name, colnames(boot2_betas))
+    if (is.na(boot1_index)) boot1_index <- index
+    if (is.na(boot2_index)) boot2_index <- index
+    list(
+      identity = list(
+        source = as.character(sources[[index]] %||% ""),
+        target = as.character(targets[[index]] %||% ""),
+        path = as.character(path_name %||% "")
+      ),
+      estimate_a = group1_betas[[index]],
+      estimate_b = group2_betas[[index]],
+      boot_a = boot1_betas[, boot1_index],
+      boot_b = boot2_betas[, boot2_index]
+    )
+  })
+}
+
+mga_measurement_entries <- function(group1_matrix, group2_matrix, group1_boot_array, group2_boot_array) {
+  if (is.null(group1_matrix) || is.null(group2_matrix) ||
+      is.null(group1_boot_array) || is.null(group2_boot_array)) return(list())
+  if (is.null(dim(group1_boot_array)) || is.null(dim(group2_boot_array)) ||
+      length(dim(group1_boot_array)) < 3L || length(dim(group2_boot_array)) < 3L) return(list())
+
+  m1 <- as.matrix(group1_matrix)
+  m2 <- as.matrix(group2_matrix)
+  if (nrow(m1) != nrow(m2) || ncol(m1) != ncol(m2)) return(list())
+  if (nrow(m1) != dim(group1_boot_array)[1] || ncol(m1) != dim(group1_boot_array)[2]) return(list())
+  if (nrow(m2) != dim(group2_boot_array)[1] || ncol(m2) != dim(group2_boot_array)[2]) return(list())
+
+  indicators <- rownames(m1)
+  constructs <- colnames(m1)
+  if (is.null(indicators)) indicators <- as.character(seq_len(nrow(m1)))
+  if (is.null(constructs)) constructs <- as.character(seq_len(ncol(m1)))
+
+  entries <- list()
+  for (i in seq_len(nrow(m1))) {
+    for (j in seq_len(ncol(m1))) {
+      estimate_a <- mga_number(m1[i, j])
+      estimate_b <- mga_number(m2[i, j])
+      include_entry <- (!is.null(estimate_a) && estimate_a != 0) || (!is.null(estimate_b) && estimate_b != 0)
+      if (!include_entry) next
+      entries[[length(entries) + 1L]] <- list(
+        identity = list(
+          construct = as.character(constructs[[j]] %||% ""),
+          indicator = as.character(indicators[[i]] %||% "")
+        ),
+        estimate_a = estimate_a,
+        estimate_b = estimate_b,
+        boot_a = group1_boot_array[i, j, ],
+        boot_b = group2_boot_array[i, j, ]
+      )
+    }
+  }
+  entries
+}
+
+mga_effect_matrix_entries <- function(group1_matrix, group2_matrix, group1_boot_array, group2_boot_array) {
+  if (is.null(group1_matrix) || is.null(group2_matrix) ||
+      is.null(group1_boot_array) || is.null(group2_boot_array)) return(list())
+  if (is.null(dim(group1_boot_array)) || is.null(dim(group2_boot_array)) ||
+      length(dim(group1_boot_array)) < 3L || length(dim(group2_boot_array)) < 3L) return(list())
+
+  m1 <- as.matrix(group1_matrix)
+  m2 <- as.matrix(group2_matrix)
+  if (nrow(m1) != nrow(m2) || ncol(m1) != ncol(m2)) return(list())
+  if (nrow(m1) != dim(group1_boot_array)[1] || ncol(m1) != dim(group1_boot_array)[2]) return(list())
+  if (nrow(m2) != dim(group2_boot_array)[1] || ncol(m2) != dim(group2_boot_array)[2]) return(list())
+
+  sources <- rownames(m1)
+  targets <- colnames(m1)
+  if (is.null(sources)) sources <- as.character(seq_len(nrow(m1)))
+  if (is.null(targets)) targets <- as.character(seq_len(ncol(m1)))
+
+  entries <- list()
+  for (i in seq_len(nrow(m1))) {
+    for (j in seq_len(ncol(m1))) {
+      estimate_a <- mga_number(m1[i, j])
+      estimate_b <- mga_number(m2[i, j])
+      boot_a <- group1_boot_array[i, j, ]
+      boot_b <- group2_boot_array[i, j, ]
+      boot_a_numeric <- suppressWarnings(as.numeric(boot_a))
+      boot_b_numeric <- suppressWarnings(as.numeric(boot_b))
+      include_entry <- (!is.null(estimate_a) && estimate_a != 0) ||
+        (!is.null(estimate_b) && estimate_b != 0) ||
+        any(is.finite(boot_a_numeric) & boot_a_numeric != 0, na.rm = TRUE) ||
+        any(is.finite(boot_b_numeric) & boot_b_numeric != 0, na.rm = TRUE)
+      if (!include_entry) next
+      entries[[length(entries) + 1L]] <- list(
+        identity = list(
+          source = as.character(sources[[i]] %||% ""),
+          target = as.character(targets[[j]] %||% ""),
+          path = sprintf("%s -> %s", sources[[i]], targets[[j]])
+        ),
+        estimate_a = estimate_a,
+        estimate_b = estimate_b,
+        boot_a = boot_a,
+        boot_b = boot_b
+      )
+    }
+  }
+  entries
+}
+
+mga_boot_total_indirect_array <- function(boot_model) {
+  if (is.null(boot_model$boot_total_paths) || is.null(boot_model$boot_paths)) return(NULL)
+  if (is.null(dim(boot_model$boot_total_paths)) || is.null(dim(boot_model$boot_paths))) return(NULL)
+  if (!identical(dim(boot_model$boot_total_paths), dim(boot_model$boot_paths))) return(NULL)
+  boot_model$boot_total_paths - boot_model$boot_paths
+}
+
+mga_specific_indirect_chains <- function(payload) {
+  edges <- lapply(payload$paths, function(p) {
+    list(from = as.character(p$from), to = as.character(p$to))
+  })
+  nodes <- unique(unlist(lapply(edges, function(e) c(e$from, e$to)), use.names = FALSE))
+  nodes <- nodes[!is.na(nodes) & nzchar(nodes)]
+  from_map <- lapply(nodes, function(node) {
+    tos <- unique(unlist(lapply(edges, function(e) if (identical(e$from, node)) e$to else NULL), use.names = FALSE))
+    tos[!is.na(tos) & nzchar(tos)]
+  })
+  names(from_map) <- nodes
+
+  chains <- list()
+  for (x in nodes) {
+    mids <- from_map[[x]]
+    if (!length(mids)) next
+    for (m in mids) {
+      ys <- from_map[[m]]
+      if (!length(ys)) next
+      for (y in ys) {
+        if (x == y) next
+        chains[[length(chains) + 1L]] <- c(x, m, y)
+      }
+    }
+  }
+  chains
+}
+
+mga_path_product <- function(path_coef, path_nodes) {
+  if (is.null(path_coef) || length(path_nodes) < 2L) return(NA_real_)
+  product <- 1
+  for (idx in seq_len(length(path_nodes) - 1L)) {
+    from_node <- path_nodes[[idx]]
+    to_node <- path_nodes[[idx + 1L]]
+    if (!from_node %in% rownames(path_coef) || !to_node %in% colnames(path_coef)) return(NA_real_)
+    product <- product * suppressWarnings(as.numeric(path_coef[from_node, to_node]))
+  }
+  product
+}
+
+mga_specific_boot_values <- function(boot_model, path_nodes) {
+  if (is.null(boot_model$boot_paths) || is.null(dim(boot_model$boot_paths)) ||
+      length(dim(boot_model$boot_paths)) < 3L || length(path_nodes) < 2L) return(numeric(0))
+
+  vapply(seq_len(dim(boot_model$boot_paths)[3]), function(k) {
+    product <- 1
+    for (idx in seq_len(length(path_nodes) - 1L)) {
+      from_node <- path_nodes[[idx]]
+      to_node <- path_nodes[[idx + 1L]]
+      if (!from_node %in% rownames(boot_model$boot_paths) || !to_node %in% colnames(boot_model$boot_paths)) {
+        return(NA_real_)
+      }
+      product <- product * suppressWarnings(as.numeric(boot_model$boot_paths[from_node, to_node, k]))
+    }
+    product
+  }, numeric(1))
+}
+
+mga_specific_indirect_entries <- function(payload, group1_model, group2_model, group1_boot, group2_boot) {
+  chains <- mga_specific_indirect_chains(payload)
+  if (!length(chains)) return(list())
+
+  entries <- list()
+  for (path_nodes in chains) {
+    estimate_a <- mga_path_product(group1_model$path_coef, path_nodes)
+    estimate_b <- mga_path_product(group2_model$path_coef, path_nodes)
+    boot_a <- mga_specific_boot_values(group1_boot, path_nodes)
+    boot_b <- mga_specific_boot_values(group2_boot, path_nodes)
+    include_entry <- is.finite(estimate_a) || is.finite(estimate_b) ||
+      any(is.finite(boot_a), na.rm = TRUE) || any(is.finite(boot_b), na.rm = TRUE)
+    if (!include_entry) next
+
+    entries[[length(entries) + 1L]] <- list(
+      identity = list(
+        source = path_nodes[[1]],
+        mediator = path_nodes[[2]],
+        target = path_nodes[[3]],
+        path = paste(path_nodes, collapse = " -> ")
+      ),
+      estimate_a = estimate_a,
+      estimate_b = estimate_b,
+      boot_a = boot_a,
+      boot_b = boot_b
+    )
+  }
+  entries
+}
+
+mga_group_bootstrap_sections <- function(payload, group_data, group_model, group_boot) {
+  alpha <- payload$alpha
+  algorithm <- if (!is.null(payload$algorithm)) tolower(as.character(payload$algorithm)) else "standard"
+  if (!(algorithm %in% c("standard", "consistent"))) algorithm <- "standard"
+  algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
+  confidence_level <- sprintf("%g%%", (1 - alpha) * 100)
+  group_core <- list(model = group_model, summary = summary(group_model))
+  boot_summary <- summary(group_boot, alpha = alpha)
+
+  boot_summary$bootstrapped_paths <- add_bias_corrected_intervals(
+    boot_summary$bootstrapped_paths,
+    group_boot$path_coef,
+    group_boot$boot_paths,
+    alpha = alpha
+  )
+  boot_summary$bootstrapped_loadings <- add_bias_corrected_intervals(
+    boot_summary$bootstrapped_loadings,
+    group_boot$outer_loadings,
+    group_boot$boot_loadings,
+    alpha = alpha
+  )
+  boot_summary$bootstrapped_weights <- add_bias_corrected_intervals(
+    boot_summary$bootstrapped_weights,
+    group_boot$outer_weights,
+    group_boot$boot_weights,
+    alpha = alpha
+  )
+  boot_summary$bootstrapped_total_paths <- add_bias_corrected_intervals(
+    boot_summary$bootstrapped_total_paths,
+    seminr:::total_effects(group_boot$path_coef),
+    group_boot$boot_total_paths,
+    alpha = alpha
+  )
+
+  group_response <- assemble_bootstrap_response(
+    payload,
+    group_data,
+    group_core,
+    group_boot,
+    boot_summary,
+    payload$nboot,
+    confidence_level,
+    algorithm,
+    algorithm_label,
+    alpha = alpha
+  )
+  group_response$results %||% group_response
+}
+
+run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
+  pls_data <- pls_model$rawdata
+  group1_data <- pls_data[condition, , drop = FALSE]
+  group2_data <- pls_data[!condition, , drop = FALSE]
+  group1_n <- nrow(group1_data)
+  group2_n <- nrow(group2_data)
+  nboot <- payload$nboot
+
+  message("Estimating and bootstrapping selected MGA groups...")
+  group1_model <- seminr:::rerun(pls_model, data = group1_data)
+  group2_model <- seminr:::rerun(pls_model, data = group2_data)
+  group1_boot <- seminr::bootstrap_model(seminr_model = group1_model, nboot = nboot, ...)
+  group2_boot <- seminr::bootstrap_model(seminr_model = group2_model, nboot = nboot, ...)
+
+  path_entries <- mga_path_entries(pls_model, group1_model, group2_model, group1_boot, group2_boot)
+  specific_indirect_entries <- mga_specific_indirect_entries(payload, group1_model, group2_model, group1_boot, group2_boot)
+  group1_total_indirect <- seminr:::total_indirect_effects(group1_model$path_coef)
+  group2_total_indirect <- seminr:::total_indirect_effects(group2_model$path_coef)
+  group1_boot_total_indirect <- mga_boot_total_indirect_array(group1_boot)
+  group2_boot_total_indirect <- mga_boot_total_indirect_array(group2_boot)
+  total_indirect_entries <- mga_effect_matrix_entries(
+    group1_total_indirect,
+    group2_total_indirect,
+    group1_boot_total_indirect,
+    group2_boot_total_indirect
+  )
+  total_effect_entries <- mga_effect_matrix_entries(
+    seminr:::total_effects(group1_model$path_coef),
+    seminr:::total_effects(group2_model$path_coef),
+    group1_boot$boot_total_paths,
+    group2_boot$boot_total_paths
+  )
+  loading_entries <- mga_measurement_entries(
+    group1_model$outer_loadings,
+    group2_model$outer_loadings,
+    group1_boot$boot_loadings,
+    group2_boot$boot_loadings
+  )
+  weight_entries <- mga_measurement_entries(
+    group1_model$outer_weights,
+    group2_model$outer_weights,
+    group1_boot$boot_weights,
+    group2_boot$boot_weights
+  )
+
+  list(
+    groupSpecific = list(
+      groupA = mga_group_bootstrap_sections(payload, group1_data, group1_model, group1_boot),
+      groupB = mga_group_bootstrap_sections(payload, group2_data, group2_model, group2_boot)
+    ),
+    pathCoefficients = mga_compare_entries(path_entries, payload, "groupA_beta", "groupB_beta", group1_n, group2_n),
+    specificIndirectEffects = mga_compare_entries(specific_indirect_entries, payload, "groupA_beta", "groupB_beta", group1_n, group2_n),
+    totalIndirectEffects = mga_compare_entries(total_indirect_entries, payload, "groupA_beta", "groupB_beta", group1_n, group2_n),
+    totalEffects = mga_compare_entries(total_effect_entries, payload, "groupA_beta", "groupB_beta", group1_n, group2_n),
+    outerLoadings = mga_compare_entries(loading_entries, payload, "groupA_loading", "groupB_loading", group1_n, group2_n),
+    outerWeights = mga_compare_entries(weight_entries, payload, "groupA_weight", "groupB_weight", group1_n, group2_n)
+  )
+}
+
+map_mga_path_rows <- function(payload, mga_result) {
+  rows <- as_rows(mga_result %||% list())
+  lapply(rows, function(row) {
+    source <- as.character(row$source %||% "")
+    target <- as.character(row$target %||% "")
+    path_label <- as.character(row$row_name %||% if (nzchar(source) && nzchar(target)) sprintf("%s -> %s", source, target) else "")
+    diff <- mga_number(row$diff)
+    p_value <- mga_number(row$pls_mga_p)
+    p_value_inverse <- if (!is.null(p_value)) 1 - p_value else NULL
+    significant <- !is.null(p_value) && (
+      p_value <= payload$alpha ||
+      (!is.null(p_value_inverse) && p_value_inverse <= payload$alpha)
+    )
+    direction <- NULL
+    if (!is.null(diff) && nzchar(payload$groupA) && nzchar(payload$groupB)) {
+      direction <- if (diff >= 0) {
+        sprintf("%s > %s", payload$groupA, payload$groupB)
+      } else {
+        sprintf("%s > %s", payload$groupB, payload$groupA)
+      }
+    }
+
+    list(
+      source = source,
+      target = target,
+      path = path_label,
+      estimate = mga_number(row$estimate),
+      groupA_beta = mga_number(row$group1_beta),
+      groupB_beta = mga_number(row$group2_beta),
+      diff = diff,
+      groupA_beta_mean = mga_number(row$group1_beta_mean),
+      groupB_beta_mean = mga_number(row$group2_beta_mean),
+      pls_mga_p = p_value,
+      p_value = p_value,
+      p_value_inverse = p_value_inverse,
+      significant = significant,
+      direction = direction,
+      decision = if (significant) "significant" else "not significant"
+    )
+  })
+}
+
+map_mga_response <- function(payload, data, mga_result, timings = NULL) {
+  path_rows <- mga_result$pathCoefficients$henselerPlsMga %||% map_mga_path_rows(payload, mga_result)
+  significant_rows <- Filter(function(row) isTRUE(row$significant), path_rows)
+  execution_log <- list(list(message = sprintf(
+    "MGA ran for %s = %s vs %s with %s bootstrap subsamples, alpha %s, and seed %s.",
+    payload$groupingVariable,
+    payload$groupA,
+    payload$groupB,
+    payload$nboot,
+    payload$alpha,
+    payload$seed
+  )))
+
+  json_unbox_tree(list(
+    method = "MGA",
+    groupSpecific = mga_result$groupSpecific %||% list(groupA = list(), groupB = list()),
+    bootstrapMGA = list(
+      pathCoefficients = list(
+        biasCorrectedConfidenceIntervals = mga_result$pathCoefficients$biasCorrectedConfidenceIntervals %||% list(),
+        henselerPlsMga = mga_result$pathCoefficients$henselerPlsMga %||% list(),
+        parametricTest = mga_result$pathCoefficients$parametricTest %||% list()
+      ),
+      specificIndirectEffects = list(
+        biasCorrectedConfidenceIntervals = mga_result$specificIndirectEffects$biasCorrectedConfidenceIntervals %||% list(),
+        henselerPlsMga = mga_result$specificIndirectEffects$henselerPlsMga %||% list(),
+        parametricTest = mga_result$specificIndirectEffects$parametricTest %||% list()
+      ),
+      totalIndirectEffects = list(
+        biasCorrectedConfidenceIntervals = mga_result$totalIndirectEffects$biasCorrectedConfidenceIntervals %||% list(),
+        henselerPlsMga = mga_result$totalIndirectEffects$henselerPlsMga %||% list(),
+        parametricTest = mga_result$totalIndirectEffects$parametricTest %||% list()
+      ),
+      totalEffects = list(
+        biasCorrectedConfidenceIntervals = mga_result$totalEffects$biasCorrectedConfidenceIntervals %||% list(),
+        henselerPlsMga = mga_result$totalEffects$henselerPlsMga %||% list(),
+        parametricTest = mga_result$totalEffects$parametricTest %||% list()
+      ),
+      outerLoadings = list(
+        biasCorrectedConfidenceIntervals = mga_result$outerLoadings$biasCorrectedConfidenceIntervals %||% list(),
+        henselerPlsMga = mga_result$outerLoadings$henselerPlsMga %||% list(),
+        parametricTest = mga_result$outerLoadings$parametricTest %||% list()
+      ),
+      outerWeights = list(
+        biasCorrectedConfidenceIntervals = mga_result$outerWeights$biasCorrectedConfidenceIntervals %||% list(),
+        henselerPlsMga = mga_result$outerWeights$henselerPlsMga %||% list(),
+        parametricTest = mga_result$outerWeights$parametricTest %||% list()
+      )
+    ),
+    pathCoefficients = path_rows,
+    significantDifferences = significant_rows,
+    groups = list(
+      groupingVariable = payload$groupingVariable,
+      groupA = payload$groupA,
+      groupB = payload$groupB,
+      leftValue = payload$groupA,
+      rightValue = payload$groupB,
+      counts = list(
+        groupA = micom_group_count(data, payload$groupingVariable, payload$groupA),
+        groupB = micom_group_count(data, payload$groupingVariable, payload$groupB)
+      )
+    ),
+    settings = list(
+      nboot = payload$nboot,
+      alpha = payload$alpha,
+      seed = payload$seed
+    ),
+    execution_log = execution_log,
+    algorithm = list(
+      settings = list(
+        method = "MGA",
+        mode = "mga",
+        group_var = payload$groupingVariable,
+        group_a = payload$groupA,
+        group_b = payload$groupB,
+        nboot = payload$nboot,
+        alpha = payload$alpha,
+        seed = payload$seed
+      ),
+      execution_log = execution_log
+    ),
+    meta = list(
+      mode = "mga",
+      engine = "seminr::bootstrap_model PLS-MGA",
+      rows = nrow(data),
+      columns = ncol(data),
+      analysis_settings = list(
+        mga = list(
+          groupingVariable = payload$groupingVariable,
+          groupA = payload$groupA,
+          groupB = payload$groupB,
+          nboot = payload$nboot,
+          alpha = payload$alpha,
+          seed = payload$seed
+        )
+      )
+    )
+  ))
+}
+
 pr$handle("POST", "/run-pls", function(req, res) {
   res$setHeader("Content-Type", "application/json")
 
@@ -4202,6 +5208,142 @@ pr$handle("POST", "/run-advanced-analysis", function(req, res) {
   }, error = function(err) {
     res$status <- 500
     analysis_error_response(err, "Advanced analysis", advanced_analysis_timeout_seconds)
+  })
+})
+
+pr$handle("POST", "/run-permutation-configural-precheck", function(req, res) {
+  res$setHeader("Content-Type", "application/json")
+
+  tryCatch({
+    with_analysis_timeout_for({
+      timings <- new_timing_collector("permutation configural precheck")
+      ensure_micom_loaded()
+      prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
+      payload <- prepared$payload
+      data <- prepared$data
+      core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
+
+      step1_result <- time_phase(timings, "metis_micom_step1", metis_micom_step1(
+        model = core$model,
+        data = data,
+        group_var = payload$groupingVariable,
+        group_a = payload$groupA,
+        group_b = payload$groupB
+      ))
+
+      response <- time_phase(timings, "assemble MICOM configural precheck response", list(
+        success = TRUE,
+        results = map_micom_step1_response(payload, data, step1_result, timings = timings)
+      ))
+      json_unbox_tree(attach_timing_metadata(response, timings))
+    }, analysis_timeout_seconds)
+  }, error = function(err) {
+    res$status <- 500
+    analysis_error_response(err, "Permutation configural precheck", analysis_timeout_seconds)
+  })
+})
+
+pr$handle("POST", "/run-permutation-analysis", function(req, res) {
+  res$setHeader("Content-Type", "application/json")
+
+  tryCatch({
+    with_analysis_timeout_for({
+      timings <- new_timing_collector("permutation")
+      ensure_micom_loaded()
+      prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
+      payload <- prepared$payload
+      data <- prepared$data
+      core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
+      core_plan <- analysis_core_plan()
+      cores <- core_plan$cores
+
+      micom_result <- time_phase(timings, "metis_micom", metis_micom(
+        model = core$model,
+        data = data,
+        group_var = payload$groupingVariable,
+        group_a = payload$groupA,
+        group_b = payload$groupB,
+        permutations = payload$permutations,
+        alpha = payload$alpha,
+        seed = payload$seed,
+        quick = FALSE,
+        cores = cores
+      ), details = list(
+        permutations = payload$permutations,
+        cores = cores,
+        detected_cores = core_plan$detected_cores,
+        reserved_cores = core_plan$reserved_cores,
+        core_policy = core_plan$policy
+      ))
+
+      response <- time_phase(timings, "assemble MICOM response", list(
+        success = TRUE,
+        results = map_micom_response(payload, data, micom_result, timings = timings)
+      ))
+      json_unbox_tree(attach_timing_metadata(response, timings))
+    }, permutation_analysis_timeout_seconds)
+  }, error = function(err) {
+    res$status <- 500
+    analysis_error_response(err, "Permutation analysis", permutation_analysis_timeout_seconds)
+  })
+})
+
+pr$handle("POST", "/run-multi-group-analysis", function(req, res) {
+  res$setHeader("Content-Type", "application/json")
+
+  tryCatch({
+    with_analysis_timeout_for({
+      timings <- new_timing_collector("mga")
+      prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
+      payload <- prepared$payload
+      data <- prepared$data
+      mga_data <- time_phase(timings, "filter selected MGA groups", selected_group_rows(
+        data,
+        payload$groupingVariable,
+        payload$groupA,
+        payload$groupB
+      ))
+      if (!nrow(mga_data)) {
+        stop("Multi-group analysis found no rows for the selected groups.")
+      }
+      if (micom_group_count(mga_data, payload$groupingVariable, payload$groupA) < 2L ||
+          micom_group_count(mga_data, payload$groupingVariable, payload$groupB) < 2L) {
+        stop("Multi-group analysis requires at least two observations in each selected group.")
+      }
+
+      mga_core <- time_phase(timings, "estimate selected-group pls model", run_pls_core(payload, mga_data))
+      mga_condition <- mga_group_condition(mga_data, payload$groupingVariable, payload$groupA)
+      core_plan <- analysis_core_plan()
+      cores <- core_plan$cores
+      set.seed(payload$seed)
+
+      mga_result <- time_phase(
+        timings,
+        "seminr bootstrap MGA tables",
+        run_mga_bootstrap_tables(
+          pls_model = mga_core$model,
+          condition = mga_condition,
+          payload = payload,
+          cores = cores
+        ),
+        details = list(
+          nboot = payload$nboot,
+          cores = cores,
+          detected_cores = core_plan$detected_cores,
+          reserved_cores = core_plan$reserved_cores,
+          core_policy = core_plan$policy
+        )
+      )
+
+      response <- time_phase(timings, "assemble MGA response", list(
+        success = TRUE,
+        results = map_mga_response(payload, mga_data, mga_result, timings = timings)
+      ))
+      json_unbox_tree(attach_timing_metadata(response, timings))
+    }, multi_group_analysis_timeout_seconds)
+  }, error = function(err) {
+    res$status <- 500
+    analysis_error_response(err, "Multi-group analysis", multi_group_analysis_timeout_seconds)
   })
 })
 

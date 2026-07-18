@@ -28,6 +28,15 @@ assert.match(
   /background:\s*rgb\(var\(--color-hover-rgb\) \/ 0\.64\)/,
   'Dropdown child menu row hover should use the theme hover surface.'
 )
+const titlebarHoverBlock = css.match(
+  /\.titlebar-menu-row:not\(\.titlebar-menu-row-disabled\):hover,\s*\n\.titlebar-menu-row:not\(\.titlebar-menu-row-disabled\):focus-visible\s*\{[\s\S]*?\n\}/,
+)?.[0] ?? ''
+assert.ok(titlebarHoverBlock, 'Dropdown child menu row hover/focus block should exist.')
+assert.doesNotMatch(
+  titlebarHoverBlock,
+  /box-shadow:/,
+  'Dropdown child menu row hover/focus should not draw an inset button border.'
+)
 assert.match(
   titleBar,
   /const menuItemColor = 'var\(--color-title-menu-text\)'/,

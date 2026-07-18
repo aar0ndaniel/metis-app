@@ -4,6 +4,44 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-07-16 — MICOM / permutation analysis UI/backend progress and remaining work
+
+- `2026-07-16` — Current goal memory update requested by user: MICOM/permutation analysis is not being treated as complete until the real app-level flow is proved. Completed work includes the title-bar/menu labels, `NCA and IPMA` as one entry, `Permutation Analysis (MICOM)` with the `Beta` pill, `Multi Group Analysis (MGA)`, the approved PLS-SEM-sized permutation modal styling, app-coded grouping dropdowns, left/right group mapping and swap behavior, live configural-precheck plumbing, MICOM Plumber routes backed by `C:\Users\aaron\dev\micom.R`, and the first ResultsView panels for permutation output. Remaining work is to finish/prove a user-level Electron flow from an actual active workspace/model through opening the modal, selecting a grouping variable, calculating, saving the permutation result, and navigating to the ResultsView; if that flow exposes any UI/runtime issue, fix it before marking the goal done.
+- `2026-07-16` — User goal: add MICOM support in Metis through the analysis title-bar/menu flow and a permutation-analysis modal that visually matches the supplied reference image while using Metis app color tokens for light/dark themes. The active accent token replaces the mockup magenta.
+- `2026-07-16` — Title-bar analysis direction captured: `NCA and IPMA` should be one analysis entry, not separate children; `Permutation Analysis` should show `(MICOM)` and a `Beta` pill; `Multi Group Analysis` should show `(MGA)`.
+- `2026-07-16` — Completed UI work so far: added the `PermutationAnalysisModal` shell with the approved PLS-SEM-modal-sized width/height, compact title row with the same title icon style, app-coded grouping-variable dropdown instead of a native select, no repeated model-name row, left/right group comparison band, swap control, configural invariance panel, and a footer calculate action using app tokens.
+- `2026-07-16` — Modal refinements completed from user feedback: all modal text uses regular font weight, title and Beta pill sizes were reduced, Group A aligns left and Group B aligns right, the grouping dropdown caret has compact right padding, the configural invariance section border was restored, the group comparison band has a subtle token background without an outer border, the body only scrolls when configural invariance is expanded, and the `Permutations`, `Alpha`, and `Seed` inputs are on one row with extra vertical spacing above them.
+- `2026-07-16` — Current frontend data contract: the modal computes usable non-missing grouping values from active dataset rows, requires exactly two usable groups before calculation can proceed, uses the displayed left group as `groupA` and right group as `groupB`, and sends `groupingVariable`, `groupA`, `groupB`, `permutations`, `alpha`, and `seed` through the modal `onRun` settings object.
+- `2026-07-16` — Verification passed for the latest modal UI changes: `node tests\permutationAnalysisModalStatic.test.mjs` and `npm run typecheck`.
+- `2026-07-16` — Backend/plumbing work completed after the UI pass: added a focused `tests\permutationAnalysisPlumberContract.test.mjs` contract test, wired `ModelCanvas` modal `onRun` into the active model analysis payload, added the typed frontend service/preload/Vite bridge, added Electron IPC for `/run-permutation-analysis`, and extended calculation state/chip/cancel-dialog handling for `permutation`.
+- `2026-07-16` — Plumber/R bridge completed for the first calculation slice: Electron resolves the dev `C:\Users\aaron\dev\micom.R` path through `METIS_MICOM_R_PATH`; `r-api\plumber.R` sources the real MICOM script instead of reimplementing MICOM statistics, validates the request, calls `metis_micom(..., group_a = payload$groupA, group_b = payload$groupB, quick = FALSE)`, and maps `step1`, `step2`, `step3`, `admissibility`, group counts, warnings, execution logs, and per-construct invariance classification into the app response.
+- `2026-07-16` — Group-label rule preserved: the UI displays the actual two unique grouping-variable values; internally the left displayed value is sent as `groupA`/`group_a`, the right displayed value is sent as `groupB`/`group_b`, and swap only changes display order plus comparison direction.
+- `2026-07-16` — Verification passed for the backend/plumbing slice: `node tests\permutationAnalysisPlumberContract.test.mjs`, `node tests\permutationAnalysisModalStatic.test.mjs`, `npm run typecheck`, `node tests\rApiBootstrapStatic.test.mjs`, `node tests\analysisPerformanceStatic.test.mjs`, and `node tests\electronPlumberStatic.test.mjs`.
+- `2026-07-16` — Live configural-precheck work completed: added `runPermutationConfiguralPrecheck`, secure preload/Vite typing, Electron IPC, and a Plumber `/run-permutation-configural-precheck` route that calls `metis_micom_step1(...)` with explicit `group_a`/`group_b`. `ModelCanvas` now passes a dynamic precheck status into the modal instead of hard-coding `pending`, and stale precheck responses are ignored when users quickly switch or swap groups.
+- `2026-07-16` — Results support completed for the first MICOM view pass: added `permutation` as a first-class results mode with Overview, Configural invariance, Compositional invariance, Equality of means, Equality of variances, Invariance classification, and Execution log panels. The Overview panel shows the actual unique grouping values and counts while preserving the internal `groupA`/`groupB` mapping.
+- `2026-07-16` — ResultsView-owned modal path completed: the Analysis menu can open the permutation modal from ResultsView with the same live configural precheck, explicit left/right `groupA`/`groupB` values, calculating modal flow, saved result persistence, and ResultsView `overview` selection used by the ModelCanvas flow.
+- `2026-07-16` — Verification passed after the live precheck/results slice: `node tests\permutationAnalysisPlumberContract.test.mjs`, `node tests\permutationAnalysisResultsContract.test.mjs`, `node tests\permutationAnalysisModalStatic.test.mjs`, `npm run typecheck`, `node tests\rApiBootstrapStatic.test.mjs`, `node tests\electronPlumberStatic.test.mjs`, `node tests\analysisPerformanceStatic.test.mjs`, `node tests\titleBarAnalysisMenu.test.mjs`, `node tests\titleBarMenuChrome.test.mjs`, `node tests\calculatingModalPlanStatic.test.mjs`, and an R portable smoke check that parses `r-api\plumber.R` and sources `C:\Users\aaron\dev\micom.R`.
+- `2026-07-16` — Current MICOM goal checkpoint: the requested menu labels, modal visual refinements, app-coded dropdowns, live configural precheck, backend MICOM route plumbing, and permutation ResultsView panels have been implemented and statically verified.
+- `2026-07-16` — Runtime Plumber smoke completed: started bundled local Plumber with `METIS_MICOM_R_PATH=C:\Users\aaron\dev\micom.R`, posted a two-group `Gender` dataset to `/run-permutation-configural-precheck`, verified `Male` left maps to `group_a` and `Female` right maps to `group_b`, swapped the values and verified `Female` maps to `group_a` while `Male` maps to `group_b`, then ran `/run-permutation-analysis` and confirmed the final response preserved the left/right group mapping, counts, settings, configural pass state, and MICOM result panels.
+- `2026-07-16` — Runtime bug fixed during smoke: Plumber was serializing MICOM scalar fields such as `success` and `configuralInvariance.passed` as single-item JSON arrays. Added `json_unbox_tree()` and wrapped only the MICOM route responses after timing metadata attachment so the renderer receives JSON scalars while existing non-MICOM route shapes remain untouched. `tests\permutationAnalysisPlumberContract.test.mjs` now locks this scalar response contract.
+- `2026-07-16` — Verification after runtime fix: `node tests\permutationAnalysisPlumberContract.test.mjs`, `node tests\permutationAnalysisResultsContract.test.mjs`, `node tests\permutationAnalysisModalStatic.test.mjs`, `node tests\titleBarAnalysisMenu.test.mjs`, `node tests\titleBarMenuChrome.test.mjs`, `node tests\calculatingModalPlanStatic.test.mjs`, `node tests\rApiBootstrapStatic.test.mjs`, `node tests\electronPlumberStatic.test.mjs`, `npm run typecheck`, R portable parse/source smoke, `git diff --check`, and the live Plumber MICOM route smoke all passed.
+- `2026-07-16` — Full static sweep update: the unrelated stale `tests\singularMatrixErrorStatic.test.mjs` assertion was updated to match the shared `src\utils\userFriendlyErrors.ts` formatter, and the full 78-file Node static test sweep now passes with `Get-ChildItem -LiteralPath tests -Filter *.test.mjs | ForEach-Object { node $_.FullName; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }`.
+- `2026-07-16` — Remaining MICOM goal work to fix/verify: run one user-level app/Electron flow against an actual active workspace/model if a suitable workspace is available, confirming the visual modal interaction, Calculate enablement, saved result creation, and ResultsView navigation together. The backend route itself has already been live-smoked successfully, and the static/test-maintenance items currently known for the MICOM slice are cleared.
+- `2026-07-16` — Final MICOM app-flow proof completed: rebuilt the renderer/Electron artifacts from current source, launched an isolated Electron app with a temporary `.metisws` workspace/model and `C:\Users\aaron\dev\micom.R`, opened `Analysis` -> `Permutation Analysis (MICOM)`, selected the `Gender` grouping variable, swapped the visible values so `Female` was left/`groupA` and `Male` was right/`groupB`, ran a 25-permutation MICOM calculation, saved the result under the active model, and landed in ResultsView. Proof output confirmed `mode: "permutation"`, saved settings `{ groupingVariable: "Gender", groupA: "Female", groupB: "Male", permutations: 25, alpha: 0.05, seed: 123 }`, and rendered results showing `Female vs Male`.
+- `2026-07-16` — Runtime issues fixed during final proof: `src\utils\datasetLoading.ts` now treats relative dataset paths inside `.metisws`/`.ada` workspaces as archive paths that require extraction instead of trying to read the relative filename directly; `src\pages\ModelCanvas.tsx` now hydrates the linked dataset snapshot when headers exist but cached rows are missing so MICOM can compute unique group values without requiring a prior DataView visit; `electron\main.ts` now has an env-gated `METIS_DISABLE_HARDWARE_ACCELERATION=1` startup path for GPU-hostile verification/support environments, leaving normal app launches unchanged.
+- `2026-07-16` — Final verification passed for the MICOM goal: focused tests `node tests\datasetLoading.test.mjs`, `node tests\permutationAnalysisModalStatic.test.mjs`, `node tests\permutationAnalysisPlumberContract.test.mjs`, `node tests\permutationAnalysisResultsContract.test.mjs`, and `node tests\crossPlatformRuntimeStatic.test.mjs`; `npm run typecheck`; rebuilt artifacts with `npx vite build`; full 78-file static sweep using a temporary Node runner; `git diff --check` with only LF/CRLF warnings; and the successful Electron/R MICOM flow proof above. No known MICOM goal work remains.
+
+## 2026-07-14 — Construct label fitting, app chrome polish, results t-values, and bundle runtime readiness
+
+- `2026-07-14` — User clarified to ignore the decimal-rounding comparison and focus on the remaining app goals. Decimal rounding was deliberately left unchanged in this pass.
+- `2026-07-14` — Updated construct-name rendering so labels wrap only at whitespace or after a literal hyphen and never insert hyphenation or split words mid-word. The earlier realtime calculation R² branch in `ModelCanvas.tsx` no longer falls back to single-line overflow; it reserves vertical room for the R² line and uses the same responsive `<tspan>` layout as normal construct labels. `PathDiagram.tsx` uses the same fitting behavior for result diagrams. A final reviewer pass found the old last-resort min-font `force` fallback could still overflow, so that fallback was removed; impossible-to-wrap names now keep shrinking as a single line rather than splitting words or overflowing the construct.
+- `2026-07-14` — Removed likely sources of the unwanted whole-app black border: document/root backgrounds now use `var(--color-page)`, the titlebar divider was removed, dropdown hover states no longer draw inset button borders, and tests now assert `.metis-app-shell` has no outer border, outline, or shadow.
+- `2026-07-14` — Fixed stale workspace/model context during Save & Exit / Save & Close. `ModelCanvas.tsx` now resolves the save target from the current route model id and owning workspace before persisting, and `App.tsx` preserves the active/owning workspace when workspace data is refreshed instead of blindly selecting the first workspace.
+- `2026-07-14` — Improved missing-dataset and nested backend error formatting so object-shaped backend errors no longer surface as `[object Object]`; nested message/user-action fields are unwrapped into user-friendly guidance.
+- `2026-07-14` — Added graphical-output measurement-model t-value options in `ResultsView.tsx`: `Outer loading t-values`, `Outer weight t-values`, and `Outer weights / loadings t-values`. Diagram measurement results now carry `loadingT` and `weightT`, and `PathDiagram.tsx` selects the appropriate t-value field for reflective/formative mixed mode.
+- `2026-07-14` — Hardened Bundle runtime readiness for installed apps. `electron/main.ts` now treats an extracted bundled R runtime as not ready if required packages such as `seminrExtras` are missing, reports missing packages in runtime diagnostics, and refreshes a stale extracted runtime instead of skipping extraction merely because `Rscript` exists. This addresses the case where a previous installed cache could lack NCA/advanced-analysis support even though the newer bundle archive contains `seminrExtras`.
+- `2026-07-14` — Verification passed: `node tests\constructLabelFitStatic.test.mjs`, `node tests\modelCanvasUiLayout.test.mjs`, `node tests\modelCanvasSaveExitStatic.test.mjs`, `node tests\titleBarWorkspaceHomeTargetStatic.test.mjs`, `node tests\workspaceActiveImportTargetStatic.test.mjs`, `node tests\userFriendlyErrors.test.mjs`, `node tests\calculatingModalPlanStatic.test.mjs`, `node tests\resultsMeasurementTValuesStatic.test.mjs`, `node tests\resultsViewWorkspaceShell.test.mjs`, `node tests\lightThemeStatic.test.mjs`, `node tests\titleBarMenuChrome.test.mjs`, `node tests\crossPlatformRuntimeStatic.test.mjs`, `node tests\rPortableBundle.test.mjs`, `node tests\preferencesAccentStatic.test.mjs`, `node tests\moderationResultsStatic.test.mjs`, `node tests\productionReleaseStatic.test.mjs`, `node tests\significanceColoring.test.mjs`, `node tests\macTitleBarNativeMenuStatic.test.mjs`, `node tests\installerSetupTheme.test.mjs`, `npm run typecheck`, and `git diff --check` with only LF-to-CRLF warnings.
+
 ## 2026-07-04 — Responsive construct label (wrap + auto-shrink to fill shape)
 
 - `2026-07-04` — Problem: construct labels in `src/pages/ModelCanvas.tsx` were rendered as a single-line SVG `<text>`, so long names overflowed the circle/oval/rectangle boundary.
@@ -1241,3 +1279,75 @@ The electron code in `electron/main.ts` is **already correctly structured** with
 5. Right-click the connector and change it to `Right-Angle`.
 6. Drag the joint handles to route the path around other constructs.
 7. Open or refresh the corresponding diagram view and verify the same connector geometry is preserved there.
+
+## 2026-07-17 — Parallel MICOM permutations and packaged MICOM script
+
+### User Request
+- Make MICOM permutation analysis run in parallel so it does not take as long.
+- Keep the implementation safe for both Windows and macOS.
+- Record all changes in project memory.
+
+### Root Cause
+- `r-api/plumber.R` already had `analysis_core_plan()` and used bounded cores for bootstrap/MGA, but the `/run-permutation-analysis` route called `metis_micom(...)` without passing cores.
+- The active MICOM script used serial `for (i in seq_len(permutations))` loops in both Step 2 and Step 3.
+- `micom.R` was only resolved from the loose dev-folder fallback during development; it was not packaged in `resources/r-api`, so packaged Windows/macOS builds could miss the MICOM implementation.
+
+### Completed Changes
+- Added `r-api/micom.R` as the packaged MICOM backend script.
+- Added a `cores` argument to `metis_micom()`, `metis_micom_step2()`, and `metis_micom_step3()`.
+- Added `.metis_validate_cores()`, `.metis_micom_worker_exports()`, and `.metis_micom_parallel_lapply()`.
+- Implemented MICOM permutation parallelism with `parallel::makeCluster(..., type = "PSOCK")`, `parallel::clusterCall()`, `parallel::clusterExport()`, `parallel::parLapply()`, and `parallel::stopCluster()` cleanup.
+- Kept a serial fallback when `cores <= 1` or when the run is too small to benefit from workers.
+- Preserved deterministic seeded results by precomputing permutation group assignments before distributing work.
+- Updated `/run-permutation-analysis` to call `analysis_core_plan()`, pass `cores` into `metis_micom()`, and log permutations/core policy in timing metadata.
+- Added `micom.R` to common `r-api` resource filters in `package.json`, `build/electron-builder.bundle.yml`, and `build/electron-builder.lite.yml` so both Windows and macOS packages include it.
+- Added `tests/micomParallelPermutationStatic.test.mjs` to guard parallel MICOM wiring and packaging.
+- Updated `tests/productionReleaseStatic.test.mjs` to require `micom.R` in common packaged resources.
+
+### Validation
+- `node tests\micomParallelPermutationStatic.test.mjs`
+- `node tests\permutationAnalysisPlumberContract.test.mjs`
+- `node tests\analysisPerformanceStatic.test.mjs`
+- `node tests\productionReleaseStatic.test.mjs`
+- `node tests\crossPlatformRuntimeStatic.test.mjs`
+- `npm run typecheck`
+- Parsed both R files with portable Rscript: `r-api/plumber.R` and `r-api/micom.R`.
+- Ran a temporary R smoke test using portable Windows Rscript to compare serial vs two-worker MICOM Step 2 and Step 3 results on the same seeded `seminr::mobi` model; serial and parallel outputs matched.
+
+### Remaining Notes
+- macOS was covered by static cross-platform guards and PSOCK-compatible code paths; this Windows machine cannot execute a real macOS R runtime smoke locally.
+- The loose `C:\Users\aaron\dev\micom.R` fallback was left untouched. Development now prefers the repo copy at `r-api/micom.R`, which is also the copy packaged into the app.
+
+## 2026-07-17 — MGA results tree, group-specific output, and full comparison families
+
+### User Request
+- Rework the MGA ResultsView left panel into the current goal structure: `MULTI-GROUP RESULTS`, `Overview`, `Group-Specific Results`, and `Multi-Group Comparisons`.
+- Replace generic Group A/Group B output with the actual left/right group values selected in the MGA modal.
+- Populate group-specific results when the user runs MGA, without requiring separate PLS-SEM or Bootstrap runs first.
+- Use the existing parallel bootstrap core plan for MGA speed, keep execution-log visibility, remove Welch comparison sections from the active goal tree, and keep acceptable/not-acceptable result feedback coloring.
+
+### Completed Changes
+- Updated the MGA panel catalog to use one recursive `MULTI-GROUP RESULTS` tree with group-specific structural, measurement-model, and model-quality leaves for both selected groups.
+- Added comparison leaves for Path Coefficients, Specific Indirect Effects, Total Indirect Effects, Total Effects, Outer Loadings, and Outer Weights.
+- Kept only Bias-Corrected Confidence Intervals, Henseler's PLS-MGA, and Parametric Test under each comparison family; Welch output is no longer exposed by the MGA results JSON or left panel.
+- Made the ResultsView sidebar recursively flatten/render nested panel items so deeply nested group-specific leaves can be selected and exported.
+- Added dynamic MGA labels so the selected left group is used as Group A and the selected right group is used as Group B in panel headings and table columns.
+- Updated `panelData` and `panelExport` so all new MGA leaves resolve to either `groupSpecific.groupA`, `groupSpecific.groupB`, or the matching `bootstrapMGA` comparison family.
+- Extended `run_mga_bootstrap_tables()` to reuse the two selected-group bootstraps for group-specific bootstrap sections and all comparison families.
+- Added backend comparison helpers for specific indirect effects, total indirect effects, and total effects, while preserving path/loading/weight comparisons.
+- Added a backend smoke guard during implementation that caught and fixed the group-specific wrapper shape; the temporary smoke file was deleted after use.
+
+### Validation
+- `node tests\multiGroupAnalysisResultsContract.test.mjs`
+- `node tests\multiGroupAnalysisPlumberContract.test.mjs`
+- `node tests\resultsPanelCatalog.test.mjs`
+- `node tests\panelTableData.test.mjs`
+- `node tests\permutationAnalysisResultsContract.test.mjs`
+- `node tests\permutationAnalysisPlumberContract.test.mjs`
+- `npm run typecheck`
+- Parsed `r-api/plumber.R` with portable Rscript.
+- Ran a temporary Windows portable-R MGA backend smoke using `seminr::mobi`, a two-group artificial `Gender` field, 50 bootstrap subsamples, and one core; it confirmed `groupSpecific`, `pathCoefficients`, `totalEffects`, and `outerLoadings` were present in the mapped response.
+
+### Remaining Notes
+- No macOS R runtime smoke was run on this Windows machine; macOS safety for this slice remains covered by shared R code paths and static cross-platform tests from the surrounding MICOM/MGA work.
+- No temporary MGA smoke files remain in the repository.

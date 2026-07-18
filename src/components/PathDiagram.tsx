@@ -90,7 +90,7 @@ interface PathResult {
 export interface DiagramResults {
   constructScores?: Record<string, ConstructScores>  // keyed by construct id
   pathResults?:     Record<string, PathResult>        // keyed by "${from}-${to}"
-  measurementResults?: Record<string, { loading?: number; weight?: number }> // keyed by "${construct}::${indicator}"
+  measurementResults?: Record<string, { loading?: number; weight?: number; loadingT?: number; weightT?: number }> // keyed by "${construct}::${indicator}"
 }
 
 // ─── Props ───────────────────────────────────────────────────────────────────
@@ -126,9 +126,156 @@ const MAX_LABEL_T = 0.88
 const OVAL_RX_SCALE = 1.35
 const OVAL_RY_SCALE = 0.82
 const STRUCTURAL_PATH_NEUTRAL = 'rgb(var(--color-text-secondary-rgb) / 0.74)'
+const LABEL_BOX_FILL_RATIO = 0.8
+const LABEL_MIN_FONT_SIZE = 6
+const LABEL_LINE_HEIGHT_RATIO = 1.08
+
+interface ConstructLabelToken {
+  text: string
+  joiner: string
+  breakAfter: boolean
+}
+
+interface ConstructLabelLine {
+  text: string
+  width: number
+}
+
+interface ConstructLabelLayout {
+  fontSize: number
+  lineHeight: number
+  height: number
+  lines: Array<ConstructLabelLine & { y: number }>
+}
 
 function normalizeConstructShape(shape?: CanvasConstructShape): 'circle' | 'oval' | 'rectangle' {
   return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function estimateConstructLabelWidth(text: string, fontSize: number): number {
+  let units = 0
+  for (const char of text) {
+    if (char === ' ') units += 0.32
+    else if (char === '-' || char === '_' || char === '.') units += 0.36
+    else if (/[A-Z0-9]/.test(char)) units += 0.68
+    else units += 0.56
+  }
+  return Math.max(fontSize * 0.5, units * fontSize)
+}
+
+function tokenizeConstructLabel(text: string): ConstructLabelToken[] {
+  const tokens: ConstructLabelToken[] = []
+  const source = text.trim()
+  let firstToken = true
+
+  for (const match of source.matchAll(/\S+\s*/g)) {
+    const word = match[0].trim()
+    if (!word) continue
+
+    const parts = word.match(/[^-]+-?|-/g) ?? [word]
+    parts.forEach((part, index) => {
+      if (!part) return
+      tokens.push({
+        text: part,
+        joiner: firstToken ? '' : index === 0 ? ' ' : '',
+        breakAfter: part.endsWith('-') || index === parts.length - 1,
+      })
+      firstToken = false
+    })
+  }
+
+  return tokens.length ? tokens : [{ text: source || ' ', joiner: '', breakAfter: true }]
+}
+
+function wrapConstructLabelLines(tokens: ConstructLabelToken[], maxWidth: number, fontSize: number): ConstructLabelLine[] | null {
+  const lines: ConstructLabelLine[] = []
+  let current = ''
+
+  for (const token of tokens) {
+    const nextText = current ? `${current}${token.joiner}${token.text}` : token.text
+    const candidateWidth = estimateConstructLabelWidth(nextText, fontSize)
+
+    if (candidateWidth > maxWidth) {
+      if (!current) return null
+      lines.push({ text: current, width: estimateConstructLabelWidth(current, fontSize) })
+      current = token.text
+      if (estimateConstructLabelWidth(current, fontSize) > maxWidth) return null
+      continue
+    }
+
+    current = nextText
+  }
+
+  if (current) lines.push({ text: current, width: estimateConstructLabelWidth(current, fontSize) })
+  return lines
+}
+
+function buildLayout(lines: ConstructLabelLine[], fontSize: number): ConstructLabelLayout {
+  const lineHeight = fontSize * LABEL_LINE_HEIGHT_RATIO
+  const height = Math.max(lineHeight, lines.length * lineHeight)
+  const startY = -((lines.length - 1) * lineHeight) / 2
+
+  return {
+    fontSize,
+    lineHeight,
+    height,
+    lines: lines.map((line, index) => ({
+      ...line,
+      y: startY + index * lineHeight,
+    })),
+  }
+}
+
+function layoutConstructLabel(
+  text: string,
+  {
+    rx,
+    ry,
+    shapeKind,
+    maxFontSize = 13,
+  }: {
+    rx: number
+    ry: number
+    shapeKind: 'circle' | 'oval' | 'rectangle'
+    maxFontSize?: number
+  },
+): ConstructLabelLayout {
+  const safeRx = Math.max(1, rx * LABEL_BOX_FILL_RATIO)
+  const safeRy = Math.max(1, ry * LABEL_BOX_FILL_RATIO)
+  const maxWidth = safeRx * 2
+  const maxHeight = safeRy * 2
+  const tokens = tokenizeConstructLabel(text)
+
+  for (let fontSize = Math.max(LABEL_MIN_FONT_SIZE, maxFontSize); fontSize >= LABEL_MIN_FONT_SIZE; fontSize -= 0.5) {
+    const lines = wrapConstructLabelLines(tokens, maxWidth, fontSize)
+    if (!lines) continue
+
+    const layout = buildLayout(lines, fontSize)
+    if (layout.height > maxHeight) continue
+
+    const fitsRectangle = layout.lines.every((line) => (
+      line.width <= maxWidth &&
+      Math.abs(line.y) + layout.lineHeight / 2 <= safeRy
+    ))
+    const ellipseFit = Math.max(
+      ...layout.lines.map((line) => (
+        ((line.width / 2) ** 2) / (safeRx ** 2) +
+        ((Math.abs(line.y) + layout.lineHeight / 2) ** 2) / (safeRy ** 2)
+      )),
+    )
+    const fitsShape = shapeKind === 'rectangle' ? fitsRectangle : ellipseFit <= 1
+    if (fitsShape) return layout
+  }
+
+  const fallbackText = text.trim() || ' '
+  const fallbackWidthAtOne = estimateConstructLabelWidth(fallbackText, 1)
+  const ellipseLimit = shapeKind === 'rectangle' ? maxWidth : safeRx * 1.72
+  const fallbackFontSize = Math.max(
+    3,
+    Math.min(maxFontSize, ellipseLimit / Math.max(fallbackWidthAtOne, 1), maxHeight / LABEL_LINE_HEIGHT_RATIO),
+  )
+  const fallbackWidth = estimateConstructLabelWidth(fallbackText, fallbackFontSize)
+  return buildLayout([{ text: fallbackText, width: fallbackWidth }], fallbackFontSize)
 }
 
 function getDefaultOvalDimensions(radius: number): { width: number; height: number } {
@@ -385,11 +532,28 @@ function getMeasurementValue(loading: number | null, mode: string): number | und
 }
 
 function getMeasurementValueFromResults(
-  measurementEntry: { loading?: number; weight?: number } | undefined,
+  measurementEntry: { loading?: number; weight?: number; loadingT?: number; weightT?: number } | undefined,
   fallbackLoading: number | null,
   mode: string,
   constructType?: 'Reflective' | 'Formative',
 ): number | undefined {
+  if (mode === 'Outer loading t-values') {
+    return measurementEntry?.loadingT
+  }
+
+  if (mode === 'Outer weight t-values') {
+    return measurementEntry?.weightT
+  }
+
+  if (mode === 'Outer weights / loadings t-values') {
+    if (constructType === 'Formative') {
+      if (measurementEntry?.weightT !== undefined) return measurementEntry.weightT
+      return measurementEntry?.loadingT
+    }
+    if (measurementEntry?.loadingT !== undefined) return measurementEntry.loadingT
+    return measurementEntry?.weightT
+  }
+
   if (mode === 'Outer loadings') {
     if (measurementEntry?.loading !== undefined) return measurementEntry.loading
     return getMeasurementValue(fallbackLoading, mode)
@@ -907,6 +1071,13 @@ export default function PathDiagram({
         const isOval = normalizedShape === 'oval'
         const isRectangle = normalizedShape === 'rectangle'
         const isSelected = selectedConstructIds.includes(c.id)
+        const constructLabelAvailableRy = hasScore ? Math.max(LABEL_MIN_FONT_SIZE * 1.6, ry - 14) : ry
+        const constructLabelLayout = layoutConstructLabel(c.name, {
+          rx,
+          ry: constructLabelAvailableRy,
+          shapeKind: normalizedShape,
+          maxFontSize: hasScore ? 8.5 : 13,
+        })
         const tooltipItems: Array<{ label: string; value?: number }> = [
           { label: 'R-Square', value: incoming ? scores.r2 : undefined },
           { label: 'R-Square Adjusted', value: incoming ? scores.r2Adj : undefined },
@@ -961,10 +1132,14 @@ export default function PathDiagram({
                   {scoreVal.toFixed(getDecimals())}
                 </text>
                 <text x={c.x} y={c.y + 9}
-                  fill={c.color + 'AA'} fontSize={8.5}
+                  fill={c.color + 'AA'} fontSize={constructLabelLayout.fontSize}
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
-                  {c.name}
+                  {constructLabelLayout.lines.map((line, index) => (
+                    <tspan key={`${c.id}-score-label-${index}`} x={c.x} y={c.y + 9 + line.y}>
+                      {line.text}
+                    </tspan>
+                  ))}
                 </text>
               </>
             ) : (
@@ -972,10 +1147,14 @@ export default function PathDiagram({
               <>
                 <text x={c.x} y={c.y - 5}
                   fill={c.color}
-                  fontSize={c.name.length > 5 ? 11 : 13} fontWeight="700"
+                  fontSize={constructLabelLayout.fontSize} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
-                  {c.name}
+                  {constructLabelLayout.lines.map((line, index) => (
+                    <tspan key={`${c.id}-label-${index}`} x={c.x} y={c.y - 5 + line.y}>
+                      {line.text}
+                    </tspan>
+                  ))}
                 </text>
                 <text x={c.x} y={c.y + 10}
                   fill={c.color + 'AA'} fontSize={7.5}

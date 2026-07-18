@@ -47,6 +47,9 @@ interface Window {
     runBootstrap: (payload: any) => Promise<any>
     runPlsPredict: (payload: any) => Promise<any>
     runAdvancedAnalysis: (payload: any) => Promise<any>
+    runPermutationAnalysis: (payload: any) => Promise<any>
+    runPermutationConfiguralPrecheck: (payload: any) => Promise<any>
+    runMultiGroupAnalysis: (payload: any) => Promise<any>
     onConfirmQuitDuringCalc: (cb: () => void) => () => void
     quitConfirmed: () => Promise<any>
     quitCancelled: () => Promise<any>

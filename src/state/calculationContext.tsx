@@ -9,7 +9,7 @@ import {
 } from 'react'
 import CalcCancelDialog from '@/components/CalcCancelDialog'
 
-type CalcType = 'pls' | 'bootstrap' | 'plspredict' | 'advanced'
+export type CalcType = 'pls' | 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga'
 
 export type CalcPhase = {
   id: string

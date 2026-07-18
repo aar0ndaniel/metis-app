@@ -1,7 +1,15 @@
-import { useState, useRef, useEffect, useCallback, useMemo, type ElementType } from 'react'
+import { useState, useRef, useEffect, useCallback, useMemo, type ElementType, type ReactNode } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { dispatchToast } from '../components/Toast'
-import { runBootstrapModel, runPlsPredictModel, runAdvancedAnalysisModel, type RunPlsRequest } from '../services/plsApi'
+import {
+  runBootstrapModel,
+  runPlsPredictModel,
+  runAdvancedAnalysisModel,
+  runPermutationAnalysisModel,
+  runPermutationConfiguralPrecheck,
+  runMultiGroupAnalysisModel,
+  type RunPlsRequest,
+} from '../services/plsApi'
 import {
   ArrowLeft,
   Table,
@@ -55,12 +63,21 @@ import {
 import BootstrapModal from '../components/BootstrapModal'
 import PlsPredictModal from '../components/PlsPredictModal'
 import AdvancedAnalysisModal, { type AdvancedAnalysisSettings } from '../components/AdvancedAnalysisModal'
+import PermutationAnalysisModal, {
+  type PermutationAnalysisSettings,
+  type PermutationConfiguralStatus,
+} from '../components/PermutationAnalysisModal'
+import MultiGroupAnalysisModal, { type MultiGroupAnalysisSettings } from '../components/MultiGroupAnalysisModal'
 import { ResultChart } from '../components/ResultsCharts'
 import { APP_BRAND_NAME } from '../config/appBranding'
 import { stripModelDisplayName } from '../utils/displayNames'
 import { buildAnalysisGraphSignature } from '../utils/analysisGraphSignature'
 import { getPanelSectionsForMode, type AnalysisMode, type PanelIconKey } from '../results/panelCatalog'
-import { getPanelDataFromResults } from '../results/panelData'
+import {
+  getPanelDataFromResults,
+  getMgaGroupPanelBaseId,
+  getMgaGroupSpecificResultsSource,
+} from '../results/panelData'
 import { classifyPanelEmptyState, getBaseModelReferenceLabel, rowsContainOnlyMessage } from '../results/panelDiagnostics'
 import { getExportSectionTitles, getModeResultsLabel, getPanelTitle } from '../results/panelExport'
 import { buildClipboardTableHtml, buildClipboardTableText, type ExportTableSection } from '../results/clipboardTables'
@@ -109,7 +126,15 @@ import { useCalculationDispatch, useIsCalculating, type CalcPhase } from '../sta
 
 // ─── Display mode option lists (from Pencil ui.pen spec) ─────────────────────
 const STRUCTURAL_OPTIONS  = ['Blank', 'Correlations', 'Indirect effects', 'Path coefficients', 'Total effects']
-const MEASUREMENT_OPTIONS = ['Blank', 'Outer loadings', 'Outer weights', 'Outer weights / loadings']
+const MEASUREMENT_OPTIONS = [
+  'Blank',
+  'Outer loadings',
+  'Outer weights',
+  'Outer weights / loadings',
+  'Outer loading t-values',
+  'Outer weight t-values',
+  'Outer weights / loadings t-values',
+]
 const CONSTRUCT_OPTIONS   = ['Blank', 'Average variance extracted (AVE)', 'Composite reliability (rhoa)', 'Composite reliability (rhoc)', "Cronbach's alpha", 'R-square', 'R-square adjusted']
 
 const EXPORT_LOGO_SVG = `
@@ -200,6 +225,7 @@ interface SidebarItem {
   label: string
   icon: ElementType
   isLeaf?: boolean
+  children?: SidebarItem[]
 }
 
 interface SidebarSection {
@@ -267,18 +293,63 @@ const PANEL_ICON_OVERRIDES: Record<string, ElementType> = {
   'ceiling-lines': ChartLineUp,
   'bottleneck-table': Gauge,
   'cipma-priorities': ListChecks,
+  'compositional-invariance': ShieldCheck,
+  'equality-means': Table,
+  'equality-variances': Table,
+  'invariance-classification': CheckCircle,
+  'mga-group-specific-results': Folders,
+  'mga-group-a': Folders,
+  'mga-group-b': Folders,
+  'mga-comparisons': Table,
+  'mga-path-coefficients': Graph,
+  'mga-outer-loadings': ChartBar,
+  'mga-outer-weights': Gauge,
 }
 
-function buildSidebarSections(mode: AnalysisMode, hasInteractions = false): SidebarSection[] {
-  return getPanelSectionsForMode(mode, { hasInteractions }).map((section) => ({
-    ...section,
-    items: section.items.map((item) => ({
+type MgaComparisonMethod = 'biasCorrectedConfidenceIntervals' | 'henselerPlsMga' | 'parametricTest'
+
+interface MgaGroupLabels {
+  groupA: string
+  groupB: string
+  comparisonLabel: string
+}
+
+function buildSidebarItems(items: ReturnType<typeof getPanelSectionsForMode>[number]['items'], mgaGroupLabels?: MgaGroupLabels): SidebarItem[] {
+  return items.map((item) => {
+    let label = item.label
+    if (item.id === 'mga-group-a') label = mgaGroupLabels?.groupA || item.label
+    if (item.id === 'mga-group-b') label = mgaGroupLabels?.groupB || item.label
+    if (item.id === 'mga-comparisons' && mgaGroupLabels?.comparisonLabel) label = `Multi-Group Comparisons (${mgaGroupLabels.comparisonLabel})`
+    return {
       id: item.id,
-      label: item.label,
+      label,
       icon: PANEL_ICON_OVERRIDES[item.id] ?? SIDEBAR_ICON_MAP[item.iconKey],
       isLeaf: item.isLeaf,
-    })),
+      children: item.children ? buildSidebarItems(item.children, mgaGroupLabels) : undefined,
+    }
+  })
+}
+
+function flattenSidebarItems(items: SidebarItem[]): SidebarItem[] {
+  return items.flatMap((item) => item.children?.length ? flattenSidebarItems(item.children) : [item])
+}
+
+function buildSidebarSections(mode: AnalysisMode, hasInteractions = false, mgaGroupLabels?: MgaGroupLabels): SidebarSection[] {
+  return getPanelSectionsForMode(mode, { hasInteractions }).map((section) => ({
+    ...section,
+    items: buildSidebarItems(section.items, mgaGroupLabels),
   }))
+}
+
+function getMgaGroupLabels(analysisResults: any): MgaGroupLabels {
+  const groups = analysisResults?.groups ?? {}
+  const groupA = String(groups.leftValue ?? groups.groupA ?? 'Group A')
+  const groupB = String(groups.rightValue ?? groups.groupB ?? 'Group B')
+  return {
+    groupA,
+    groupB,
+    comparisonLabel: `${groupA} vs ${groupB}`,
+  }
 }
 
 function modelHasMediationPaths(savedModel: any): boolean {
@@ -1093,7 +1164,7 @@ function buildDiagramResults(
 ): import('../components/PathDiagram').DiagramResults {
   const constructScores: Record<string, any> = {}
   const pathResults: Record<string, any> = {}
-  const measurementResults: Record<string, { loading?: number; weight?: number }> = {}
+  const measurementResults: Record<string, { loading?: number; weight?: number; loadingT?: number; weightT?: number }> = {}
 
   // Pre-build indicator → construct name map from canvas model (used for bootstrap format)
   const indicatorConstructMap = new Map<string, string>()
@@ -1132,7 +1203,7 @@ function buildDiagramResults(
     }
   }
 
-  const upsertMeasurement = (construct: string, indicator: string, partial: { loading?: number; weight?: number }) => {
+  const upsertMeasurement = (construct: string, indicator: string, partial: { loading?: number; weight?: number; loadingT?: number; weightT?: number }) => {
     if (!construct || !indicator) return
     const nameKey = `${construct}::${indicator}`
     measurementResults[nameKey] = { ...(measurementResults[nameKey] ?? {}), ...partial }
@@ -1229,11 +1300,15 @@ function buildDiagramResults(
     }
 
     parseOuterLoadings(source, indicatorMap).forEach((row) => {
-      upsertMeasurement(row.construct, row.indicator, { loading: row.loading })
+      const partial: { loading?: number; loadingT?: number } = { loading: row.loading }
+      if (Number.isFinite(row.tStatistic)) partial.loadingT = row.tStatistic
+      upsertMeasurement(row.construct, row.indicator, partial)
     })
 
     parseOuterWeights(source, indicatorMap).forEach((row) => {
-      upsertMeasurement(row.construct, row.indicator, { weight: row.loading })
+      const partial: { weight?: number; weightT?: number } = { weight: row.loading }
+      if (Number.isFinite(row.tStatistic)) partial.weightT = row.tStatistic
+      upsertMeasurement(row.construct, row.indicator, partial)
     })
 
     const lvRows: any[] = source?.final_results?.latent_variables ?? []
@@ -1320,6 +1395,22 @@ function rowsFromData(data: any): Array<Record<string, unknown>> {
   return [{ value: data }]
 }
 
+function shouldFormatOverviewInteger(header?: string, selectedPanel?: string): boolean {
+  const normalized = normalizeMetricKey(header ?? '')
+  const roundedProbe = Math.round(0)
+  return roundedProbe === 0 &&
+    selectedPanel === 'overview' &&
+    ['groupacount', 'groupbcount', 'permutations', 'seed'].includes(normalized)
+}
+
+function getPermutationDecisionTextColor(value: unknown): string | undefined {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (!normalized) return undefined
+  if (normalized.includes('not supported')) return 'var(--color-danger)'
+  if (normalized.includes('supported')) return 'var(--color-success)'
+  return undefined
+}
+
 function formatDisplayValue(
   value: unknown,
   header?: string,
@@ -1335,6 +1426,7 @@ function formatDisplayValue(
   if (header && isPValueHeader(header)) return formatPValueDisplay(value)
 
   if (typeof value === 'number' && Number.isFinite(value)) {
+    if (shouldFormatOverviewInteger(header, selectedPanel)) return String(Math.round(value))
     return fmtNum(value)
   }
   if (Array.isArray(value)) {
@@ -1361,6 +1453,7 @@ function formatDisplayValue(
     if (!trimmed) return '—'
     const num = Number(trimmed)
     if (!Number.isNaN(num) && Number.isFinite(num)) {
+      if (shouldFormatOverviewInteger(header, selectedPanel)) return String(Math.round(num))
       return fmtNum(num)
     }
     return trimmed
@@ -1936,6 +2029,14 @@ function buildPathDiagramSvg(
   `
 }
 
+function humanizeResultTableHeader(header: string): string {
+  return String(header ?? '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function formatResultTableHeader(header: string, selectedPanel?: string): string {
   const normalizedHeader = String(header ?? '').trim().replace(/[\s_-]+/g, '').toLowerCase()
   if (selectedPanel === 'necessity-check' && normalizedHeader === 'd') {
@@ -1965,7 +2066,7 @@ function formatResultTableHeader(header: string, selectedPanel?: string): string
   if (normalizedHeader === 'bcciupper') return 'BC CI upper'
   if (normalizedHeader === 'bcacilower') return 'BCa CI lower'
   if (normalizedHeader === 'bcaciupper') return 'BCa CI upper'
-  return String(header ?? '').replace(/_/g, ' ')
+  return humanizeResultTableHeader(header)
 }
 
 function buildExportTableHtml(
@@ -2030,34 +2131,123 @@ function SidebarSectionComponent({
     ? 'text-text-muted/80'
     : 'text-text-secondary'
 
+  const renderSidebarItem = (item: SidebarItem, depth = 0): ReactNode => {
+    const Icon = item.icon
+    const hasChildren = Boolean(item.children?.length)
+    const sel = selectedPanel === item.id
+
+    if (hasChildren) {
+      return (
+        <SidebarAccordionItem
+          key={item.id}
+          item={item}
+          depth={depth}
+          selectedPanel={selectedPanel}
+          onSelectPanel={onSelectPanel}
+        />
+      )
+    }
+
+    return (
+      <div
+        key={item.id}
+        className={`flex items-center gap-2 pr-3 py-1.5 cursor-pointer text-xs transition-colors
+          ${sel
+            ? 'bg-primary/15 text-text-primary border-l-2 border-primary'
+            : 'text-text-muted hover:text-text-secondary hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
+        style={{ paddingLeft: sel ? 22 + depth * 12 : 24 + depth * 12 }}
+        onClick={() => onSelectPanel(item.id)}
+      >
+        <Icon size={13} className="shrink-0 opacity-70" />
+        <span className="truncate">{item.label}</span>
+      </div>
+    )
+  }
+
   return (
     <div className={section.tone === 'subtle' ? 'mt-3 border-t border-white/5 pt-2' : ''}>
-      <div
-        className="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-[rgb(var(--color-hover-rgb)/0.75)] select-none"
-        onClick={() => setIsOpen(o => !o)}
+      {section.id === 'multi-group-results' ? (
+        <div className="flex items-center gap-1.5 px-3 py-1.5 select-none">
+          <span className={`text-[10px] font-semibold uppercase tracking-wider truncate ${sectionLabelClass}`}>
+            {section.label}
+          </span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="flex w-full items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-[rgb(var(--color-hover-rgb)/0.75)] select-none"
+          onClick={() => setIsOpen(o => !o)}
+          aria-expanded={isOpen}
+        >
+          {isOpen
+            ? <CaretDown size={11} className="text-text-muted shrink-0" />
+            : <CaretRight size={11} className="text-text-muted shrink-0" />}
+          <span className={`text-[10px] font-semibold uppercase tracking-wider truncate ${sectionLabelClass}`}>
+            {section.label}
+          </span>
+        </button>
+      )}
+
+      {(section.id === 'multi-group-results' || isOpen) && section.items.map((item) => renderSidebarItem(item))}
+    </div>
+  )
+}
+
+function SidebarAccordionItem({
+  item,
+  depth,
+  selectedPanel,
+  onSelectPanel,
+}: {
+  item: SidebarItem
+  depth: number
+  selectedPanel: string
+  onSelectPanel: (id: string) => void
+}) {
+  const [isOpen, setIsOpen] = useState(true)
+  const Icon = item.icon
+
+  return (
+    <div>
+      <button
+        type="button"
+        className="flex w-full items-center gap-1.5 pr-3 py-1.5 text-xs text-text-muted transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.75)] hover:text-text-secondary"
+        style={{ paddingLeft: 14 + depth * 12 }}
+        onClick={() => setIsOpen((current) => !current)}
+        aria-expanded={isOpen}
       >
         {isOpen
           ? <CaretDown size={11} className="text-text-muted shrink-0" />
           : <CaretRight size={11} className="text-text-muted shrink-0" />}
-        <span className={`text-[10px] font-semibold uppercase tracking-wider truncate ${sectionLabelClass}`}>
-          {section.label}
-        </span>
-      </div>
+        <Icon size={13} className="shrink-0 opacity-70" />
+        <span className="truncate">{item.label}</span>
+      </button>
+      {isOpen && item.children?.map((child) => {
+        if (child.children?.length) {
+          return (
+            <SidebarAccordionItem
+              key={child.id}
+              item={child}
+              depth={depth + 1}
+              selectedPanel={selectedPanel}
+              onSelectPanel={onSelectPanel}
+            />
+          )
+        }
 
-      {isOpen && section.items.map(item => {
-        const Icon = item.icon
-        const sel = selectedPanel === item.id
+        const ChildIcon = child.icon
         return (
           <div
-            key={item.id}
+            key={child.id}
             className={`flex items-center gap-2 pr-3 py-1.5 cursor-pointer text-xs transition-colors
-              ${sel
-                ? 'bg-primary/15 text-text-primary border-l-2 border-primary pl-[22px]'
-                : 'pl-6 text-text-muted hover:text-text-secondary hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
-            onClick={() => onSelectPanel(item.id)}
+              ${selectedPanel === child.id
+                ? 'bg-primary/15 text-text-primary border-l-2 border-primary'
+                : 'text-text-muted hover:text-text-secondary hover:bg-[rgb(var(--color-hover-rgb)/0.75)]'}`}
+            style={{ paddingLeft: selectedPanel === child.id ? 22 + (depth + 1) * 12 : 24 + (depth + 1) * 12 }}
+            onClick={() => onSelectPanel(child.id)}
           >
-            <Icon size={13} className="shrink-0 opacity-70" />
-            <span className="truncate">{item.label}</span>
+            <ChildIcon size={13} className="shrink-0 opacity-70" />
+            <span className="truncate">{child.label}</span>
           </div>
         )
       })}
@@ -3945,10 +4135,15 @@ function GenericDataTable({
                     ? { rowLabel: row.row, indirectEffectPairs, totalEffectPairs }
                     : undefined
                   const value = formatDisplayValue(row[header], header, selectedPanel, cellContext)
+                  const decisionTextColor = getPermutationDecisionTextColor(value)
                   const isModerationInteractionCell = selectedPanel?.startsWith('moderation') && normalizeMetricKey(header) === 'interaction'
                   
                   return (
-                    <td key={`${rowIndex}-${header}`} className={`px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words ${significanceColorClass || rowClass}`}>
+                    <td
+                      key={`${rowIndex}-${header}`}
+                      className={`px-4 py-2 border-b border-border/40 whitespace-pre-wrap break-words ${significanceColorClass || rowClass}`}
+                      style={decisionTextColor ? { color: decisionTextColor } : undefined}
+                    >
                       {isAdvancedTable
                         ? renderAdvancedResultCell({ header, rawValue: row[header], displayValue: value, isLastColumn: headerIndex === headers.length - 1 })
                         : isModerationInteractionCell
@@ -4085,7 +4280,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 }
 
 function TablePanel({
-  selectedPanel, diagramHeight, onDiagramHeightChange, diagramCollapsed, analysisMode, panelData, analysisResults, savedModel, tableView, tableViewOptions, onTableViewChange
+  selectedPanel, diagramHeight, onDiagramHeightChange, diagramCollapsed, analysisMode, panelData, analysisResults, savedModel, tableView, tableViewOptions, onTableViewChange, mgaComparisonMethod = 'biasCorrectedConfidenceIntervals', onMgaComparisonMethodChange
 }: {
   selectedPanel: string
   diagramHeight: number
@@ -4098,6 +4293,8 @@ function TablePanel({
   tableView: ResultsTableView
   tableViewOptions: ResultsTableView[]
   onTableViewChange: (nextView: ResultsTableView) => void
+  mgaComparisonMethod?: MgaComparisonMethod
+  onMgaComparisonMethodChange?: (nextMethod: MgaComparisonMethod) => void
 }) {
   const isDragging = useRef(false)
   const dragStartY = useRef(0)
@@ -4107,20 +4304,33 @@ function TablePanel({
   const panelBodyRef = useRef<HTMLDivElement>(null)
   const [bootstrapIntervalView, setBootstrapIntervalView] = useState<BootstrapIntervalView>('stats')
   const [advancedPanelViewModes, setAdvancedPanelViewModes] = useState<Record<string, AdvancedPanelViewMode>>({})
-  const showBootstrapIntervalControl = analysisMode === 'bootstrap' && isBootstrapSignificancePanel(selectedPanel)
+  const effectiveSelectedPanel = analysisMode === 'mga'
+    ? getMgaGroupPanelBaseId(selectedPanel)
+    : selectedPanel
+  const tableAnalysisResults = analysisMode === 'mga' && selectedPanel.startsWith('mga-group-')
+    ? getMgaGroupSpecificResultsSource(selectedPanel, analysisResults)
+    : analysisResults
+  const showBootstrapIntervalControl = analysisMode === 'bootstrap' && isBootstrapSignificancePanel(effectiveSelectedPanel)
+  const showMgaComparisonMethodTabs = analysisMode === 'mga' &&
+    ['mga-path-coefficients', 'mga-outer-loadings', 'mga-outer-weights'].includes(selectedPanel)
+  const mgaComparisonMethodOptions: Array<{ value: MgaComparisonMethod; label: string }> = [
+    { value: 'biasCorrectedConfidenceIntervals', label: 'Bias corrected' },
+    { value: 'henselerPlsMga', label: 'Henseler' },
+    { value: 'parametricTest', label: 'Parametric' },
+  ]
   // Derive real data from analysisResults
-  const pathRows      = parsePathCoefficients(analysisResults)
-  const rSquareRows   = parseRSquare(analysisResults)
+  const pathRows      = parsePathCoefficients(tableAnalysisResults)
+  const rSquareRows   = parseRSquare(tableAnalysisResults)
   const moderationR2Rows = analysisMode === 'pls-sem'
-    ? deriveModerationR2ChangeRows(savedModel, analysisResults)
+    ? deriveModerationR2ChangeRows(savedModel, tableAnalysisResults)
     : []
-  const reliRows      = parseReliability(analysisResults)
-  const loadingRows   = parseOuterLoadings(analysisResults)
-  const weightRows    = parseOuterWeights(analysisResults)
-  const hocRows       = parseHOCResults(analysisResults)
-  const vifSections   = parseVIF(analysisResults, savedModel)
-  const modelFitRows  = parseModelFit(analysisResults)
-  const execLog       = parseExecutionLog(analysisResults)
+  const reliRows      = parseReliability(tableAnalysisResults)
+  const loadingRows   = parseOuterLoadings(tableAnalysisResults)
+  const weightRows    = parseOuterWeights(tableAnalysisResults)
+  const hocRows       = parseHOCResults(tableAnalysisResults)
+  const vifSections   = parseVIF(tableAnalysisResults, savedModel)
+  const modelFitRows  = parseModelFit(tableAnalysisResults)
+  const execLog       = parseExecutionLog(tableAnalysisResults)
 
   const indicatorConstructMap = new Map<string, string>()
   if (savedModel?.constructs) {
@@ -4154,8 +4364,8 @@ function TablePanel({
     })
   }
 
-  const bootLoadingRows = analysisMode === 'bootstrap' ? parseBootstrapMeasurements(analysisResults?.final_results?.outer_loadings) : []
-  const bootWeightRows  = analysisMode === 'bootstrap' ? parseBootstrapMeasurements(analysisResults?.final_results?.outer_weights) : []
+  const bootLoadingRows = analysisMode === 'bootstrap' ? parseBootstrapMeasurements(tableAnalysisResults?.final_results?.outer_loadings) : []
+  const bootWeightRows  = analysisMode === 'bootstrap' ? parseBootstrapMeasurements(tableAnalysisResults?.final_results?.outer_weights) : []
 
   const derivedSpecificIndirectRows = analysisMode === 'pls-sem' && selectedPanel === 'specific-indirect'
     ? deriveSpecificIndirectRows(savedModel, analysisResults)
@@ -4172,10 +4382,10 @@ function TablePanel({
         null
       )
     : null
-  const usingDerivedSpecificIndirectRows = selectedPanel === 'specific-indirect' && derivedSpecificIndirectRows.length > 0 && !panelRows.length
+  const usingDerivedSpecificIndirectRows = effectiveSelectedPanel === 'specific-indirect' && derivedSpecificIndirectRows.length > 0 && !panelRows.length
   const emptyStateLabel = classifyPanelEmptyState({
     mode: analysisMode,
-    panelId: selectedPanel,
+    panelId: effectiveSelectedPanel,
     hasRows: panelRows.length > 0 && !cvpatPlaceholderRows,
     hasMediationPaths: modelHasMediationPaths(savedModel),
     hasInteractions: modelHasInteractions,
@@ -4186,14 +4396,14 @@ function TablePanel({
     hasFormativeWeights: Array.isArray(savedModel?.constructs)
       ? savedModel.constructs.some((construct: any) => String(construct?.type || '').toLowerCase() === 'formative')
       : undefined,
-    cvpatEnabled: selectedPanel === 'cvpat-lv-summary'
+    cvpatEnabled: effectiveSelectedPanel === 'cvpat-lv-summary'
       ? cvpatRequested
       : undefined,
-    cvpatStatus: selectedPanel === 'cvpat-lv-summary'
+    cvpatStatus: effectiveSelectedPanel === 'cvpat-lv-summary'
       ? cvpatStatus
       : undefined,
-    modelSelectionComparable: selectedPanel === 'model-select' ? panelRows.length > 0 : undefined,
-    fitAvailable: selectedPanel === 'model-fit' ? modelFitRows.length > 0 : undefined,
+    modelSelectionComparable: effectiveSelectedPanel === 'model-select' ? panelRows.length > 0 : undefined,
+    fitAvailable: effectiveSelectedPanel === 'model-fit' ? modelFitRows.length > 0 : undefined,
     advancedAnalyses: advancedAnalyses
       ? {
           ipma: advancedAnalyses.ipma === true,
@@ -4202,7 +4412,7 @@ function TablePanel({
         }
       : undefined,
   })
-  const baseModelReferenceLabel = getBaseModelReferenceLabel(analysisMode, selectedPanel)
+  const baseModelReferenceLabel = getBaseModelReferenceLabel(analysisMode, effectiveSelectedPanel)
   const displayPanelData = cvpatPlaceholderRows
     ? []
     : usingDerivedSpecificIndirectRows
@@ -4244,8 +4454,9 @@ function TablePanel({
     e.preventDefault()
   }
 
-  const isSemResultsMode = analysisMode === 'pls-sem' || analysisMode === 'bootstrap' || analysisMode === 'advanced'
-  const basePanelTitle = getPanelTitle(selectedPanel)
+  const isSemResultsMode = analysisMode === 'pls-sem' || analysisMode === 'bootstrap' || analysisMode === 'advanced' || analysisMode === 'mga'
+  const titlePanelId = analysisMode === 'mga' && selectedPanel.startsWith('mga-group-') ? effectiveSelectedPanel : selectedPanel
+  const basePanelTitle = getPanelTitle(titlePanelId)
   const panelTitle = analysisMode === 'bootstrap' && isBootstrapSignificancePanel(selectedPanel) && bootstrapIntervalView !== 'stats'
     ? `${basePanelTitle} - ${bootstrapIntervalView === 'bc' ? 'Confidence intervals bias corrected' : 'Confidence intervals'}`
     : basePanelTitle
@@ -4432,6 +4643,34 @@ function TablePanel({
             <div className="w-px h-4 bg-border/50" />
           </>
         )}
+        {showMgaComparisonMethodTabs && (
+          <>
+            <div className="flex items-center rounded-md p-0.5" style={{ backgroundColor: 'var(--color-toggle-track-bg)' }}>
+              {mgaComparisonMethodOptions.map((option) => {
+                const active = mgaComparisonMethod === option.value
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => onMgaComparisonMethodChange?.(option.value)}
+                    aria-pressed={active}
+                    className="rounded px-2 py-1 text-[11px] font-semibold transition-colors"
+                    style={{
+                      fontFamily: 'DM Sans, system-ui, sans-serif',
+                      color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                      background: active ? 'var(--color-toggle-active-bg)' : 'transparent',
+                      boxShadow: active ? '0 1px 2px rgba(0,0,0,0.08)' : 'none',
+                    }}
+                    title={option.label}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
+            </div>
+            <div className="w-px h-4 bg-border/50" />
+          </>
+        )}
         {hasAdvancedPanelChart && !isAdvancedChartOnlyPanel && (
           <>
             <div className="flex items-center rounded-md p-0.5" style={{ backgroundColor: 'var(--color-toggle-track-bg)' }}>
@@ -4504,22 +4743,22 @@ function TablePanel({
         {isSemResultsMode ? (
           shouldRenderTableContent ? (
             <>
-            {selectedPanel === 'path-coef' && (
+            {effectiveSelectedPanel === 'path-coef' && (
               analysisMode === 'bootstrap'
                 ? <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
                 : <PathCoefficientTable rows={pathRows} view={tableView} />
             )}
-            {selectedPanel === 'r-square'       && <RSquareTable rows={rSquareRows} moderationRows={moderationR2Rows} />}
-            {selectedPanel === 'reliability'    && <ReliabilityTable rows={reliRows} />}
+            {effectiveSelectedPanel === 'r-square'       && <RSquareTable rows={rSquareRows} moderationRows={moderationR2Rows} />}
+            {effectiveSelectedPanel === 'reliability'    && <ReliabilityTable rows={reliRows} />}
             {analysisMode === 'bootstrap' ? (
               <>
-                {selectedPanel === 'outer-loadings' && (
+                {effectiveSelectedPanel === 'outer-loadings' && (
                   <>
                     <HOCResultsTable rows={hocRows} />
                     <BootstrapLoadingTable rows={bootLoadingRows} label={emptyStateLabel} view={bootstrapIntervalView} />
                   </>
                 )}
-                {selectedPanel === 'outer-weights'  && (
+                {effectiveSelectedPanel === 'outer-weights'  && (
                   <>
                     <HOCResultsTable rows={hocRows} />
                     <BootstrapLoadingTable rows={bootWeightRows} label={emptyStateLabel} view={bootstrapIntervalView} />
@@ -4528,13 +4767,13 @@ function TablePanel({
               </>
             ) : (
               <>
-                {selectedPanel === 'outer-loadings' && (
+                {effectiveSelectedPanel === 'outer-loadings' && (
                   <>
                     <HOCResultsTable rows={hocRows} />
                     <OuterLoadingsTable rows={loadingRows} view={tableView} />
                   </>
                 )}
-                {selectedPanel === 'outer-weights'  && (
+                {effectiveSelectedPanel === 'outer-weights'  && (
                   <>
                     <HOCResultsTable rows={hocRows} />
                     <OuterLoadingsTable rows={weightRows} label={emptyStateLabel} mode="outer-weights" view={tableView} />
@@ -4542,23 +4781,23 @@ function TablePanel({
                 )}
               </>
             )}
-            {selectedPanel === 'cross-loadings' && <CrossLoadingsTable ar={analysisResults} />}
-            {selectedPanel === 'vif'            && <VIFPanel sections={vifSections} />}
-            {selectedPanel === 'discriminant'   && <DiscriminantValidityPanel ar={analysisResults} />}
-            {selectedPanel === 'model-fit'      && <ModelFitTable rows={modelFitRows} label={emptyStateLabel} />}
-            {selectedPanel === 'execution-log'  && <ExecutionLogPanel log={execLog} />}
-            {selectedPanel === 'moderation-slope-chart' && (
+            {effectiveSelectedPanel === 'cross-loadings' && <CrossLoadingsTable ar={tableAnalysisResults} />}
+            {effectiveSelectedPanel === 'vif'            && <VIFPanel sections={vifSections} />}
+            {effectiveSelectedPanel === 'discriminant'   && <DiscriminantValidityPanel ar={tableAnalysisResults} />}
+            {effectiveSelectedPanel === 'model-fit'      && <ModelFitTable rows={modelFitRows} label={emptyStateLabel} />}
+            {effectiveSelectedPanel === 'execution-log'  && <ExecutionLogPanel log={execLog} />}
+            {effectiveSelectedPanel === 'moderation-slope-chart' && (
               <ModerationSlopeChartPanel
                 savedModel={savedModel}
-                analysisResults={analysisResults}
+                analysisResults={tableAnalysisResults}
                 rows={panelRows}
                 label={emptyStateLabel}
               />
             )}
-            {analysisMode === 'bootstrap' && ['total-indirect', 'specific-indirect', 'total-effects'].includes(selectedPanel) && (
+            {analysisMode === 'bootstrap' && ['total-indirect', 'specific-indirect', 'total-effects'].includes(effectiveSelectedPanel) && (
               <BootstrapSignificanceTable rows={panelRows} label={emptyStateLabel} view={bootstrapIntervalView} />
             )}
-            {!SUPPORTED_PANELS.includes(selectedPanel) && !(analysisMode === 'bootstrap' && isBootstrapSignificancePanel(selectedPanel)) && (
+            {!SUPPORTED_PANELS.includes(effectiveSelectedPanel) && !(analysisMode === 'bootstrap' && isBootstrapSignificancePanel(effectiveSelectedPanel)) && (
               <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} analysisResults={analysisResults} />
             )}
             </>
@@ -4609,6 +4848,10 @@ export default function ResultsView() {
   const [bootstrapOpen,     setBootstrapOpen]    = useState(false)
   const [plspredictOpen,    setPlsPredictOpen]   = useState(false)
   const [advancedOpen,      setAdvancedOpen]     = useState(false)
+  const [permutationOpen,   setPermutationOpen]  = useState(false)
+  const [multiGroupOpen,    setMultiGroupOpen]   = useState(false)
+  const [permutationConfiguralStatus, setPermutationConfiguralStatus] = useState<PermutationConfiguralStatus>('idle')
+  const [mgaComparisonMethod, setMgaComparisonMethod] = useState<MgaComparisonMethod>('biasCorrectedConfidenceIntervals')
   const [tableViewPreferences, setTableViewPreferences] = useState<Record<string, ResultsTableView>>({})
   const calcDispatch = useCalculationDispatch()
   const isContextCalculating = useIsCalculating()
@@ -4647,7 +4890,7 @@ export default function ResultsView() {
   useEffect(() => {
     const savedAnalysis = navState?.savedAnalysis
 
-    if (savedAnalysis?.results && (savedAnalysis?.mode === 'pls-sem' || savedAnalysis?.mode === 'bootstrap' || savedAnalysis?.mode === 'plspredict' || savedAnalysis?.mode === 'advanced')) {
+    if (savedAnalysis?.results && (savedAnalysis?.mode === 'pls-sem' || savedAnalysis?.mode === 'bootstrap' || savedAnalysis?.mode === 'plspredict' || savedAnalysis?.mode === 'advanced' || savedAnalysis?.mode === 'permutation' || savedAnalysis?.mode === 'mga')) {
       if (navState?.savedModelSnapshot) {
         try {
           writeSharedStorageValue('results-canvas-model', JSON.stringify(cloneResultsModelSnapshot(navState.savedModelSnapshot)))
@@ -4669,6 +4912,8 @@ export default function ResultsView() {
       }
       setAnalysisMode(savedAnalysis.mode)
       if (savedAnalysis.mode === 'advanced') setSelectedPanel('priority-map')
+      if (savedAnalysis.mode === 'permutation') setSelectedPanel('overview')
+      if (savedAnalysis.mode === 'mga') setSelectedPanel('overview')
       setAnalysisResults(savedAnalysis.results as Record<string, unknown>)
       setDiagramCollapsed(false)
       writeSharedStorageValue('analysis-mode', savedAnalysis.mode)
@@ -4678,9 +4923,11 @@ export default function ResultsView() {
 
     try {
       const modeRaw = readSharedStorageValue('analysis-mode')
-      if (modeRaw === 'bootstrap' || modeRaw === 'plspredict' || modeRaw === 'pls-sem' || modeRaw === 'advanced') {
+      if (modeRaw === 'bootstrap' || modeRaw === 'plspredict' || modeRaw === 'pls-sem' || modeRaw === 'advanced' || modeRaw === 'permutation' || modeRaw === 'mga') {
         setAnalysisMode(modeRaw)
         if (modeRaw === 'advanced') setSelectedPanel('priority-map')
+        if (modeRaw === 'permutation') setSelectedPanel('overview')
+        if (modeRaw === 'mga') setSelectedPanel('overview')
       }
 
       const raw = readSharedStorageValue('analysis-results')
@@ -4716,10 +4963,11 @@ export default function ResultsView() {
     () => hasModerationInteractions(savedModel, analysisResults),
     [savedModel, analysisResults],
   )
-  const sidebarData = useMemo(() => buildSidebarSections(analysisMode, moderationAvailable), [analysisMode, moderationAvailable])
+  const mgaGroupLabels = useMemo(() => getMgaGroupLabels(analysisResults), [analysisResults])
+  const sidebarData = useMemo(() => buildSidebarSections(analysisMode, moderationAvailable, mgaGroupLabels), [analysisMode, moderationAvailable, mgaGroupLabels])
 
   useEffect(() => {
-    const availablePanels = sidebarData.flatMap((section) => section.items.map((item) => item.id))
+    const availablePanels = sidebarData.flatMap((section) => flattenSidebarItems(section.items).map((item) => item.id))
     if (availablePanels.includes(selectedPanel)) return
     const firstPanel = availablePanels[0]
     if (firstPanel) setSelectedPanel(firstPanel)
@@ -4730,11 +4978,12 @@ export default function ResultsView() {
   }, [analysisMode, analysisResults])
 
   const derivedModerationPanelData = getDerivedModerationPanelData(analysisMode, selectedPanel, savedModel, analysisResults)
-  const panelData = derivedModerationPanelData ?? getPanelDataFromResults(analysisMode, selectedPanel, analysisResults)
+  const panelData = derivedModerationPanelData ?? getPanelDataFromResults(analysisMode, selectedPanel, analysisResults, { mgaComparisonMethod })
   const tableViewKey = `${analysisMode}:${selectedPanel}`
-  const tableViewOptions = getPanelTableViews(selectedPanel, analysisMode)
+  const tableViewPanelId = analysisMode === 'mga' ? getMgaGroupPanelBaseId(selectedPanel) : selectedPanel
+  const tableViewOptions = getPanelTableViews(tableViewPanelId, analysisMode)
   const tableView = tableViewOptions.length
-    ? tableViewPreferences[tableViewKey] ?? getDefaultPanelTableView(selectedPanel)
+    ? tableViewPreferences[tableViewKey] ?? getDefaultPanelTableView(tableViewPanelId)
     : 'list'
   const handleTableViewChange = useCallback((nextView: ResultsTableView) => {
     setTableViewPreferences((previous) => ({
@@ -4811,6 +5060,8 @@ export default function ResultsView() {
     analysisSettings?: {
       plspredict?: PlsPredictSettings
       advanced?: AdvancedAnalysisSettings
+      permutation?: PermutationAnalysisSettings
+      mga?: MultiGroupAnalysisSettings
     }
   }) => {
     const { allWorkspaces, migratedWorkspace, modelChild } = resolveWorkspaceContext()
@@ -4897,7 +5148,7 @@ export default function ResultsView() {
   const currentResultsRoute = useCallback(() => `${location.pathname}${location.search || ''}`, [location.pathname, location.search])
 
   const startResultsCalculation = useCallback((
-    type: 'bootstrap' | 'plspredict' | 'advanced',
+    type: 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga',
     title: string,
     phases: CalcPhase[],
     subLabel?: string,
@@ -5105,6 +5356,181 @@ export default function ResultsView() {
     }
   }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, startResultsCalculation])
 
+  const resultsGroupingData = useMemo(() => {
+    const { dataset } = resolveWorkspaceContext()
+    const cached = readDatasetViewCache(dataset?.id)
+    const groupingOptions = Array.isArray(cached?.headers)
+      ? cached.headers
+      : Array.isArray(dataset?.headers)
+        ? dataset.headers
+        : []
+    return {
+      groupingOptions: groupingOptions.map((header: unknown) => String(header ?? '').trim()).filter(Boolean),
+      datasetRows: Array.isArray(cached?.allRows) ? cached.allRows : [],
+    }
+  }, [resolveWorkspaceContext, analysisResults])
+
+  const handlePermutationConfiguralPrecheckFromResults = useCallback(async (settings: PermutationAnalysisSettings) => {
+    const payload = resolveRunPayload()
+    if (!payload) {
+      setPermutationConfiguralStatus('failed')
+      return { success: false, error: 'No runnable model payload is available.' }
+    }
+
+    try {
+      setPermutationConfiguralStatus('checking')
+      const result = await runPermutationConfiguralPrecheck({
+        ...payload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: settings.permutations,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      })
+      const passed = (result.results?.configuralInvariance as any)?.passed === true
+      setPermutationConfiguralStatus(passed ? 'passed' : 'failed')
+      return result
+    } catch (error: any) {
+      setPermutationConfiguralStatus('failed')
+      return { success: false, error: error?.message || 'Configural precheck failed.' }
+    }
+  }, [resolveRunPayload])
+
+  const handleRunPermutationFromResults = useCallback(async (settings: PermutationAnalysisSettings) => {
+    if (isAnalysisRunning) return
+
+    const payload = resolveRunPayload()
+    if (!payload) return
+
+    setPermutationOpen(false)
+    setAnalysisBusy(true)
+    startResultsCalculation(
+      'permutation',
+      'Running permutation analysis',
+      [
+        { id: 'prep', label: 'Preparing invariant model', status: 'pending' },
+        { id: 'permutation', label: 'Running MICOM permutations', status: 'pending' },
+        { id: 'final', label: 'Finalizing invariance results', status: 'pending' },
+      ],
+      `${settings.permutations.toLocaleString()} permutations`,
+    )
+    try {
+      calcDispatch({ type: 'setPhase', phaseId: 'permutation' })
+      const result = await runPermutationAnalysisModel({
+        ...payload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: settings.permutations,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      })
+
+      if (!result.success || !result.results) {
+        const message = normalizeAnalysisFailureMessage(result)
+        calcDispatch({ type: 'fail', message })
+        dispatchToast('error', 'Permutation analysis failed', message)
+        return
+      }
+
+      calcDispatch({ type: 'setPhase', phaseId: 'final' })
+      const savedAt = new Date().toISOString()
+      writeSharedStorageValue('analysis-mode', 'permutation')
+      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      setAnalysisMode('permutation')
+      setSelectedPanel('overview')
+      setAnalysisResults(result.results)
+      persistResultsToWorkspace({
+        mode: 'permutation',
+        results: result.results as Record<string, unknown>,
+        savedAt,
+        analysisSettings: {
+          permutation: settings,
+        },
+      })
+      calcDispatch({
+        type: 'complete',
+        result: { type: 'permutation', completedAt: Date.now(), resultsRoute: currentResultsRoute() },
+        showTransientDone: false,
+      })
+      dispatchToast('success', 'Permutation analysis complete')
+    } catch (error: any) {
+      const message = error?.message || 'Unexpected error'
+      calcDispatch({ type: 'fail', message })
+      dispatchToast('error', 'Permutation analysis failed', message)
+    } finally {
+      setAnalysisBusy(false)
+    }
+  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, startResultsCalculation])
+
+  const handleRunMultiGroupFromResults = useCallback(async (settings: MultiGroupAnalysisSettings) => {
+    if (isAnalysisRunning) return
+
+    const payload = resolveRunPayload()
+    if (!payload) return
+
+    setMultiGroupOpen(false)
+    setAnalysisBusy(true)
+    startResultsCalculation(
+      'mga',
+      'Running multi-group analysis',
+      [
+        { id: 'prep', label: 'Preparing selected groups', status: 'pending' },
+        { id: 'bootstrap', label: 'Running group bootstrap tables', status: 'pending' },
+        { id: 'final', label: 'Finalizing multi-group results', status: 'pending' },
+      ],
+      `${settings.nboot.toLocaleString()} bootstrap subsamples`,
+    )
+    try {
+      calcDispatch({ type: 'setPhase', phaseId: 'bootstrap' })
+      const result = await runMultiGroupAnalysisModel({
+        ...payload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        nboot: settings.nboot,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      })
+
+      if (!result.success || !result.results) {
+        const message = normalizeAnalysisFailureMessage(result)
+        calcDispatch({ type: 'fail', message })
+        dispatchToast('error', 'Multi-group analysis failed', message)
+        return
+      }
+
+      calcDispatch({ type: 'setPhase', phaseId: 'final' })
+      const savedAt = new Date().toISOString()
+      writeSharedStorageValue('analysis-mode', 'mga')
+      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      setAnalysisMode('mga')
+      setSelectedPanel('overview')
+      setAnalysisResults(result.results)
+      persistResultsToWorkspace({
+        mode: 'mga',
+        results: result.results as Record<string, unknown>,
+        savedAt,
+        analysisSettings: {
+          mga: settings,
+        },
+      })
+      calcDispatch({
+        type: 'complete',
+        result: { type: 'mga', completedAt: Date.now(), resultsRoute: currentResultsRoute() },
+        showTransientDone: false,
+      })
+      dispatchToast('success', 'Multi-group analysis complete')
+    } catch (error: any) {
+      const message = error?.message || 'Unexpected error'
+      calcDispatch({ type: 'fail', message })
+      dispatchToast('error', 'Multi-group analysis failed', message)
+    } finally {
+      setAnalysisBusy(false)
+    }
+  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, startResultsCalculation])
+
   const generateRScript = useCallback(() => {
     if (!savedModel?.constructs?.length) {
       return '# No model available to export'
@@ -5258,7 +5684,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
         { items: [{ id: 'path-diagram', label: 'Path diagram' }] },
         ...sidebarData.map((section) => ({
           title: section.label,
-          items: section.items.map((item) => ({ id: item.id, label: item.label })),
+          items: flattenSidebarItems(section.items).map((item) => ({ id: item.id, label: item.label })),
         })),
       ]
 
@@ -5280,7 +5706,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
         }
 
         const derivedModerationRows = getDerivedModerationPanelData(analysisMode, item.id, savedModel, analysisResults)
-        const data = derivedModerationRows ?? getPanelDataFromResults(analysisMode, item.id, analysisResults)
+        const data = derivedModerationRows ?? getPanelDataFromResults(analysisMode, item.id, analysisResults, { mgaComparisonMethod })
         const rows = rowsFromData(data)
         const derivedRows = analysisMode === 'pls-sem' && item.id === 'specific-indirect' && !rows.length
           ? deriveSpecificIndirectRows(savedModel, analysisResults)
@@ -5695,7 +6121,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     } catch (err: any) {
       dispatchToast('error', `HTML export failed: ${err?.message || 'Unknown error'}`)
     }
-  }, [analysisMode, analysisResults, modelId, savedModel, sidebarData])
+  }, [analysisMode, analysisResults, mgaComparisonMethod, modelId, savedModel, sidebarData])
 
   const handleSaveResults = useCallback(async () => {
     try {
@@ -5714,7 +6140,17 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
 
       const modelChild = workspace.children.find((child: any) => child.id === modelId)
       const modelBaseName = String(modelChild?.name || modelId || 'Model').replace(/\.hbe$/i, '')
-      const modeLabel = analysisMode === 'bootstrap' ? 'Bootstrap' : analysisMode === 'plspredict' ? 'PLSpredict' : analysisMode === 'advanced' ? 'Advanced analysis' : 'PLS-SEM'
+      const modeLabel = analysisMode === 'bootstrap'
+        ? 'Bootstrap'
+        : analysisMode === 'plspredict'
+          ? 'PLSpredict'
+          : analysisMode === 'advanced'
+            ? 'Advanced analysis'
+            : analysisMode === 'permutation'
+              ? 'Permutation analysis'
+              : analysisMode === 'mga'
+                ? 'Multi group analysis'
+                : 'PLS-SEM'
       const savedAtIso = new Date().toISOString()
       const resultId = `r-${Date.now()}`
       const resultName = `${modelBaseName} — ${modeLabel}`
@@ -5795,6 +6231,8 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
       if (action === 'run-bootstrap' && !isAnalysisRunning) setBootstrapOpen(true)
       if (action === 'run-pls-predict' && !isAnalysisRunning) setPlsPredictOpen(true)
       if (action === 'run-advanced-analysis' && canRunAdvancedAnalysis && !isAnalysisRunning) setAdvancedOpen(true)
+      if (action === 'run-permutation-analysis' && !isAnalysisRunning) setPermutationOpen(true)
+      if (action === 'run-multi-group-analysis' && !isAnalysisRunning) setMultiGroupOpen(true)
       if (action === 'results:export-r-script') void handleExportRScript()
     }
     window.addEventListener('pls:action', handler)
@@ -6053,6 +6491,8 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
             tableView={tableView}
             tableViewOptions={tableViewOptions}
             onTableViewChange={handleTableViewChange}
+            mgaComparisonMethod={mgaComparisonMethod}
+            onMgaComparisonMethodChange={setMgaComparisonMethod}
           />
         </div>
       </div>
@@ -6091,6 +6531,37 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           }}
           onRun={handleRunAdvancedFromResults}
           initialSettings={(resolveWorkspaceContext().modelChild?.state?.analysisSettings?.advanced ?? undefined) as Partial<AdvancedAnalysisSettings> | undefined}
+          isRunning={isAnalysisRunning}
+        />
+      )}
+
+      {permutationOpen && (
+        <PermutationAnalysisModal
+          modelName={stripModelDisplayName(modelId || '')}
+          groupingOptions={resultsGroupingData.groupingOptions}
+          datasetRows={resultsGroupingData.datasetRows}
+          configuralStatus={permutationConfiguralStatus}
+          onPrecheck={handlePermutationConfiguralPrecheckFromResults}
+          onClose={() => {
+            if (isAnalysisRunning) return
+            setPermutationOpen(false)
+            setPermutationConfiguralStatus('idle')
+          }}
+          onRun={handleRunPermutationFromResults}
+          isRunning={isAnalysisRunning}
+        />
+      )}
+
+      {multiGroupOpen && (
+        <MultiGroupAnalysisModal
+          modelName={stripModelDisplayName(modelId || '')}
+          groupingOptions={resultsGroupingData.groupingOptions}
+          datasetRows={resultsGroupingData.datasetRows}
+          onClose={() => {
+            if (isAnalysisRunning) return
+            setMultiGroupOpen(false)
+          }}
+          onRun={handleRunMultiGroupFromResults}
           isRunning={isAnalysisRunning}
         />
       )}

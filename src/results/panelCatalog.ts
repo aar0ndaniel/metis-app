@@ -1,4 +1,4 @@
-export type AnalysisMode = 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced'
+export type AnalysisMode = 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga'
 
 export type PanelIconKey =
   | 'graph'
@@ -16,6 +16,7 @@ interface PanelDefinition {
   placeholderKind?: string
   showChart?: boolean
   baseModelReference?: boolean
+  children?: PanelDefinition[]
 }
 
 export interface PanelSection {
@@ -202,12 +203,141 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       ],
     },
   ],
+  permutation: [
+    {
+      id: 'permutation-results',
+      label: 'PERMUTATION RESULTS',
+      defaultOpen: true,
+      items: [
+        { id: 'overview', label: 'Overview', iconKey: 'info' },
+        { id: 'compositional-invariance', label: 'Compositional Invariance', iconKey: 'check-circle' },
+        { id: 'equality-means', label: 'Equality of Means', iconKey: 'table' },
+        { id: 'equality-variances', label: 'Equality of Variances', iconKey: 'table' },
+        { id: 'invariance-classification', label: 'Invariance Classification', iconKey: 'check-circle' },
+        { id: 'execution-log', label: 'Execution Log', iconKey: 'file-code', isLeaf: true },
+      ],
+    },
+  ],
+  mga: [
+    {
+      id: 'multi-group-results',
+      label: 'MULTI-GROUP RESULTS',
+      defaultOpen: true,
+      items: [
+        { id: 'overview', label: 'Overview', iconKey: 'info' },
+        {
+          id: 'mga-group-specific-results',
+          label: 'Group-Specific Results',
+          iconKey: 'folders',
+          children: [
+            {
+              id: 'mga-group-a',
+              label: 'Group A',
+              iconKey: 'folders',
+              children: [
+                {
+                  id: 'mga-group-a-structural-effects',
+                  label: 'STRUCTURAL EFFECTS',
+                  iconKey: 'graph',
+                  children: [
+                    { id: 'mga-group-a-path-coef', label: 'Path Coefficients', iconKey: 'graph' },
+                    { id: 'mga-group-a-total-indirect', label: 'Total Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-a-specific-indirect', label: 'Specific Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-a-total-effects', label: 'Total Effects', iconKey: 'graph' },
+                  ],
+                },
+                {
+                  id: 'mga-group-a-measurement-model',
+                  label: 'MEASUREMENT MODEL',
+                  iconKey: 'table',
+                  children: [
+                    { id: 'mga-group-a-outer-loadings', label: 'Outer Loadings', iconKey: 'table' },
+                    { id: 'mga-group-a-outer-weights', label: 'Outer Weights', iconKey: 'table' },
+                    { id: 'mga-group-a-reliability', label: 'Construct Reliability & Validity', iconKey: 'check-circle' },
+                    { id: 'mga-group-a-discriminant', label: 'Discriminant Validity', iconKey: 'check-circle' },
+                    { id: 'mga-group-a-cross-loadings', label: 'Cross-Loadings', iconKey: 'table' },
+                  ],
+                },
+                {
+                  id: 'mga-group-a-model-quality',
+                  label: 'MODEL QUALITY',
+                  iconKey: 'check-circle',
+                  children: [
+                    { id: 'mga-group-a-r-square', label: 'R² / Adjusted R²', iconKey: 'graph' },
+                    { id: 'mga-group-a-vif', label: 'VIF', iconKey: 'info' },
+                    { id: 'mga-group-a-model-fit', label: 'Model Fit', iconKey: 'check-circle' },
+                  ],
+                },
+              ],
+            },
+            {
+              id: 'mga-group-b',
+              label: 'Group B',
+              iconKey: 'folders',
+              children: [
+                {
+                  id: 'mga-group-b-structural-effects',
+                  label: 'STRUCTURAL EFFECTS',
+                  iconKey: 'graph',
+                  children: [
+                    { id: 'mga-group-b-path-coef', label: 'Path Coefficients', iconKey: 'graph' },
+                    { id: 'mga-group-b-total-indirect', label: 'Total Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-b-specific-indirect', label: 'Specific Indirect Effects', iconKey: 'graph' },
+                    { id: 'mga-group-b-total-effects', label: 'Total Effects', iconKey: 'graph' },
+                  ],
+                },
+                {
+                  id: 'mga-group-b-measurement-model',
+                  label: 'MEASUREMENT MODEL',
+                  iconKey: 'table',
+                  children: [
+                    { id: 'mga-group-b-outer-loadings', label: 'Outer Loadings', iconKey: 'table' },
+                    { id: 'mga-group-b-outer-weights', label: 'Outer Weights', iconKey: 'table' },
+                    { id: 'mga-group-b-reliability', label: 'Construct Reliability & Validity', iconKey: 'check-circle' },
+                    { id: 'mga-group-b-discriminant', label: 'Discriminant Validity', iconKey: 'check-circle' },
+                    { id: 'mga-group-b-cross-loadings', label: 'Cross-Loadings', iconKey: 'table' },
+                  ],
+                },
+                {
+                  id: 'mga-group-b-model-quality',
+                  label: 'MODEL QUALITY',
+                  iconKey: 'check-circle',
+                  children: [
+                    { id: 'mga-group-b-r-square', label: 'R² / Adjusted R²', iconKey: 'graph' },
+                    { id: 'mga-group-b-vif', label: 'VIF', iconKey: 'info' },
+                    { id: 'mga-group-b-model-fit', label: 'Model Fit', iconKey: 'check-circle' },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'mga-comparisons',
+          label: 'Multi-Group Comparisons',
+          iconKey: 'table',
+          children: [
+            { id: 'mga-path-coefficients', label: 'Path Coefficients', iconKey: 'graph' },
+            { id: 'mga-outer-loadings', label: 'Outer Loadings', iconKey: 'table' },
+            { id: 'mga-outer-weights', label: 'Outer Weights', iconKey: 'table' },
+          ],
+        },
+      ],
+    },
+  ],
+}
+
+function clonePanelItems(items: PanelDefinition[]): PanelDefinition[] {
+  return items.map((item) => ({
+    ...item,
+    children: item.children ? clonePanelItems(item.children) : undefined,
+  }))
 }
 
 function clonePanelSections(sections: PanelSection[]): PanelSection[] {
   return sections.map((section) => ({
     ...section,
-    items: section.items.map((item) => ({ ...item })),
+    items: clonePanelItems(section.items),
   }))
 }
 
@@ -255,9 +385,18 @@ export function getPanelSectionsForMode(mode: AnalysisMode, options: PanelCatalo
 }
 
 function getPanelDefinition(mode: AnalysisMode, panelId: string, options: PanelCatalogOptions = {}): PanelDefinition | null {
+  const findItem = (items: PanelDefinition[]): PanelDefinition | null => {
+    for (const item of items) {
+      if (item.id === panelId) return { ...item }
+      const childMatch = item.children ? findItem(item.children) : null
+      if (childMatch) return childMatch
+    }
+    return null
+  }
+
   for (const section of getPanelSectionsForMode(mode, options)) {
-    const match = section.items.find((item) => item.id === panelId)
-    if (match) return { ...match }
+    const match = findItem(section.items)
+    if (match) return match
   }
   return null
 }

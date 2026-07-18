@@ -48,7 +48,20 @@ import NewModelDialog from '../components/NewModelDialog'
 import DatasetManagerModal from '../components/DatasetManagerModal'
 import PlsPredictModal from '../components/PlsPredictModal'
 import AdvancedAnalysisModal, { type AdvancedAnalysisSettings } from '../components/AdvancedAnalysisModal'
-import { runPlsModel, runBootstrapModel, runPlsPredictModel, runAdvancedAnalysisModel } from '../services/plsApi'
+import PermutationAnalysisModal, {
+  type PermutationAnalysisSettings,
+  type PermutationConfiguralStatus,
+} from '../components/PermutationAnalysisModal'
+import MultiGroupAnalysisModal, { type MultiGroupAnalysisSettings } from '../components/MultiGroupAnalysisModal'
+import {
+  runPlsModel,
+  runBootstrapModel,
+  runPlsPredictModel,
+  runAdvancedAnalysisModel,
+  runPermutationAnalysisModel,
+  runPermutationConfiguralPrecheck,
+  runMultiGroupAnalysisModel,
+} from '../services/plsApi'
 import { dispatchToast } from '../components/Toast'
 import { useCalculation, useCalculationDispatch, useIsCalculating, type CalcPhase } from '../state/calculationContext'
 import { addRecentModel } from '../utils/recentModels'
@@ -297,9 +310,156 @@ const DEFAULT_INDICATOR_STEP = 60
 const DEFAULT_INDICATOR_EDGE_GAP = 60
 const INDICATOR_LABEL_HEIGHT = 22
 const MIN_INDICATOR_LABEL_WIDTH = 44
+const LABEL_BOX_FILL_RATIO = 0.8
+const LABEL_MIN_FONT_SIZE = 6
+const LABEL_LINE_HEIGHT_RATIO = 1.08
+
+interface ConstructLabelToken {
+  text: string
+  joiner: string
+  breakAfter: boolean
+}
+
+interface ConstructLabelLine {
+  text: string
+  width: number
+}
+
+interface ConstructLabelLayout {
+  fontSize: number
+  lineHeight: number
+  height: number
+  lines: Array<ConstructLabelLine & { y: number }>
+}
 
 function normalizeConstructShape(shape?: ConstructShape): 'circle' | 'oval' | 'rectangle' {
   return shape === 'rectangle' ? 'rectangle' : shape === 'oval' || shape === 'square' ? 'oval' : 'circle'
+}
+
+function estimateConstructLabelWidth(text: string, fontSize: number): number {
+  let units = 0
+  for (const char of text) {
+    if (char === ' ') units += 0.32
+    else if (char === '-' || char === '_' || char === '.') units += 0.36
+    else if (/[A-Z0-9]/.test(char)) units += 0.68
+    else units += 0.56
+  }
+  return Math.max(fontSize * 0.5, units * fontSize)
+}
+
+function tokenizeConstructLabel(text: string): ConstructLabelToken[] {
+  const tokens: ConstructLabelToken[] = []
+  const source = text.trim()
+  let firstToken = true
+
+  for (const match of source.matchAll(/\S+\s*/g)) {
+    const word = match[0].trim()
+    if (!word) continue
+
+    const parts = word.match(/[^-]+-?|-/g) ?? [word]
+    parts.forEach((part, index) => {
+      if (!part) return
+      tokens.push({
+        text: part,
+        joiner: firstToken ? '' : index === 0 ? ' ' : '',
+        breakAfter: part.endsWith('-') || index === parts.length - 1,
+      })
+      firstToken = false
+    })
+  }
+
+  return tokens.length ? tokens : [{ text: source || ' ', joiner: '', breakAfter: true }]
+}
+
+function wrapConstructLabelLines(tokens: ConstructLabelToken[], maxWidth: number, fontSize: number): ConstructLabelLine[] | null {
+  const lines: ConstructLabelLine[] = []
+  let current = ''
+
+  for (const token of tokens) {
+    const nextText = current ? `${current}${token.joiner}${token.text}` : token.text
+    const candidateWidth = estimateConstructLabelWidth(nextText, fontSize)
+
+    if (candidateWidth > maxWidth) {
+      if (!current) return null
+      lines.push({ text: current, width: estimateConstructLabelWidth(current, fontSize) })
+      current = token.text
+      if (estimateConstructLabelWidth(current, fontSize) > maxWidth) return null
+      continue
+    }
+
+    current = nextText
+  }
+
+  if (current) lines.push({ text: current, width: estimateConstructLabelWidth(current, fontSize) })
+  return lines
+}
+
+function buildLayout(lines: ConstructLabelLine[], fontSize: number): ConstructLabelLayout {
+  const lineHeight = fontSize * LABEL_LINE_HEIGHT_RATIO
+  const height = Math.max(lineHeight, lines.length * lineHeight)
+  const startY = -((lines.length - 1) * lineHeight) / 2
+
+  return {
+    fontSize,
+    lineHeight,
+    height,
+    lines: lines.map((line, index) => ({
+      ...line,
+      y: startY + index * lineHeight,
+    })),
+  }
+}
+
+function layoutConstructLabel(
+  text: string,
+  {
+    rx,
+    ry,
+    shapeKind,
+    maxFontSize = 13,
+  }: {
+    rx: number
+    ry: number
+    shapeKind: 'circle' | 'oval' | 'rectangle'
+    maxFontSize?: number
+  },
+): ConstructLabelLayout {
+  const safeRx = Math.max(1, rx * LABEL_BOX_FILL_RATIO)
+  const safeRy = Math.max(1, ry * LABEL_BOX_FILL_RATIO)
+  const maxWidth = safeRx * 2
+  const maxHeight = safeRy * 2
+  const tokens = tokenizeConstructLabel(text)
+
+  for (let fontSize = Math.max(LABEL_MIN_FONT_SIZE, maxFontSize); fontSize >= LABEL_MIN_FONT_SIZE; fontSize -= 0.5) {
+    const lines = wrapConstructLabelLines(tokens, maxWidth, fontSize)
+    if (!lines) continue
+
+    const layout = buildLayout(lines, fontSize)
+    if (layout.height > maxHeight) continue
+
+    const fitsRectangle = layout.lines.every((line) => (
+      line.width <= maxWidth &&
+      Math.abs(line.y) + layout.lineHeight / 2 <= safeRy
+    ))
+    const ellipseFit = Math.max(
+      ...layout.lines.map((line) => (
+        ((line.width / 2) ** 2) / (safeRx ** 2) +
+        ((Math.abs(line.y) + layout.lineHeight / 2) ** 2) / (safeRy ** 2)
+      )),
+    )
+    const fitsShape = shapeKind === 'rectangle' ? fitsRectangle : ellipseFit <= 1
+    if (fitsShape) return layout
+  }
+
+  const fallbackText = text.trim() || ' '
+  const fallbackWidthAtOne = estimateConstructLabelWidth(fallbackText, 1)
+  const ellipseLimit = shapeKind === 'rectangle' ? maxWidth : safeRx * 1.72
+  const fallbackFontSize = Math.max(
+    3,
+    Math.min(maxFontSize, ellipseLimit / Math.max(fallbackWidthAtOne, 1), maxHeight / LABEL_LINE_HEIGHT_RATIO),
+  )
+  const fallbackWidth = estimateConstructLabelWidth(fallbackText, fallbackFontSize)
+  return buildLayout([{ text: fallbackText, width: fallbackWidth }], fallbackFontSize)
 }
 
 function getDefaultOvalDimensions(radius = DEFAULT_CONSTRUCT_RADIUS): { width: number; height: number } {
@@ -600,10 +760,12 @@ function toLaymanErrorMessage(rawError: unknown): string {
   return formatUserFriendlyAnalysisError(rawError)
 }
 
-function getAnalysisLabel(kind: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced'): string {
+function getAnalysisLabel(kind: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga'): string {
   if (kind === 'bootstrap') return 'Bootstrap'
   if (kind === 'plspredict') return 'PLSpredict'
   if (kind === 'advanced') return 'Advanced analysis'
+  if (kind === 'permutation') return 'Permutation analysis'
+  if (kind === 'mga') return 'Multi-group analysis'
   return 'PLS-SEM'
 }
 
@@ -747,6 +909,25 @@ interface ModelCanvasProps {
   onCloseModelTab: (modelId: string) => void
   onReorderModelTabs: (draggedModelId: string, targetModelId: string) => void
   onReturnHome: (workspaceId?: string | null) => void
+}
+
+function resolveModelSaveTarget(
+  workspaces: any[],
+  modelId?: string | null,
+  activeWorkspaceId?: string | null,
+): { workspace: any; model: any } | null {
+  const safeModelId = typeof modelId === 'string' ? modelId : ''
+  if (!safeModelId) return null
+
+  const workspace =
+    workspaces.find((candidate: any) =>
+      candidate.children?.some((child: any) => child.id === safeModelId && child.type === 'model')
+    )
+    ?? workspaces.find((candidate: any) => candidate.id === activeWorkspaceId)
+
+  const resolvedWorkspace = workspace ? migrateWorkspace(workspace as any) : null
+  const model = resolvedWorkspace?.children?.find((child: any) => child.id === safeModelId && child.type === 'model')
+  return resolvedWorkspace && model ? { workspace: resolvedWorkspace, model } : null
 }
 
 export default function ModelCanvas({
@@ -898,9 +1079,11 @@ export default function ModelCanvas({
   const linkedDatasetCache = readDatasetViewCache((linkedDataset as any)?.id)
   const effectiveDatasetHeaders = getModelCanvasDatasetHeaders(linkedDataset as any, linkedDatasetCache)
   const effectiveVariableTypes = getModelCanvasVariableTypes(linkedDataset as any, linkedDatasetCache, effectiveDatasetHeaders)
+  const linkedDatasetHasCachedRows = Array.isArray(linkedDatasetCache?.allRows)
 
   useEffect(() => {
-    if (!activeWs || !linkedDataset?.id || effectiveDatasetHeaders.length > 0) return
+    if (!activeWs || !linkedDataset?.id) return
+    if (effectiveDatasetHeaders.length > 0 && linkedDatasetHasCachedRows) return
 
     let cancelled = false
     const datasetId = linkedDataset.id
@@ -971,6 +1154,7 @@ export default function ModelCanvas({
     linkedDataset?.datasetTempPath,
     linkedDataset?.originalFileName,
     effectiveDatasetHeaders.length,
+    linkedDatasetHasCachedRows,
     electronAPI,
     recordDiagnostic,
     setWorkspaces,
@@ -1078,6 +1262,9 @@ export default function ModelCanvas({
   const [showBootstrapModal, setShowBootstrapModal] = useState(false)
   const [showPlsPredictModal, setShowPlsPredictModal] = useState(false)
   const [showAdvancedAnalysisModal, setShowAdvancedAnalysisModal] = useState(false)
+  const [showPermutationAnalysisModal, setShowPermutationAnalysisModal] = useState(false)
+  const [showMultiGroupAnalysisModal, setShowMultiGroupAnalysisModal] = useState(false)
+  const [permutationConfiguralStatus, setPermutationConfiguralStatus] = useState<PermutationConfiguralStatus>('idle')
   const [cautionModal, setCautionModal] = useState<{ open: boolean; title: string; message: string }>({
     open: false,
     title: '',
@@ -1093,7 +1280,7 @@ export default function ModelCanvas({
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null) // 'results' | 'initial' | null
   const [showDatasetManager, setShowDatasetManager] = useState(false)
   const [isCalculating, setIsCalculating] = useState(false)
-  const [calculatingType, setCalculatingType] = useState<'bootstrap' | 'plspredict' | 'advanced' | 'pls' | null>(null)
+  const [calculatingType, setCalculatingType] = useState<'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga' | 'pls' | null>(null)
   const [showHocPathPrompt, setShowHocPathPrompt] = useState(() => readShowHocPathPromptPreference())
   const [doNotShowHocPathPrompt, setDoNotShowHocPathPrompt] = useState(false)
   const calculationState = useCalculation()
@@ -1339,28 +1526,30 @@ export default function ModelCanvas({
   }, [])
   
   const handleSave = async (): Promise<boolean> => {
-    console.log('[ModelCanvas] handleSave triggered', { activeWs, currentModel })
-    if (!activeWs || !currentModel) {
+    const saveTarget = resolveModelSaveTarget(workspaces, modelId, activeWorkspaceId)
+    console.log('[ModelCanvas] handleSave triggered', { saveTarget })
+    if (!saveTarget) {
       console.error('[ModelCanvas] Missing workspace or model context')
       return false
     }
 
+    const { workspace: saveWorkspace, model: saveModel } = saveTarget
     const snapshot = getCurrentSnapshot()
     const nowIso = new Date().toISOString()
     const updatedModel = {
-      ...currentModel,
+      ...saveModel,
       updatedAt: nowIso,
       state: {
-        ...(currentModel.state || {}),
+        ...(saveModel.state || {}),
         constructs: snapshot.constructs,
         paths: snapshot.paths,
       },
     }
-    const updatedChildren = activeWs.children.map((c: any) => c.id === modelId ? updatedModel : c)
-    const updatedWs = { ...activeWs, children: updatedChildren }
+    const updatedChildren = saveWorkspace.children.map((c: any) => c.id === modelId ? updatedModel : c)
+    const updatedWs = { ...saveWorkspace, children: updatedChildren }
     
     // Optimistic UI update
-    const updatedWorkspaces = workspaces.map(w => w.id === activeWs.id ? updatedWs : w)
+    const updatedWorkspaces = workspaces.map(w => w.id === saveWorkspace.id ? updatedWs : w)
     setWorkspaces(updatedWorkspaces)
     writeWorkspaceClientCache(JSON.stringify(updatedWorkspaces))
     
@@ -1498,13 +1687,15 @@ export default function ModelCanvas({
   }, [constructs, currentModel, electronAPI, onOpenModel, paths, setWorkspaces, workspaces])
 
   const persistSnapshotForAnalysis = useCallback((analysisState?: {
-    mode: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced'
+    mode: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga'
     results: Record<string, unknown>
     savedAt: string
     graphSignature?: string
   }, analysisSettings?: {
     plspredict?: PlsPredictSettings
     advanced?: AdvancedAnalysisSettings
+    permutation?: PermutationAnalysisSettings
+    mga?: MultiGroupAnalysisSettings
   }) => {
     const snapshot = getCurrentSnapshot()
     const snapshotGraphSignature = buildAnalysisGraphSignature(snapshot)
@@ -1818,7 +2009,7 @@ export default function ModelCanvas({
   }, [persistCanvasSnapshot])
 
   const buildAnalysisPayload = (
-    analysisKind: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced',
+    analysisKind: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga',
     algorithmOverride?: 'standard' | 'consistent',
   ) => {
     const selectedAlgorithm = algorithmOverride ?? plsAlgorithm
@@ -2370,6 +2561,237 @@ export default function ModelCanvas({
     }
   }
 
+  const handlePermutationConfiguralPrecheck = async (settings: PermutationAnalysisSettings) => {
+    try {
+      setPermutationConfiguralStatus('checking')
+      const basePayload = buildAnalysisPayload('permutation', plsAlgorithm)
+      const result = await runPermutationConfiguralPrecheck({
+        ...basePayload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: settings.permutations,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      })
+      const passed = result?.results?.configuralInvariance && (result.results.configuralInvariance as any).passed === true
+      setPermutationConfiguralStatus(passed ? 'passed' : 'failed')
+      return result
+    } catch (error: any) {
+      setPermutationConfiguralStatus('failed')
+      return {
+        success: false,
+        error: error?.message || 'Configural precheck failed.',
+      }
+    }
+  }
+
+  const handleRunPermutationAnalysis = async (settings: PermutationAnalysisSettings) => {
+    if (isAnyCalculationRunning) return
+    setShowPermutationAnalysisModal(false)
+    setCalculatingType('permutation')
+    setIsCalculating(true)
+    calcDispatch({
+      type: 'start',
+      payload: {
+        type: 'permutation',
+        title: 'Running permutation analysis',
+        progressMode: 'indeterminate',
+        subLabel: `${settings.permutations.toLocaleString()} permutations`,
+        phases: [
+          { id: 'prep', label: 'Preparing invariant model', status: 'pending' },
+          { id: 'permutation', label: 'Running MICOM permutations', status: 'pending' },
+          { id: 'final', label: 'Finalizing invariance results', status: 'pending' },
+        ],
+      },
+    })
+    try {
+      const basePayload = buildAnalysisPayload('permutation', plsAlgorithm)
+      calcDispatch({ type: 'setPhase', phaseId: 'permutation' })
+      const result = await runPermutationAnalysisModel({
+        ...basePayload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        permutations: settings.permutations,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      })
+
+      if (cancelRequestedRef.current) {
+        calcDispatch({ type: 'reset' })
+        return
+      }
+
+      if (!result.success || !result.results) {
+        const friendlyMessage = toLaymanErrorMessage(result)
+        calcDispatch({ type: 'fail', message: friendlyMessage })
+        dispatchToast('error', 'Permutation analysis failed', friendlyMessage)
+        return
+      }
+
+      calcDispatch({ type: 'setPhase', phaseId: 'final' })
+      const savedAt = new Date().toISOString()
+      const savedModelSnapshot = persistSnapshotForAnalysis({
+        mode: 'permutation',
+        results: result.results as Record<string, unknown>,
+        savedAt,
+      }, {
+        permutation: settings,
+      })
+      writeSharedStorageValue('analysis-mode', 'permutation')
+      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      recordDiagnostic('calculation', 'info', 'Permutation analysis succeeded.', {
+        analysisKind: 'permutation',
+        resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
+        settings,
+      })
+
+      const shouldAutoOpenResults = activeCalcViewRef.current === 'modal'
+      calcDispatch({
+        type: 'complete',
+        result: {
+          type: 'permutation',
+          completedAt: Date.now(),
+          resultsRoute: currentResultsRoute(),
+          navigationState: {
+            savedAnalysis: {
+              mode: 'permutation',
+              results: result.results,
+              savedAt,
+            },
+            savedModelSnapshot,
+          },
+        },
+        showTransientDone: !shouldAutoOpenResults,
+      })
+      dispatchToast('success', 'Permutation analysis complete')
+
+      if (shouldAutoOpenResults) {
+        navigate(`/results/${modelId || 'full-tam'}`, {
+          state: {
+            savedAnalysis: {
+              mode: 'permutation',
+              results: result.results,
+              savedAt,
+            },
+            savedModelSnapshot,
+          },
+        })
+      }
+    } catch (error: any) {
+      const msg = error?.message || 'Unexpected error'
+      calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+      dispatchToast('error', 'Permutation analysis failed', toLaymanErrorMessage(msg))
+    } finally {
+      setIsCalculating(false)
+      setCalculatingType(null)
+    }
+  }
+
+  const handleRunMultiGroupAnalysis = async (settings: MultiGroupAnalysisSettings) => {
+    if (isAnyCalculationRunning) return
+    setShowMultiGroupAnalysisModal(false)
+    setCalculatingType('mga')
+    setIsCalculating(true)
+    calcDispatch({
+      type: 'start',
+      payload: {
+        type: 'mga',
+        title: 'Running multi-group analysis',
+        progressMode: 'indeterminate',
+        subLabel: `${settings.nboot.toLocaleString()} bootstrap subsamples`,
+        phases: [
+          { id: 'prep', label: 'Preparing selected groups', status: 'pending' },
+          { id: 'bootstrap', label: 'Running group bootstrap tables', status: 'pending' },
+          { id: 'final', label: 'Finalizing multi-group results', status: 'pending' },
+        ],
+      },
+    })
+    try {
+      const basePayload = buildAnalysisPayload('mga', plsAlgorithm)
+      calcDispatch({ type: 'setPhase', phaseId: 'bootstrap' })
+      const result = await runMultiGroupAnalysisModel({
+        ...basePayload,
+        groupingVariable: settings.groupingVariable,
+        groupA: settings.groupA,
+        groupB: settings.groupB,
+        nboot: settings.nboot,
+        alpha: settings.alpha,
+        seed: settings.seed,
+      })
+
+      if (cancelRequestedRef.current) {
+        calcDispatch({ type: 'reset' })
+        return
+      }
+
+      if (!result.success || !result.results) {
+        const friendlyMessage = toLaymanErrorMessage(result)
+        calcDispatch({ type: 'fail', message: friendlyMessage })
+        dispatchToast('error', 'Multi-group analysis failed', friendlyMessage)
+        return
+      }
+
+      calcDispatch({ type: 'setPhase', phaseId: 'final' })
+      const savedAt = new Date().toISOString()
+      const savedModelSnapshot = persistSnapshotForAnalysis({
+        mode: 'mga',
+        results: result.results as Record<string, unknown>,
+        savedAt,
+      }, {
+        mga: settings,
+      })
+      writeSharedStorageValue('analysis-mode', 'mga')
+      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      recordDiagnostic('calculation', 'info', 'Multi-group analysis succeeded.', {
+        analysisKind: 'mga',
+        resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
+        settings,
+      })
+
+      const shouldAutoOpenResults = activeCalcViewRef.current === 'modal'
+      calcDispatch({
+        type: 'complete',
+        result: {
+          type: 'mga',
+          completedAt: Date.now(),
+          resultsRoute: currentResultsRoute(),
+          navigationState: {
+            savedAnalysis: {
+              mode: 'mga',
+              results: result.results,
+              savedAt,
+            },
+            savedModelSnapshot,
+          },
+        },
+        showTransientDone: !shouldAutoOpenResults,
+      })
+      dispatchToast('success', 'Multi-group analysis complete')
+
+      if (shouldAutoOpenResults) {
+        navigate(`/results/${modelId || 'full-tam'}`, {
+          state: {
+            savedAnalysis: {
+              mode: 'mga',
+              results: result.results,
+              savedAt,
+            },
+            savedModelSnapshot,
+          },
+        })
+      }
+    } catch (error: any) {
+      const msg = error?.message || 'Unexpected error'
+      calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+      dispatchToast('error', 'Multi-group analysis failed', toLaymanErrorMessage(msg))
+    } finally {
+      setIsCalculating(false)
+      setCalculatingType(null)
+    }
+  }
+
   const renderSvgToPng = (svg: SVGSVGElement): Promise<string> =>
     new Promise((resolve, reject) => {
       const bbox = svg.getBBox()
@@ -2702,6 +3124,12 @@ export default function ModelCanvas({
         case 'run-pls-predict': if (!isAnyCalculationRunning) setShowPlsPredictModal(true); break
         case 'run-advanced-analysis':
           if (canRunAdvancedAnalysis && !isAnyCalculationRunning) setShowAdvancedAnalysisModal(true)
+          break
+        case 'run-permutation-analysis':
+          if (!isAnyCalculationRunning) setShowPermutationAnalysisModal(true)
+          break
+        case 'run-multi-group-analysis':
+          if (!isAnyCalculationRunning) setShowMultiGroupAnalysisModal(true)
           break
         case 'canvas:go-home':
           if (isDirty) {
@@ -4563,12 +4991,25 @@ export default function ModelCanvas({
               const isOval = normalizedShape === 'oval'
               const isRectangle = normalizedShape === 'rectangle'
               const hasIndependentDimensions = normalizedShape !== 'circle'
-              const resFontSize = Math.max(9, Math.min(constructRadii.rx, constructRadii.ry) * 0.36)
               const constructLabelColor = !c.labelColor || c.labelColor === '#FFFFFF'
                 ? 'var(--color-text-primary)'
                 : c.labelColor
               const showConnectedConstructHighlight = highlightedConstructId === c.id
               const indicatorMarkerEnd = `url(#${indicatorArrowMarkerId(c.id)})`
+              const liveR2Value = realtimeEnabled ? liveLoadings[`r2::${c.name}`] : undefined
+              const hasLiveR2 = typeof liveR2Value === 'number'
+              const constructLabelAvailableRy = hasLiveR2
+                ? Math.max(LABEL_MIN_FONT_SIZE * 1.6, constructRadii.ry - 13)
+                : constructRadii.ry
+              const constructLabelLayout = layoutConstructLabel(c.name, {
+                rx: constructRadii.rx,
+                ry: constructLabelAvailableRy,
+                shapeKind: normalizedShape,
+                maxFontSize: Math.max(
+                  LABEL_MIN_FONT_SIZE,
+                  Math.min(c.labelSize || 13, Math.min(constructRadii.rx, constructRadii.ry) * 0.36),
+                ),
+              })
 
               return (
                 <g key={c.id}>
@@ -4687,18 +5128,31 @@ export default function ModelCanvas({
                     )}
                     
                     {/* Label */}
-                    {realtimeEnabled && typeof liveLoadings[`r2::${c.name}`] === 'number' ? (
-                      <>
-                        <text textAnchor="middle" y={-4} fontSize={resFontSize} fill={constructLabelColor} fontFamily="DM Sans, sans-serif" fontWeight={c.labelBold ? 700 : 400} fontStyle={c.labelItalic ? 'italic' : 'normal'} style={{ pointerEvents: 'none' }}>
-                          {c.name}
-                        </text>
-                        <text textAnchor="middle" y={resFontSize + 4} fontSize={Math.max(7, resFontSize - 3)} fill="#000000" fontFamily="DM Sans, sans-serif" style={{ pointerEvents: 'none' }}>
-                          R²={(liveLoadings[`r2::${c.name}`] as number).toFixed(3)}
-                        </text>
-                      </>
-                    ) : (
-                      <text textAnchor="middle" dominantBaseline="central" fontSize={resFontSize} fill={constructLabelColor} fontFamily="DM Sans, sans-serif" fontWeight={c.labelBold ? 700 : 400} fontStyle={c.labelItalic ? 'italic' : 'normal'}>
-                        {c.name}
+                    <text
+                      textAnchor="middle"
+                      fontSize={constructLabelLayout.fontSize}
+                      fill={constructLabelColor}
+                      fontFamily="DM Sans, sans-serif"
+                      fontWeight={c.labelBold ? 700 : 400}
+                      fontStyle={c.labelItalic ? 'italic' : 'normal'}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {constructLabelLayout.lines.map((line, index) => (
+                        <tspan key={`${c.id}-label-${index}`} x={0} y={line.y - (hasLiveR2 ? 6 : 0)}>
+                          {line.text}
+                        </tspan>
+                      ))}
+                    </text>
+                    {hasLiveR2 && (
+                      <text
+                        textAnchor="middle"
+                        y={Math.min(constructRadii.ry * 0.54, constructLabelLayout.height / 2 + 9)}
+                        fontSize={Math.max(7, Math.min(10, constructRadii.ry * 0.2))}
+                        fill="#000000"
+                        fontFamily="DM Sans, sans-serif"
+                        style={{ pointerEvents: 'none' }}
+                      >
+                        R²={(liveR2Value as number).toFixed(3)}
                       </text>
                     )}
 
@@ -5684,6 +6138,37 @@ export default function ModelCanvas({
           onRun={handleRunAdvancedAnalysis}
           isRunning={calculatingType === 'advanced' && isCalculating}
           initialSettings={currentModel?.state?.analysisSettings?.advanced}
+        />
+      )}
+
+      {showPermutationAnalysisModal && (
+        <PermutationAnalysisModal
+          modelName={currentModel?.name ?? ''}
+          groupingOptions={effectiveDatasetHeaders}
+          datasetRows={linkedDatasetCache?.allRows ?? []}
+          configuralStatus={permutationConfiguralStatus}
+          onPrecheck={handlePermutationConfiguralPrecheck}
+          onClose={() => {
+            if (calculatingType === 'permutation' && isCalculating) return
+            setShowPermutationAnalysisModal(false)
+            setPermutationConfiguralStatus('idle')
+          }}
+          onRun={handleRunPermutationAnalysis}
+          isRunning={calculatingType === 'permutation' && isCalculating}
+        />
+      )}
+
+      {showMultiGroupAnalysisModal && (
+        <MultiGroupAnalysisModal
+          modelName={currentModel?.name ?? ''}
+          groupingOptions={effectiveDatasetHeaders}
+          datasetRows={linkedDatasetCache?.allRows ?? []}
+          onClose={() => {
+            if (calculatingType === 'mga' && isCalculating) return
+            setShowMultiGroupAnalysisModal(false)
+          }}
+          onRun={handleRunMultiGroupAnalysis}
+          isRunning={calculatingType === 'mga' && isCalculating}
         />
       )}
 

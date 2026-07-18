@@ -98,6 +98,27 @@ assert.equal(
   'Structured backend failures should prefer the explicit userAction guidance.',
 )
 
+const nestedMissingDatasetMessage = formatUserFriendlyAnalysisError({
+  error: {
+    message: 'No dataset found for this model.',
+    backendDetail: {
+      message: 'datasetPath cannot be empty.',
+    },
+  },
+})
+
+assert.equal(
+  nestedMissingDatasetMessage,
+  'Your dataset could not be found or does not match the indicators in the model. Please re-import the dataset and check indicator names.',
+  'Nested missing-dataset backend failures should unwrap to the friendly dataset guidance.',
+)
+
+assert.doesNotMatch(
+  nestedMissingDatasetMessage,
+  /\[object Object\]/,
+  'Nested backend error objects should never be surfaced as [object Object].',
+)
+
 const modelCanvas = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
 const resultsView = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
 

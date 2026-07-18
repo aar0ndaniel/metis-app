@@ -91,6 +91,24 @@ export interface RunAdvancedAnalysisRequest extends RunPlsRequest {
   bottleneckStepSize?: number
 }
 
+export interface RunPermutationAnalysisRequest extends RunPlsRequest {
+  groupingVariable: string
+  groupA: string
+  groupB: string
+  permutations: number
+  alpha: number
+  seed: number
+}
+
+export interface RunMultiGroupAnalysisRequest extends RunPlsRequest {
+  groupingVariable: string
+  groupA: string
+  groupB: string
+  nboot: number
+  alpha: number
+  seed: number
+}
+
 export interface GenericAnalysisResponse extends AnalysisErrorMetadata {
   success: boolean
   status?: number
@@ -316,4 +334,79 @@ export async function runAdvancedAnalysisModel(payload: RunAdvancedAnalysisReque
     },
   })
   return postToLocalPlumber('/run-advanced-analysis', payload)
+}
+
+export async function runPermutationAnalysisModel(payload: RunPermutationAnalysisRequest): Promise<GenericAnalysisResponse> {
+  const api = (window as any).electronAPI
+  if (api?.runPermutationAnalysis) {
+    return window.electronAPI.runPermutationAnalysis(payload)
+  }
+
+  const availableKeys = api ? Object.keys(api).join(', ') : 'none'
+  if (isElectronRuntime()) {
+    console.error('[plsApi] Permutation analysis bridge unavailable in Electron runtime. Available keys:', availableKeys)
+    return bridgeMissingResponse('runPermutationAnalysis', availableKeys)
+  }
+
+  console.warn('[plsApi] Permutation analysis bridge unavailable; falling back to local HTTP.')
+  addDiagnostic({
+    category: 'ui',
+    level: 'warn',
+    message: 'Falling back to the local HTTP PLS bridge for runPermutationAnalysis.',
+    details: {
+      availableKeys,
+      url: LOCAL_PLUMBER_BASE_URL,
+    },
+  })
+  return postToLocalPlumber('/run-permutation-analysis', payload)
+}
+
+export async function runPermutationConfiguralPrecheck(payload: RunPermutationAnalysisRequest): Promise<GenericAnalysisResponse> {
+  const api = (window as any).electronAPI
+  if (api?.runPermutationConfiguralPrecheck) {
+    return window.electronAPI.runPermutationConfiguralPrecheck(payload)
+  }
+
+  const availableKeys = api ? Object.keys(api).join(', ') : 'none'
+  if (isElectronRuntime()) {
+    console.error('[plsApi] Permutation configural precheck bridge unavailable in Electron runtime. Available keys:', availableKeys)
+    return bridgeMissingResponse('runPermutationConfiguralPrecheck', availableKeys)
+  }
+
+  console.warn('[plsApi] Permutation configural precheck bridge unavailable; falling back to local HTTP.')
+  addDiagnostic({
+    category: 'ui',
+    level: 'warn',
+    message: 'Falling back to the local HTTP PLS bridge for runPermutationConfiguralPrecheck.',
+    details: {
+      availableKeys,
+      url: LOCAL_PLUMBER_BASE_URL,
+    },
+  })
+  return postToLocalPlumber('/run-permutation-configural-precheck', payload)
+}
+
+export async function runMultiGroupAnalysisModel(payload: RunMultiGroupAnalysisRequest): Promise<GenericAnalysisResponse> {
+  const api = (window as any).electronAPI
+  if (api?.runMultiGroupAnalysis) {
+    return window.electronAPI.runMultiGroupAnalysis(payload)
+  }
+
+  const availableKeys = api ? Object.keys(api).join(', ') : 'none'
+  if (isElectronRuntime()) {
+    console.error('[plsApi] Multi-group analysis bridge unavailable in Electron runtime. Available keys:', availableKeys)
+    return bridgeMissingResponse('runMultiGroupAnalysis', availableKeys)
+  }
+
+  console.warn('[plsApi] Multi-group analysis bridge unavailable; falling back to local HTTP.')
+  addDiagnostic({
+    category: 'ui',
+    level: 'warn',
+    message: 'Falling back to the local HTTP PLS bridge for runMultiGroupAnalysis.',
+    details: {
+      availableKeys,
+      url: LOCAL_PLUMBER_BASE_URL,
+    },
+  })
+  return postToLocalPlumber('/run-multi-group-analysis', payload)
 }

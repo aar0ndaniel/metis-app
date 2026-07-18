@@ -132,6 +132,42 @@ await runTest('dataset loader falls back to workspace extraction when cache is m
   assert.ok(globalThis.localStorage.getItem('metis:dataset-view:ds-workspace'))
 })
 
+await runTest('dataset loader extracts relative dataset paths from metis workspace archives', async () => {
+  globalThis.localStorage.clear()
+
+  const bundled = await bundleModule('src/utils/datasetLoading.ts', 'datasetLoading.relative-workspace.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/utils/datasetLoading.ts to exist and compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const { loadDatasetSnapshot } = bundled.module ?? {}
+  assert.equal(typeof loadDatasetSnapshot, 'function', 'loadDatasetSnapshot should be exported')
+
+  const calls = []
+  const csvBase64 = Buffer.from('A,B,Gender\n10,20,Male\n30,40,Female', 'utf-8').toString('base64')
+  const result = await loadDatasetSnapshot({
+    datasetId: 'ds-relative',
+    fileName: 'micom-flow.csv',
+    filePath: 'micom-flow.csv',
+    workspaceId: 'ws-1',
+    workspaceName: 'Workspace.metisws',
+    workspacePath: 'C:/tmp/Workspace.metisws',
+    api: {
+      extractDataset: async (payload) => {
+        calls.push(['extractDataset', payload])
+        return { success: true, datasetTempPath: 'C:/tmp/extracted/micom-flow.csv' }
+      },
+      readFile: async (filePath) => {
+        calls.push(['readFile', filePath])
+        return { success: true, data: csvBase64 }
+      },
+    },
+  })
+
+  assert.deepEqual(calls[0], ['extractDataset', { adaFilePath: 'C:/tmp/Workspace.metisws', datasetId: 'ds-relative' }])
+  assert.deepEqual(calls[1], ['readFile', 'C:/tmp/extracted/micom-flow.csv'])
+  assert.deepEqual(result?.headers, ['A', 'B', 'Gender'])
+  assert.equal(result?.datasetTempPath, 'C:/tmp/extracted/micom-flow.csv')
+})
+
 if (process.exitCode && process.exitCode !== 0) {
   process.exit(process.exitCode)
 }

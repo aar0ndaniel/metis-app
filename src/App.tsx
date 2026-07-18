@@ -233,6 +233,11 @@ function collapseWorkspaceFoldersForStartup(workspaces: Workspace[]): Workspace[
   }))
 }
 
+function resolveLoadedActiveWorkspaceId(loadedWorkspaces: Workspace[], preferredId?: string | null): string {
+  const resolvedWorkspace = resolveWorkspaceForAction(loadedWorkspaces, preferredId)
+  return resolvedWorkspace?.id ?? loadedWorkspaces[0]?.id ?? ''
+}
+
 type DatasetImportedPayload = {
   datasetId?: string
   fileName: string
@@ -348,12 +353,13 @@ function AppShell() {
     }
 
     async function loadWorkspaces(options: { allowCacheFallback: boolean }) {
+      const preferredWorkspaceId = currentCanvasModelId || currentResultsModelId || activeWorkspaceId
       try {
         const result = await (window as any).electronAPI?.listWorkspaces?.()
         if (result?.success && Array.isArray(result.workspaces) && result.workspaces.length > 0) {
           const migrated = result.workspaces.map((workspace: Workspace) => migrateWorkspace(workspace))
           setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
-          setActiveWorkspaceId(migrated[0].id)
+          setActiveWorkspaceId(resolveLoadedActiveWorkspaceId(migrated, preferredWorkspaceId))
           addDiagnostic({
             category: 'workspace',
             message: 'Loaded workspaces from disk.',
@@ -369,7 +375,7 @@ function AppShell() {
             if (Array.isArray(parsed) && parsed.length > 0) {
               const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
               setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
-              setActiveWorkspaceId(migrated[0].id)
+              setActiveWorkspaceId(resolveLoadedActiveWorkspaceId(migrated, preferredWorkspaceId))
               addDiagnostic({
                 category: 'workspace',
                 level: 'warn',
@@ -402,7 +408,7 @@ function AppShell() {
           if (Array.isArray(parsed) && parsed.length > 0) {
             const migrated = parsed.map((workspace: Workspace) => migrateWorkspace(workspace))
             setWorkspaces(collapseWorkspaceFoldersForStartup(migrated))
-            setActiveWorkspaceId(migrated[0].id)
+            setActiveWorkspaceId(resolveLoadedActiveWorkspaceId(migrated, preferredWorkspaceId))
             addDiagnostic({
               category: 'workspace',
               level: 'warn',

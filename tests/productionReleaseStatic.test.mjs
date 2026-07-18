@@ -107,6 +107,8 @@ const viteSource = await read('vite.config.ts')
 assert.match(viteSource, /__METIS_APP_EDITION__/, 'Vite should define the build edition for the renderer.')
 assert.doesNotMatch(viteSource, /__METIS_RELEASE_CHANNEL__|JSON\.stringify\('Beta'\)/, 'Vite should not define an unused beta release channel.')
 assert.match(viteSource, /lifecycleEvent\.startsWith\('build:lite'\)[\s\S]*Lite[\s\S]*Bundle/, 'Vite should distinguish all Lite platform builds from Bundle builds.')
+assert.match(viteSource, /const appDefines = \{[\s\S]*__METIS_APP_EDITION__[\s\S]*\}/, 'Vite should keep Lite/Bundle edition defines in one shared object.')
+assert.match(viteSource, /define:\s*appDefines[\s\S]*main:\s*\{[\s\S]*vite:\s*\{[\s\S]*define:\s*appDefines/, 'Electron main builds should receive the same Lite/Bundle edition define as the renderer.')
 
 const modelCanvasSource = await read('src/pages/ModelCanvas.tsx')
 assert.match(modelCanvasSource, /USE SAMPLE DATASET/, 'Model canvas should keep the packaged sample dataset shortcut for first-run review.')
@@ -147,7 +149,7 @@ const bundleMacSection = bundleBuildSource.slice(
 assert.match(packageSource, /"from": "sample dataset\.csv"[\s\S]*"to": "sample-data\/sample dataset\.csv"/, 'Package build resources should include the sample dataset.')
 assert.deepEqual(
   packageJson.build.extraResources.find((resource) => resource.from === 'r-api')?.filter,
-  ['.Rprofile', 'plumber.R', 'renv-bootstrap.R', 'renv.lock', 'renv/**'],
+  ['.Rprofile', 'micom.R', 'plumber.R', 'renv-bootstrap.R', 'renv.lock', 'renv/**'],
   'Common package build resources should exclude platform runtime archives.'
 )
 assert.deepEqual(

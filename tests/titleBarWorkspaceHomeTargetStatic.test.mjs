@@ -18,6 +18,18 @@ assert.match(
 
 assert.match(
   appSource,
+  /function resolveLoadedActiveWorkspaceId\(loadedWorkspaces: Workspace\[\], preferredId\?: string \| null\): string[\s\S]*resolveWorkspaceForAction\(loadedWorkspaces,\s*preferredId\)[\s\S]*return resolvedWorkspace\?\.id \?\? loadedWorkspaces\[0\]\?\.id \?\? ''/,
+  'Workspace loading should preserve the active route/current model workspace when workspaces are refreshed.',
+)
+
+assert.doesNotMatch(
+  appSource,
+  /setActiveWorkspaceId\(migrated\[0\]\.id\)/,
+  'Workspace loading should not blindly activate the first workspace because that can override the model canvas owner.',
+)
+
+assert.match(
+  appSource,
   /<ModelCanvas[\s\S]*onReturnHome=\{returnToWorkspaceHome\}/,
   'App should pass the workspace-aware home return callback into ModelCanvas.',
 )

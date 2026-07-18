@@ -38,6 +38,13 @@ const PANEL_TITLES: Record<string, string> = {
   'lv-predictions-errors': 'LV Predictions and Errors',
   'plsem-mv-error-hist': 'MV Error Histograms',
   'plsem-lv-error-hist': 'LV Error Histograms',
+  'compositional-invariance': 'Compositional Invariance',
+  'equality-means': 'Equality of Means',
+  'equality-variances': 'Equality of Variances',
+  'invariance-classification': 'Invariance Classification',
+  'mga-path-coefficients': 'Path Coefficients - Multi-Group Comparison',
+  'mga-outer-loadings': 'Outer Loadings - Multi-Group Comparison',
+  'mga-outer-weights': 'Outer Weights - Multi-Group Comparison',
 }
 
 const PANEL_EXPORT_TABLE_TITLES: Record<string, string[]> = {
@@ -63,5 +70,7 @@ export function getModeResultsLabel(mode: AnalysisMode): string {
   if (mode === 'bootstrap') return 'Bootstrap Results'
   if (mode === 'plspredict') return 'PLSpredict Results'
   if (mode === 'advanced') return 'Advanced Analysis Results'
+  if (mode === 'permutation') return 'Permutation Analysis Results'
+  if (mode === 'mga') return 'Multi Group Analysis Results'
   return 'PLS-SEM Results'
 }

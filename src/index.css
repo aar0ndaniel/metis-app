@@ -232,13 +232,13 @@ body,
 html,
 body {
   margin: 0;
-  background: transparent;
+  background: var(--color-page);
   color: var(--color-text-primary);
   font-size: 14px;
 }
 
 #root {
-  background: transparent;
+  background: var(--color-page);
 }
 
 .titlebar-menu-row {
@@ -248,14 +248,12 @@ body {
   outline: none;
   transition:
     background 120ms ease,
-    box-shadow 120ms ease,
     filter 120ms ease;
 }
 
 .titlebar-menu-row:not(.titlebar-menu-row-disabled):hover,
 .titlebar-menu-row:not(.titlebar-menu-row-disabled):focus-visible {
   background: rgb(var(--color-hover-rgb) / 0.64);
-  box-shadow: inset 0 0 0 1px rgb(var(--color-border-rgb) / 0.28);
   filter: brightness(1.03);
 }
 
@@ -267,7 +265,6 @@ body {
   width: calc(100vw / var(--app-font-scale));
   height: calc(100vh / var(--app-font-scale));
   zoom: var(--app-font-scale);
-  filter: var(--app-interface-contrast-filter, contrast(100%));
   transition: filter 180ms ease-in-out;
 }
 

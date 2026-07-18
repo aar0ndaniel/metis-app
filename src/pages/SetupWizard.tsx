@@ -701,13 +701,6 @@ export default function SetupWizard() {
         )}
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 10, background: `rgb(${ACCENT_RGB} / 0.08)`, border: `1px solid rgb(${ACCENT_RGB} / 0.16)`, padding: '12px 14px' }}>
-        <Info size={16} color={ACCENT_HEX} weight="bold" />
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, lineHeight: 1.35 }}>
-          We'll auto-detect your R install during setup.
-        </span>
-      </div>
-
       <AppearanceChoice theme={selectedTheme} onThemeChange={setSelectedTheme} />
     </div>
   )
@@ -717,8 +710,8 @@ export default function SetupWizard() {
       <div
         style={{
           borderRadius: 12,
-          background: 'var(--color-elevated)',
-          border: `1px solid ${BORDER_SOFT}`,
+          background: 'transparent',
+          border: 'none',
           padding: '14px 16px',
           display: 'flex',
           flexDirection: 'column',
@@ -818,7 +811,7 @@ export default function SetupWizard() {
         <span style={{ height: 1, flex: 1, background: BORDER_SOFT }} />
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '14px 16px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 12, background: 'transparent', border: 'none', padding: '14px 16px' }}>
         <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--color-input)', border: `1px solid ${BORDER_SOFT}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: ACCENT_HEX, flexShrink: 0 }}>
           <Info size={16} weight="bold" />
         </div>

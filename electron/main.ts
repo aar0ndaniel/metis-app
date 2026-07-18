@@ -23,6 +23,10 @@ const isDev = !!process.env.VITE_DEV_SERVER_URL
 const DEFAULT_PLUMBER_HOST = '127.0.0.1'
 const DEFAULT_PLUMBER_PORT = Number(process.env.METIS_PLUMBER_PORT || '8765')
 
+if (process.env.METIS_DISABLE_HARDWARE_ACCELERATION === '1') {
+  app.disableHardwareAcceleration()
+}
+
 let mainWindow: BrowserWindow | null = null
 let splashWindow: BrowserWindow | null = null
 let installerWindow: BrowserWindow | null = null
@@ -60,6 +64,7 @@ const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FI
 const sampleDatasetFileName = 'sample dataset.csv'
 const missingValueTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
 const sessionTempDirName = `session-${randomBytes(8).toString('hex')}`
+const BUNDLED_PORTABLE_REQUIRED_PACKAGES = ['seminr', 'seminrExtras', 'plumber', 'semPower', 'readxl', 'jsonlite', 'Matrix']
 
 type NativeMenuViewState = {
   showVars: boolean
@@ -177,7 +182,10 @@ function installApplicationMenu() {
         nativeMenuAction('Run PLS-SEM', 'run-pls', 'Command+Enter'),
         nativeMenuAction('Run Bootstrap', 'run-bootstrap', 'Command+B'),
         nativeMenuAction('PLS Predict', 'run-pls-predict'),
-        nativeMenuAction('Advanced analysis', 'run-advanced-analysis'),
+        { type: 'separator' },
+        nativeMenuAction('NCA and IPMA', 'run-advanced-analysis'),
+        nativeMenuAction('Permutation Analysis (MICOM) Beta', 'run-permutation-analysis'),
+        nativeMenuAction('Multi Group Analysis (MGA)', 'run-multi-group-analysis'),
         { type: 'separator' },
         { label: 'Algorithm Settings', enabled: false },
       ],
@@ -1686,6 +1694,19 @@ function resolvePlumberScriptPath(): string {
   return found ?? candidates[0]
 }
 
+function resolveMicomScriptPath(): string {
+  const candidates = [
+    process.env.METIS_MICOM_R_PATH || '',
+    path.join(process.resourcesPath, 'r-api', 'micom.R'),
+    path.join(app.getAppPath(), 'r-api', 'micom.R'),
+    path.join(process.cwd(), 'r-api', 'micom.R'),
+    path.join(process.cwd(), '..', 'micom.R'),
+    path.join(__dirname, '..', 'r-api', 'micom.R'),
+  ].filter(Boolean)
+  const found = candidates.find((p) => fs.existsSync(p))
+  return found ?? candidates[0]
+}
+
 function getBundledRscriptEnv(rscriptPath: string): NodeJS.ProcessEnv | null {
   if (process.platform === 'win32') return null
   const { extractedRscriptPath, runtimeDir } = getBundledPortableRuntimePaths()
@@ -2150,6 +2171,19 @@ function getBundledUnixRuntimeRelocationMarker(runtimeDir: string): string {
   return path.join(runtimeDir, '.metis-conda-unpacked')
 }
 
+function getBundledPortablePackageLibraryDir(runtimeDir: string): string {
+  return process.platform === 'win32'
+    ? path.join(runtimeDir, 'App', 'R-Portable', 'library')
+    : path.join(runtimeDir, 'lib', 'R', 'library')
+}
+
+function getMissingBundledPortablePackages(runtimeDir: string): string[] {
+  const libraryDir = getBundledPortablePackageLibraryDir(runtimeDir)
+  return BUNDLED_PORTABLE_REQUIRED_PACKAGES.filter((packageName) => (
+    !fs.existsSync(path.join(libraryDir, packageName, 'DESCRIPTION'))
+  ))
+}
+
 function getFileSizeIfPresent(filePath: string): number | null {
   try {
     return fs.statSync(filePath).size
@@ -2183,6 +2217,9 @@ function getBundledPortableRuntimeStatus() {
     runtimeDirExists: fs.existsSync(runtimeDir),
     legacyRuntimeDir,
     legacyRuntimeDirExists: legacyRuntimeDir ? fs.existsSync(legacyRuntimeDir) : null,
+    requiredPackages: BUNDLED_PORTABLE_REQUIRED_PACKAGES,
+    packageLibraryDir: getBundledPortablePackageLibraryDir(runtimeDir),
+    missingRequiredPackages: getMissingBundledPortablePackages(runtimeDir),
     extractedRscriptPath,
     extractedRscriptExists: fs.existsSync(extractedRscriptPath),
     relocationMarkerPath,
@@ -2197,6 +2234,8 @@ function isBundledPortableRuntimeReady(): boolean {
   if (fs.existsSync(extractedRscriptPath)) {
     const relocationComplete = process.platform === 'win32' || fs.existsSync(getBundledUnixRuntimeRelocationMarker(runtimeDir))
     if (!relocationComplete) return false
+    const missingRequiredPackages = getMissingBundledPortablePackages(runtimeDir)
+    if (missingRequiredPackages.length > 0) return false
     return probeRscriptExecutable(extractedRscriptPath, getBundledRscriptEnv(extractedRscriptPath) ?? undefined).ok
   }
   if (fs.existsSync(archivePath)) return false
@@ -2204,6 +2243,12 @@ function isBundledPortableRuntimeReady(): boolean {
 }
 
 function verifyBundledPortableRuntimeCanStart(extractedRscriptPath: string): void {
+  const { runtimeDir } = getBundledPortableRuntimePaths()
+  const missingRequiredPackages = getMissingBundledPortablePackages(runtimeDir)
+  if (missingRequiredPackages.length > 0) {
+    throw new Error(`Bundled R runtime is missing required packages: ${missingRequiredPackages.join(', ')}. Reinstall the current Bundle build so Metis can refresh its R runtime.`)
+  }
+
   const probe = probeRscriptExecutable(extractedRscriptPath, getBundledRscriptEnv(extractedRscriptPath) ?? undefined)
   if (probe.ok) return
 
@@ -2483,6 +2528,7 @@ function buildPlumberEnv(port: number, rscriptPath = ''): NodeJS.ProcessEnv {
     METIS_PLUMBER_HOST: DEFAULT_PLUMBER_HOST,
     METIS_PLUMBER_TOKEN: plumberAuthToken,
     METIS_ALLOWED_DATA_ROOTS: getTrustedDatasetRoots().join(path.delimiter),
+    METIS_MICOM_R_PATH: resolveMicomScriptPath(),
   }
 
   for (const [name, value] of Object.entries(BLAS_THREAD_ENV_DEFAULTS)) {
@@ -3744,7 +3790,7 @@ ipcMain.handle('workspace:list', async () => {
       const isWorkspaceFile = hasWorkspaceFileExtension(entry.name)
       const isLegacyFolder = entry.name.toLowerCase().endsWith(LEGACY_WORKSPACE_FILE_EXTENSION)
       if (entry.isFile() && isWorkspaceFile) {
-        const ws = await readAdaFile(fullPath, false)
+        const ws = await readAdaFile(fullPath)
         if (ws) workspaces.push(ws)
       } else if (entry.isDirectory() && isLegacyFolder) {
         // Legacy v1 folder
@@ -4285,6 +4331,30 @@ ipcMain.handle('plumber:runAdvancedAnalysis', async (_, payload: any) => {
   }
 })
 
+ipcMain.handle('plumber:runPermutationAnalysis', async (_, payload: any) => {
+  try {
+    return await postToPlumber('/run-permutation-analysis', payload)
+  } catch (err: any) {
+    return plumberBridgeExceptionResponse(err, 'permutation analysis')
+  }
+})
+
+ipcMain.handle('plumber:runPermutationConfiguralPrecheck', async (_, payload: any) => {
+  try {
+    return await postToPlumber('/run-permutation-configural-precheck', payload)
+  } catch (err: any) {
+    return plumberBridgeExceptionResponse(err, 'permutation configural precheck')
+  }
+})
+
+ipcMain.handle('plumber:runMultiGroupAnalysis', async (_, payload: any) => {
+  try {
+    return await postToPlumber('/run-multi-group-analysis', payload)
+  } catch (err: any) {
+    return plumberBridgeExceptionResponse(err, 'multi-group analysis')
+  }
+})
+
 ipcMain.handle('shell:openExternal', async (_, url: string) => {
   try {
     if (!isAllowedExternalUrl(url)) {
@@ -4453,10 +4523,16 @@ async function extractRPortable(sendProgress: (step: string, detail: string) => 
   }
 
   if (fs.existsSync(extractedRscriptPath)) {
-    console.log('[install] Bundled R runtime already extracted, skipping')
-    await prepareBundledUnixRuntime(runtimeDir, extractedRscriptPath)
-    verifyBundledPortableRuntimeCanStart(extractedRscriptPath)
-    return
+    const missingRequiredPackages = getMissingBundledPortablePackages(runtimeDir)
+    if (!missingRequiredPackages.length) {
+      console.log('[install] Bundled R runtime already extracted, skipping')
+      await prepareBundledUnixRuntime(runtimeDir, extractedRscriptPath)
+      verifyBundledPortableRuntimeCanStart(extractedRscriptPath)
+      return
+    }
+
+    console.log(`[install] Bundled R runtime is missing required packages (${missingRequiredPackages.join(', ')}); refreshing extracted runtime`)
+    sendProgress('extracting', `Refreshing bundled R runtime (${missingRequiredPackages.join(', ')})...`)
   }
 
   if (fs.existsSync(runtimeDir)) {

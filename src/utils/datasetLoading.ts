@@ -40,6 +40,14 @@ function isUsablePath(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
+function isAbsoluteDatasetPath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]|^\//.test(value)
+}
+
+function isWorkspaceArchivePath(value: string): boolean {
+  return /\.(ada|metis|metisws)$/i.test(value.replace(/\\/g, '/'))
+}
+
 function getBridge(api?: DatasetFileBridge): DatasetFileBridge | undefined {
   if (api) return api
   if (typeof window === 'undefined') return undefined
@@ -83,8 +91,6 @@ export function resolveDatasetFilePathFromRequest(
     request.datasetTempPath,
     cached?.datasetTempPath,
     cached?.absolutePath,
-    cached?.filePath,
-    request.filePath,
   ]
 
   for (const candidate of candidatePaths) {
@@ -93,18 +99,18 @@ export function resolveDatasetFilePathFromRequest(
     }
   }
 
-  const workspacePath = String(request.workspacePath || cached?.workspacePath || '').trim()
-  if (!workspacePath) return ''
-
-  const normalizedWorkspacePath = workspacePath.replace(/\\/g, '/')
   const filePath = String(request.filePath || cached?.filePath || '').trim()
   if (!filePath) return ''
 
-  if (/^[A-Za-z]:[\\/]|^\//.test(filePath)) {
+  if (isAbsoluteDatasetPath(filePath)) {
     return filePath
   }
 
-  if (filePath === 'dataset.csv' && /\.(ada|metis|metisws)$/i.test(normalizedWorkspacePath)) {
+  const workspacePath = String(request.workspacePath || cached?.workspacePath || '').trim()
+  if (!workspacePath) return filePath
+
+  const normalizedWorkspacePath = workspacePath.replace(/\\/g, '/')
+  if (isWorkspaceArchivePath(normalizedWorkspacePath)) {
     return ''
   }
 

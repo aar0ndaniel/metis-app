@@ -61,6 +61,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   runBootstrap: (payload: any) => ipcRenderer.invoke('plumber:runBootstrap', payload),
   runPlsPredict: (payload: any) => ipcRenderer.invoke('plumber:runPlsPredict', payload),
   runAdvancedAnalysis: (payload: any) => ipcRenderer.invoke('plumber:runAdvancedAnalysis', payload),
+  runPermutationAnalysis: (payload: any) => ipcRenderer.invoke('plumber:runPermutationAnalysis', payload),
+  runPermutationConfiguralPrecheck: (payload: any) => ipcRenderer.invoke('plumber:runPermutationConfiguralPrecheck', payload),
+  runMultiGroupAnalysis: (payload: any) => ipcRenderer.invoke('plumber:runMultiGroupAnalysis', payload),
   onConfirmQuitDuringCalc: (cb: () => void) => {
     const handler = () => cb()
     ipcRenderer.on('confirm-quit-during-calc', handler)

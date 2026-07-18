@@ -1,12 +1,14 @@
 import { useEffect } from 'react'
-import { useCalculation, useCalculationDispatch } from '@/state/calculationContext'
+import { useCalculation, useCalculationDispatch, type CalcType } from '@/state/calculationContext'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-const labelForType = (t: 'pls' | 'bootstrap' | 'plspredict' | 'advanced') =>
+const labelForType = (t: CalcType) =>
   t === 'pls' ? 'PLS-SEM'
     : t === 'bootstrap' ? 'Bootstrap'
       : t === 'plspredict' ? 'PLSpredict'
-        : 'Advanced analysis'
+        : t === 'advanced' ? 'Advanced analysis'
+          : t === 'permutation' ? 'Permutation analysis'
+            : 'Multi group analysis'
 
 export default function CalculatingChip() {
   const state = useCalculation()

@@ -10,6 +10,10 @@ const titleBarSource = await fs.readFile(path.join(workspaceRoot, 'src/component
 const resultsSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
 const chartsSource = await fs.readFile(path.join(workspaceRoot, 'src/components/ResultsCharts.tsx'), 'utf8')
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 assert.doesNotMatch(
   titleBarSource,
   /const noWorkbench = screen !== 'canvas' && screen !== 'results'/,
@@ -19,15 +23,47 @@ assert.doesNotMatch(
 for (const [label, guard] of [
   ['Run Bootstrap', 'noCanvas || !status.hasCanvasItems'],
   ['PLS Predict', 'noCanvas || !status.hasCanvasItems'],
-  ['Advanced analysis', 'noCanvas || !status.canRunAdvanced'],
+  ['NCA and IPMA', 'noCanvas || !status.canRunAdvanced'],
+  ['Permutation Analysis (MICOM)', 'noCanvas || !status.canRunAdvanced'],
+  ['Multi Group Analysis (MGA)', 'noCanvas || !status.canRunAdvanced'],
   ['Algorithm Settings', 'noCanvas || !status.hasCanvasItems'],
 ]) {
   assert.match(
     titleBarSource,
-    new RegExp(`label:\\s*'${label}'[\\s\\S]*?disabled:\\s*${guard.replace(/[|]/g, '\\|')}`),
+    new RegExp(`label:\\s*'${escapeRegExp(label)}'[\\s\\S]*?disabled:\\s*${guard.replace(/[|]/g, '\\|')}`),
     `${label} should be disabled outside the model canvas.`,
   )
 }
+
+assert.doesNotMatch(
+  titleBarSource,
+  /label:\s*'Advanced analysis'/,
+  'Results mode lockout should not keep the old Advanced analysis menu label.',
+)
+
+assert.match(
+  titleBarSource,
+  /badge:\s*'Beta'/,
+  'Permutation Analysis should carry a renderer Beta badge.',
+)
+
+assert.match(
+  titleBarSource,
+  /label:\s*'Analysis', items:\s*buildAnalysisMenu\(currentScreen, status\), width:\s*320/,
+  'Analysis dropdown should be widened for the MICOM label and Beta badge.',
+)
+
+assert.match(
+  titleBarSource,
+  /backgroundColor:\s*'rgb\(var\(--color-accent-rgb\) \/ 0\.16\)'[\s\S]*color:\s*'var\(--color-accent\)'/,
+  'Permutation beta pill should use the active accent token instead of a hardcoded placeholder color.',
+)
+
+assert.doesNotMatch(
+  titleBarSource,
+  /magenta|#EC4899|#FF2D8D|#E91E63/i,
+  'Permutation beta pill should not hardcode the mockup magenta/pink color.',
+)
 
 assert.match(
   resultsSource,

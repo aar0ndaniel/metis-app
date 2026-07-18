@@ -28,6 +28,26 @@ assert.match(
 )
 
 assert.match(
+  indexCss,
+  /html,\s*\nbody\s*\{[\s\S]*background:\s*var\(--color-page\);/,
+  'The document background should use the active page color so scaled shell edges never show the native window background.'
+)
+
+assert.match(
+  indexCss,
+  /#root\s*\{[\s\S]*background:\s*var\(--color-page\);/,
+  'The React root should use the active page color instead of transparent edges.'
+)
+
+const appShellBlock = indexCss.match(/\.metis-app-shell\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+assert.ok(appShellBlock, 'The app shell CSS block should exist.')
+assert.doesNotMatch(
+  appShellBlock,
+  /\b(?:border|outline|box-shadow|filter)\s*:/,
+  'The application shell should not draw or composite an outer border, outline, shadow, or filter around the whole app.'
+)
+
+assert.match(
   prefsSource,
   /const \[theme, setTheme\] = useState<'Dark' \| 'Light'>\(\(\) => getSavedThemeSetting\(\)\)/,
   'Preferences should initialize from the saved theme instead of forcing Dark.'

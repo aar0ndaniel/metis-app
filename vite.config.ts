@@ -11,19 +11,23 @@ const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 
 }
 const lifecycleEvent = process.env.npm_lifecycle_event ?? ''
 const appEdition = lifecycleEvent.startsWith('build:lite') ? 'Lite' : 'Bundle'
+const appDefines = {
+  __METIS_APP_NAME__: JSON.stringify('metis'),
+  __METIS_APP_VERSION__: JSON.stringify(pkg.version ?? '0.0.1'),
+  __METIS_APP_EDITION__: JSON.stringify(appEdition),
+}
 
 export default defineConfig({
   base: './',
-  define: {
-    __METIS_APP_NAME__: JSON.stringify('metis'),
-    __METIS_APP_VERSION__: JSON.stringify(pkg.version ?? '0.0.1'),
-    __METIS_APP_EDITION__: JSON.stringify(appEdition),
-  },
+  define: appDefines,
   plugins: [
     react(),
     electron({
       main: {
         entry: './electron/main.ts',
+        vite: {
+          define: appDefines,
+        },
         onstart(args) {
           // Launch Electron in dev mode (connects to the Vite dev server)
           args.startup()
