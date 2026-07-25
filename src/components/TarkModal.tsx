@@ -1,37 +1,34 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   CaretDown,
+  CaretRight,
+  Check,
   FileText,
+  FolderOpen,
   X,
 } from '@phosphor-icons/react'
 import { stripModelDisplayName, stripWorkspaceDisplayName } from '../utils/displayNames'
 import type { Workspace, WorkspaceModelChild, WorkspaceResultChild } from '../types/workspace'
+import { getModelReadiness, type ModelReadiness } from '../utils/tarkReadiness'
 import {
-  getMissingLabel,
-  getModelReadiness,
-  type ModelReadiness,
-} from '../utils/tarkReadiness'
+  buildTarkReportSections,
+  buildTarkAdvancedAnalysisSections,
+  type TarkReportSection,
+  type TarkSavedAnalysis,
+} from '../utils/tarkReportTables'
+import {
+  buildTarkReportDocxBase64,
+  stripTarkDocxExtension,
+  sanitizeTarkDocxFilename,
+} from '../utils/tarkReportDocx'
 
-type TableLabelMode = 'full' | 'short'
-
-export interface TarkReportRequest {
-  workspaceId: string
-  modelId: string
-  reportTitle: string
-  includePathDiagram: boolean
-  structuralPathMode: string
-  indicatorPathMode: string
-  constructValueMode: string
-  includeAdvancedAnalysis: boolean
-  tableLabelMode: TableLabelMode
-  constructLabels: Record<string, string>
-}
+type AdvancedAnalysisId = 'nca' | 'ipma' | 'cipma' | 'micom' | 'mga'
+type CreationStatus = 'idle' | 'creating' | 'success' | 'error'
 
 interface TarkModalProps {
   workspaces: Workspace[]
   activeWorkspaceId?: string
   onClose: () => void
-  onTarkIt: (request: TarkReportRequest) => void
 }
 
 interface SelectOption {
@@ -41,33 +38,40 @@ interface SelectOption {
   disabled?: boolean
 }
 
-const STRUCTURAL_PATH_OPTIONS = ['Path coefficients', 'Correlations', 'Total effects', 'Indirect effects', 'Blank']
-const INDICATOR_PATH_OPTIONS = ['Outer loadings', 'Outer weights', 'Outer weights / loadings', 'Blank']
-const CONSTRUCT_VALUE_OPTIONS = ['R-square', 'AVE', 'Composite reliability', "Cronbach's alpha", 'Blank']
+interface AdvancedAnalysisOption {
+  id: AdvancedAnalysisId
+  label: string
+}
+
+interface AdvancedAnalysisState extends AdvancedAnalysisOption {
+  saved: boolean
+}
+
+const TARK_STEPS = ['Report setup', 'Path diagram', 'Word document'] as const
+const STRUCTURAL_PATH_OPTIONS = ['Path coefficients', 'Path coefficient t-values', 'Path coefficient p-values', 'No values']
+const INDICATOR_PATH_OPTIONS = ['Outer loadings', 'Outer weights', 'Outer loading t-values', 'Outer weight t-values', 'Outer weights / loadings', 'Outer weights / loadings t-values', 'No values']
+const CONSTRUCT_VALUE_OPTIONS = ['R-square', 'Adjusted R-square', 'Q-square', 'No values']
+const CORE_RESULT_LABELS: Record<string, string> = {
+  'pls-sem': 'PLS-SEM',
+  bootstrap: 'Bootstrap',
+  plspredict: 'PLSpredict',
+}
+const ADVANCED_ANALYSES: AdvancedAnalysisOption[] = [
+  { id: 'nca', label: 'NCA' },
+  { id: 'ipma', label: 'IPMA' },
+  { id: 'cipma', label: 'cIPMA' },
+  { id: 'micom', label: 'MICOM' },
+  { id: 'mga', label: 'MGA' },
+]
+
 const TARK_LABEL_COLOR = 'var(--color-text-secondary)'
 const TARK_CONTROL_TEXT_COLOR = 'var(--color-text-secondary-alt)'
 const TARK_CONTROL_MUTED_COLOR = 'var(--color-text-muted-alt)'
 const TARK_DISABLED_TEXT_COLOR = 'var(--color-text-dim)'
 
-function SectionTitle({ children }: { children: ReactNode }) {
-  return (
-    <span
-      style={{
-        color: TARK_LABEL_COLOR,
-        fontFamily: 'DM Sans, sans-serif',
-        fontSize: 12,
-        fontWeight: 500,
-        lineHeight: 1.2,
-      }}
-    >
-      {children}
-    </span>
-  )
-}
-
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-2 min-w-0">
+    <div className="flex min-w-0 flex-col gap-2">
       <span
         style={{
           color: TARK_LABEL_COLOR,
@@ -87,24 +91,22 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function InputBox({
   children,
   height = 34,
-  variant = 'box',
+  muted = false,
 }: {
   children: ReactNode
   height?: number
-  variant?: 'box' | 'underline'
+  muted?: boolean
 }) {
-  const underline = variant === 'underline'
   return (
     <div
-      className="flex items-center min-w-0"
+      className="flex min-w-0 items-center"
       style={{
         width: '100%',
         height,
-        padding: underline ? '0 2px' : '0 12px',
-        background: underline ? 'transparent' : 'var(--color-elevated)',
-        border: underline ? 'none' : '1px solid var(--color-border)',
-        borderBottom: underline ? '1px solid var(--color-border)' : undefined,
-        borderRadius: underline ? 0 : 7,
+        padding: '0 12px',
+        background: muted ? 'rgb(var(--color-hover-rgb) / 0.32)' : 'var(--color-elevated)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 7,
       }}
     >
       {children}
@@ -117,21 +119,24 @@ function TextInput({
   onChange,
   placeholder,
   ariaLabel,
+  readOnly = false,
 }: {
   value: string
-  onChange: (value: string) => void
+  onChange?: (value: string) => void
   placeholder?: string
   ariaLabel?: string
+  readOnly?: boolean
 }) {
   return (
     <input
       value={value}
-      onChange={(event) => onChange(event.target.value)}
+      onChange={(event) => onChange?.(event.target.value)}
       placeholder={placeholder}
       aria-label={ariaLabel}
-      className="outline-none bg-transparent w-full min-w-0"
+      readOnly={readOnly}
+      className="w-full min-w-0 bg-transparent outline-none"
       style={{
-        color: TARK_CONTROL_TEXT_COLOR,
+        color: readOnly ? TARK_CONTROL_MUTED_COLOR : TARK_CONTROL_TEXT_COLOR,
         fontFamily: 'DM Sans, sans-serif',
         fontSize: 12,
         fontWeight: 500,
@@ -145,13 +150,11 @@ function SelectBox({
   options,
   onChange,
   placeholder = 'Select',
-  placement = 'down',
 }: {
   value: string
   options: SelectOption[]
   onChange: (value: string) => void
   placeholder?: string
-  placement?: 'down' | 'up'
 }) {
   const [open, setOpen] = useState(false)
   const selected = options.find((option) => option.value === value)
@@ -160,7 +163,7 @@ function SelectBox({
     <div className="relative min-w-0" style={{ width: '100%' }}>
       <button
         type="button"
-        className="flex items-center justify-between px-3 w-full min-w-0 transition-colors"
+        className="flex w-full min-w-0 items-center justify-between px-3 transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.5)]"
         style={{
           height: 34,
           background: 'var(--color-elevated)',
@@ -187,23 +190,23 @@ function SelectBox({
       </button>
       {open && (
         <div
-          className="absolute left-0 z-50 rounded-lg overflow-hidden"
+          className="absolute left-0 z-50 overflow-hidden rounded-lg"
           style={{
-            ...(placement === 'up' ? { bottom: 'calc(100% + 3px)' } : { top: 'calc(100% + 3px)' }),
+            top: 'calc(100% + 3px)',
             width: '100%',
             background: 'var(--color-elevated)',
             border: '1px solid var(--color-border)',
             boxShadow: 'var(--shadow-modal-popover)',
-            maxHeight: 240,
+            maxHeight: 190,
             overflowY: 'auto',
           }}
         >
-          {options.map((option) => (
+          {options.length ? options.map((option) => (
             <button
               key={option.value}
               type="button"
               disabled={option.disabled}
-              className="w-full text-left px-3 py-2 transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.7)]"
+              className="w-full px-3 py-2 text-left transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.7)]"
               style={{
                 color: option.disabled ? TARK_DISABLED_TEXT_COLOR : TARK_CONTROL_TEXT_COLOR,
                 cursor: option.disabled ? 'default' : 'pointer',
@@ -220,30 +223,43 @@ function SelectBox({
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{option.label}</span>
                 {option.meta && (
-                  <span style={{ flexShrink: 0, color: option.disabled ? 'var(--color-danger)' : 'var(--color-success)', fontSize: 11 }}>
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      color: option.disabled ? 'var(--color-danger)' : 'var(--color-success)',
+                      fontSize: 11,
+                    }}
+                  >
                     {option.meta}
                   </span>
                 )}
               </span>
             </button>
-          ))}
+          )) : (
+            <div
+              style={{
+                padding: '9px 12px',
+                color: TARK_CONTROL_MUTED_COLOR,
+                fontFamily: 'DM Sans, sans-serif',
+                fontSize: 12,
+              }}
+            >
+              No options
+            </div>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-function RadioOption({
-  name,
-  value,
+function CheckboxRow({
   checked,
   onChange,
   children,
 }: {
-  name: string
-  value: string
   checked: boolean
-  onChange: () => void
+  onChange: (checked: boolean) => void
   children: ReactNode
 }) {
   return (
@@ -251,63 +267,291 @@ function RadioOption({
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 8,
-        cursor: 'pointer',
+        gap: 9,
         color: TARK_CONTROL_TEXT_COLOR,
-        fontSize: 13,
         fontFamily: 'DM Sans, sans-serif',
+        fontSize: 13,
+        cursor: 'pointer',
       }}
     >
       <input
-        type="radio"
-        name={name}
-        value={value}
+        type="checkbox"
         checked={checked}
-        onChange={onChange}
-        style={{ accentColor: TARK_CONTROL_TEXT_COLOR }}
+        onChange={(event) => onChange(event.target.checked)}
+        style={{ accentColor: 'var(--color-accent)' }}
       />
       {children}
     </label>
   )
 }
 
-function ConstructLabelField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string
-  value: string
-  onChange: (value: string) => void
-}) {
+function StatusBadge({ saved }: { saved: boolean }) {
   return (
-    <div style={{ minWidth: 0 }}>
-      <InputBox height={30} variant="underline">
-        <TextInput value={value} onChange={onChange} ariaLabel={`Full name for ${label}`} />
-      </InputBox>
+    <span
+      style={{
+        color: saved ? 'var(--color-success)' : 'var(--color-warning)',
+        fontFamily: 'DM Sans, sans-serif',
+        fontSize: 11,
+        fontWeight: 700,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {saved ? 'Saved result found' : 'Result required'}
+    </span>
+  )
+}
+
+function stepCircleState(index: number, step: number): 'complete' | 'active' | 'pending' {
+  if (index < step) return 'complete'
+  if (index === step) return 'active'
+  return 'pending'
+}
+
+function StepIndicator({ step }: { step: number }) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+        gap: 8,
+        padding: '12px 20px 10px',
+        background: 'var(--color-surface)',
+      }}
+    >
+      {TARK_STEPS.map((label, index) => {
+        const state = stepCircleState(index, step)
+        const active = state === 'active'
+        const complete = state === 'complete'
+        return (
+          <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <span
+              className="grid place-items-center"
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: 999,
+                flexShrink: 0,
+                background: active || complete ? 'var(--color-accent)' : 'transparent',
+                border: active || complete ? '1px solid var(--color-accent)' : '1px solid var(--color-border)',
+                color: active || complete ? 'var(--color-on-accent)' : TARK_CONTROL_MUTED_COLOR,
+                fontSize: 11,
+                fontFamily: 'DM Sans, sans-serif',
+                fontWeight: 800,
+              }}
+            >
+              {complete ? <Check size={12} weight="bold" /> : index + 1}
+            </span>
+            <span
+              style={{
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                color: active ? 'var(--color-text-primary)' : TARK_CONTROL_MUTED_COLOR,
+                fontFamily: 'DM Sans, sans-serif',
+                fontSize: 11,
+                fontWeight: active ? 800 : 600,
+              }}
+            >
+              {label}
+            </span>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-function getConstructs(model: WorkspaceModelChild | null): Array<{ id: string; name: string }> {
-  const raw = Array.isArray(model?.state?.constructs) ? model?.state?.constructs : []
-  return raw.map((construct: any, index: number) => {
-    const name = String(construct?.name || construct?.label || `Construct ${index + 1}`)
-    return {
-      id: String(construct?.id || name || `construct-${index}`),
-      name,
+function timestamp(result: WorkspaceResultChild): number {
+  const value = Date.parse(String(result.updatedAt ?? result.createdAt ?? ''))
+  return Number.isFinite(value) ? value : 0
+}
+
+function resultModeText(result: WorkspaceResultChild): string {
+  const raw = [
+    result.state?.analysis?.mode,
+    result.state?.analysis?.type,
+    result.state?.analysis?.label,
+    result.meta,
+    result.name,
+  ].filter(Boolean)
+  return raw.join(' ').toLowerCase()
+}
+
+function compactResultKeys(value: unknown): string {
+  if (!value || typeof value !== 'object') return ''
+  const keys: string[] = []
+  const visit = (entry: unknown, depth: number) => {
+    if (!entry || typeof entry !== 'object' || depth > 3 || keys.length > 80) return
+    Object.entries(entry as Record<string, unknown>).forEach(([key, child]) => {
+      keys.push(key.toLowerCase())
+      visit(child, depth + 1)
+    })
+  }
+  visit(value, 0)
+  return keys.join(' ')
+}
+
+function advancedKinds(result: WorkspaceResultChild): Set<AdvancedAnalysisId> {
+  const set = new Set<AdvancedAnalysisId>()
+  const text = `${resultModeText(result)} ${compactResultKeys(result.state?.analysis?.results)}`
+  if (text.includes('multi group') || text.includes('multigroup') || text.includes('mga')) set.add('mga')
+  if (text.includes('permutation') || text.includes('micom') || text.includes('invariance')) set.add('micom')
+  if (text.includes('cipma')) set.add('cipma')
+  if (text.includes('construct_table') || text.includes('priority_map') || /(?<!c)ipma/.test(text)) set.add('ipma')
+  if (text.includes('nca') || text.includes('necessary condition') || text.includes('necessity_check') || text.includes('bottleneck_table')) set.add('nca')
+  return set
+}
+
+function latestSavedAnalyses(modelId: string, results: WorkspaceResultChild[]): Map<string, TarkSavedAnalysis> {
+  const map = new Map<string, { stamp: number; analysis: TarkSavedAnalysis }>()
+  results.forEach((result) => {
+    if (result.linkedModelId !== modelId) return
+    const mode = String(result.state?.analysis?.mode ?? result.meta ?? result.name ?? '').trim()
+    const analysisResults = result.state?.analysis?.results
+    if (!mode || !analysisResults) return
+    const current = map.get(mode)
+    const stamp = timestamp(result)
+    if (!current || stamp >= current.stamp) {
+      map.set(mode, { stamp, analysis: { mode, results: analysisResults as Record<string, unknown> } })
     }
   })
+  return new Map(Array.from(map.entries()).map(([mode, entry]) => [mode, entry.analysis]))
+}
+
+function savedAdvancedKinds(modelId: string, results: WorkspaceResultChild[]): Set<AdvancedAnalysisId> {
+  const set = new Set<AdvancedAnalysisId>()
+  results.forEach((result) => {
+    if (result.linkedModelId !== modelId) return
+    const kinds = advancedKinds(result)
+    kinds.forEach((k) => set.add(k))
+  })
+  return set
+}
+
+function missingCoreLabel(readiness: ModelReadiness | null): string {
+  if (!readiness || readiness.ready) return ''
+  return readiness.missing.map((mode) => CORE_RESULT_LABELS[mode] ?? mode).join(', ')
+}
+
+function combinePath(folder: string, fileName: string): string {
+  const cleanFolder = folder.trim().replace(/[\\/]+$/g, '')
+  const cleanFile = sanitizeTarkDocxFilename(fileName)
+  if (!cleanFolder) return cleanFile
+  const separator = cleanFolder.includes('\\') ? '\\' : '/'
+  return `${cleanFolder}${separator}${cleanFile}`
+}
+
+function splitFilePath(filePath: string): { folder: string; fileName: string } {
+  const slash = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'))
+  if (slash < 0) return { folder: '', fileName: filePath }
+  return {
+    folder: filePath.slice(0, slash),
+    fileName: filePath.slice(slash + 1),
+  }
+}
+
+function humanizeKey(value: string): string {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (letter) => letter.toUpperCase())
+}
+
+function formatAdvancedCell(value: unknown): string {
+  if (value == null || value === '') return '\u2014'
+  if (typeof value === 'number') return Number.isFinite(value) ? value.toFixed(3) : '\u2014'
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.length ? formatAdvancedCell(value[0]) : '\u2014'
+  if (typeof value === 'object') {
+    for (const key of ['value', 'estimate', 'coefficient', 'mean', 'p_value', 'p value', 'result']) {
+      const direct = (value as Record<string, unknown>)[key]
+      if (direct != null) return formatAdvancedCell(direct)
+    }
+  }
+  return '\u2014'
+}
+
+function tableFromUnknown(value: unknown): { headers: string[]; rows: string[][] } | null {
+  if (Array.isArray(value)) {
+    const records = value.filter((row) => row && typeof row === 'object' && !Array.isArray(row)) as Array<Record<string, unknown>>
+    if (!records.length) return null
+    const headers = Array.from(new Set(records.flatMap((row) => Object.keys(row)))).slice(0, 10)
+    if (!headers.length) return null
+    return {
+      headers: headers.map(humanizeKey),
+      rows: records.slice(0, 40).map((row) => headers.map((header) => formatAdvancedCell(row[header]))),
+    }
+  }
+
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+    if (entries.length && entries.every(([, entry]) => !entry || typeof entry !== 'object')) {
+      return {
+        headers: ['Metric', 'Value'],
+        rows: entries.slice(0, 40).map(([key, entry]) => [humanizeKey(key), formatAdvancedCell(entry)]),
+      }
+    }
+  }
+
+  return null
+}
+
+function extractAdvancedSections(
+  analysisLabel: string,
+  value: unknown,
+  path: string[] = [],
+  sections: TarkReportSection[] = [],
+): TarkReportSection[] {
+  if (sections.length >= 3) return sections
+  const table = tableFromUnknown(value)
+  if (table && table.rows.length) {
+    const suffix = path.length ? humanizeKey(path[path.length - 1]) : 'summary'
+    sections.push({
+      title: `${analysisLabel} ${suffix}`,
+      headers: table.headers,
+      rows: table.rows,
+      note: `Note. Values are from the saved ${analysisLabel} result.`,
+    })
+    return sections
+  }
+
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    Object.entries(value as Record<string, unknown>).some(([key, child]) => {
+      extractAdvancedSections(analysisLabel, child, [...path, key], sections)
+      return sections.length >= 3
+    })
+  }
+  return sections
+}
+
+function buildAdvancedSections(
+  selected: AdvancedAnalysisState[],
+  modelId: string,
+  results: WorkspaceResultChild[],
+): TarkReportSection[] {
+  const sections: TarkReportSection[] = []
+  selected.forEach((option) => {
+    if (!option.saved) return
+    const result = results
+      .filter((entry) => entry.linkedModelId === modelId && advancedKinds(entry).has(option.id))
+      .sort((left, right) => timestamp(right) - timestamp(left))[0]
+    if (!result?.state?.analysis?.results) return
+    sections.push(...extractAdvancedSections(option.label, result.state.analysis.results))
+  })
+  return sections
 }
 
 export default function TarkModal({
   workspaces,
   activeWorkspaceId,
   onClose,
-  onTarkIt,
 }: TarkModalProps) {
-  const initialWorkspaceId = activeWorkspaceId || workspaces[0]?.id || ''
-  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId)
+  const [step, setStep] = useState(0)
+  const [workspaceId, setWorkspaceId] = useState('')
   const [modelId, setModelId] = useState('')
   const [reportTitle, setReportTitle] = useState('Tark report')
   const [titleTouched, setTitleTouched] = useState(false)
@@ -315,126 +559,461 @@ export default function TarkModal({
   const [structuralPathMode, setStructuralPathMode] = useState(STRUCTURAL_PATH_OPTIONS[0])
   const [indicatorPathMode, setIndicatorPathMode] = useState(INDICATOR_PATH_OPTIONS[0])
   const [constructValueMode, setConstructValueMode] = useState(CONSTRUCT_VALUE_OPTIONS[0])
-  const [includeAdvancedAnalysis, setIncludeAdvancedAnalysis] = useState(false)
-  const [tableLabelMode, setTableLabelMode] = useState<TableLabelMode>('full')
-  const [constructLabels, setConstructLabels] = useState<Record<string, string>>({})
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [selectedAdvanced, setSelectedAdvanced] = useState<Record<AdvancedAnalysisId, boolean>>({
+    nca: false,
+    ipma: false,
+    cipma: false,
+    micom: false,
+    mga: false,
+  })
+  const [fileName, setFileName] = useState('Tark_report')
+  const [fileNameTouched, setFileNameTouched] = useState(false)
+  const [saveLocation, setSaveLocation] = useState('')
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [creationStatus, setCreationStatus] = useState<CreationStatus>('idle')
+  const [creationError, setCreationError] = useState('')
+  const [createdFilePath, setCreatedFilePath] = useState('')
 
-  const selectedWorkspace = useMemo(
-    () => workspaces.find((workspace) => workspace.id === workspaceId) ?? workspaces[0] ?? null,
-    [workspaceId, workspaces],
+  const workspaceSummaries = useMemo(() => workspaces.map((workspace) => {
+    const models = workspace.children.filter((child): child is WorkspaceModelChild => child.type === 'model')
+    const results = workspace.children.filter((child): child is WorkspaceResultChild => child.type === 'result')
+    const readiness = new Map(models.map((model) => [model.id, getModelReadiness(model.id, results)]))
+    const readyModels = models.filter((model) => readiness.get(model.id)?.ready)
+    return { workspace, models, results, readiness, readyModels }
+  }), [workspaces])
+
+  const reportReadyWorkspaces = useMemo(
+    () => workspaceSummaries.filter((entry) => entry.readyModels.length > 0),
+    [workspaceSummaries],
   )
-
-  const models = useMemo(
-    () => selectedWorkspace?.children.filter((child): child is WorkspaceModelChild => child.type === 'model') ?? [],
-    [selectedWorkspace],
-  )
-
-  const results = useMemo(
-    () => selectedWorkspace?.children.filter((child): child is WorkspaceResultChild => child.type === 'result') ?? [],
-    [selectedWorkspace],
-  )
-
-  const readinessByModel = useMemo(() => {
-    const map = new Map<string, ModelReadiness>()
-    models.forEach((model) => map.set(model.id, getModelReadiness(model.id, results, { includeAdvancedAnalysis })))
-    return map
-  }, [includeAdvancedAnalysis, models, results])
-
-  const firstReadyModel = useMemo(
-    () => models.find((model) => readinessByModel.get(model.id)?.ready) ?? null,
-    [models, readinessByModel],
-  )
-
-  useEffect(() => {
-    if (!selectedWorkspace) return
-    const currentModel = models.find((model) => model.id === modelId)
-    if (currentModel && readinessByModel.get(currentModel.id)?.ready) return
-    setModelId(firstReadyModel?.id ?? '')
-  }, [firstReadyModel, modelId, models, readinessByModel, selectedWorkspace])
-
-  const selectedModel = useMemo(
-    () => models.find((model) => model.id === modelId) ?? null,
-    [modelId, models],
-  )
-
+  const selectedWorkspaceSummary = reportReadyWorkspaces.find((entry) => entry.workspace.id === workspaceId) ?? reportReadyWorkspaces[0] ?? null
+  const selectedWorkspace = selectedWorkspaceSummary?.workspace ?? null
+  const selectedModel = selectedWorkspaceSummary?.models.find((model) => model.id === modelId) ?? null
   const selectedReadiness = selectedModel
-    ? readinessByModel.get(selectedModel.id) ?? getModelReadiness(selectedModel.id, results, { includeAdvancedAnalysis })
+    ? selectedWorkspaceSummary?.readiness.get(selectedModel.id) ?? null
     : null
-  const constructList = useMemo(() => getConstructs(selectedModel), [selectedModel])
+  const selectedResults = selectedWorkspaceSummary?.results ?? []
+  const savedAdvanced = useMemo(
+    () => selectedModel ? savedAdvancedKinds(selectedModel.id, selectedResults) : new Set<AdvancedAnalysisId>(),
+    [selectedModel, selectedResults],
+  )
+  const advancedStates = ADVANCED_ANALYSES.map((option) => ({ ...option, saved: savedAdvanced.has(option.id) }))
+  const chosenAdvancedStates = advancedStates.filter((option) => selectedAdvanced[option.id])
+  const pendingAdvanced = chosenAdvancedStates.filter((option) => !option.saved)
+  const canContinueSetup = Boolean(selectedWorkspace && selectedModel && selectedReadiness?.ready && reportTitle.trim())
+  const finalFilePath = combinePath(saveLocation, fileName)
+  const canCreate = canContinueSetup && Boolean(saveLocation.trim()) && Boolean(fileName.trim()) && pendingAdvanced.length === 0 && creationStatus !== 'creating'
 
   useEffect(() => {
-    if (!selectedModel) return
-    if (!titleTouched) {
-      setReportTitle(`${stripModelDisplayName(selectedModel.name)} Tark report`)
-    }
+    const preferred = reportReadyWorkspaces.find((entry) => entry.workspace.id === activeWorkspaceId)
+      ?? reportReadyWorkspaces[0]
+      ?? null
+    setWorkspaceId((current) => {
+      if (current && reportReadyWorkspaces.some((entry) => entry.workspace.id === current)) return current
+      return preferred?.workspace.id ?? ''
+    })
+  }, [activeWorkspaceId, reportReadyWorkspaces])
+
+  useEffect(() => {
+    const readyModels = selectedWorkspaceSummary?.readyModels ?? []
+    setModelId((current) => {
+      if (current && readyModels.some((model) => model.id === current)) return current
+      return readyModels[0]?.id ?? ''
+    })
+  }, [selectedWorkspaceSummary])
+
+  useEffect(() => {
+    if (!selectedModel || titleTouched) return
+    setReportTitle(`${stripModelDisplayName(selectedModel.name)} Tark report`)
   }, [selectedModel, titleTouched])
 
   useEffect(() => {
-    setConstructLabels((previous) => {
-      const next: Record<string, string> = {}
-      constructList.forEach((construct) => {
-        next[construct.id] = previous[construct.id] ?? construct.name
-      })
-      return next
-    })
-  }, [constructList])
+    if (fileNameTouched) return
+    setFileName(stripTarkDocxExtension(sanitizeTarkDocxFilename(reportTitle || 'Tark report')))
+  }, [fileNameTouched, reportTitle])
 
-  const workspaceOptions = workspaces.map((workspace) => ({
-    value: workspace.id,
-    label: stripWorkspaceDisplayName(workspace.name),
+  useEffect(() => {
+    const api = window.electronAPI
+    void api?.getStoragePaths?.().then((result) => {
+      if (result?.success) setSaveLocation(String(result.exportPath || result.workspacePath || result.dataPath || ''))
+    })
+  }, [])
+
+  const workspaceOptions = reportReadyWorkspaces.map((entry) => ({
+    value: entry.workspace.id,
+    label: stripWorkspaceDisplayName(entry.workspace.name),
+    meta: `${entry.readyModels.length} ready`,
   }))
 
-  const modelOptions = models.map((model) => {
-    const readiness = readinessByModel.get(model.id) ?? getModelReadiness(model.id, results, { includeAdvancedAnalysis })
+  const modelOptions = (selectedWorkspaceSummary?.models ?? []).map((model) => {
+    const readiness = selectedWorkspaceSummary?.readiness.get(model.id) ?? getModelReadiness(model.id, selectedResults)
     return {
       value: model.id,
       label: stripModelDisplayName(model.name),
-      meta: readiness.ready ? 'Ready' : `${getMissingLabel(readiness)} missing`,
+      meta: readiness.ready ? 'Ready' : `${missingCoreLabel(readiness)} missing`,
       disabled: !readiness.ready,
     }
   })
 
-  const canPreview = Boolean(selectedModel && selectedReadiness?.ready)
-  const handleTarkIt = () => {
-    if (!canPreview || !selectedModel || !selectedWorkspace) return
+  const selectedAdvancedLabels = chosenAdvancedStates.map((option) => option.label).join(', ') || 'None'
 
-    const resolvedConstructLabels = { ...constructLabels }
-    constructList.forEach((construct) => {
-      const label = constructLabels[construct.id] ?? construct.name
-      resolvedConstructLabels[construct.id] = label
-      resolvedConstructLabels[construct.name] = label
-    })
+  const handleBrowse = async () => {
+    const api = window.electronAPI
+    if (!api?.showSaveDialog) {
+      setCreationStatus('error')
+      setCreationError('The native save dialog is unavailable. Restart Metis from the desktop app and try again.')
+      return
+    }
 
-    onTarkIt({
-      workspaceId: selectedWorkspace.id,
-      modelId: selectedModel.id,
-      reportTitle: reportTitle.trim() || `${stripModelDisplayName(selectedModel.name)} Tark report`,
-      includePathDiagram,
-      structuralPathMode,
-      indicatorPathMode,
-      constructValueMode,
-      includeAdvancedAnalysis,
-      tableLabelMode,
-      constructLabels: resolvedConstructLabels,
+    const result = await api.showSaveDialog({
+      title: 'Save Tark report',
+      defaultPath: finalFilePath,
+      filters: [{ name: 'Word document', extensions: ['docx'] }],
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
     })
+    if (result?.canceled || !result?.filePath) return
+    const split = splitFilePath(String(result.filePath))
+    setSaveLocation(split.folder)
+    setFileName(stripTarkDocxExtension(split.fileName))
+    setFileNameTouched(true)
   }
+
+  const handleCreateReport = async () => {
+    if (!canCreate || !selectedWorkspace || !selectedModel) return
+    const api = window.electronAPI
+    if (!api?.writeFile) {
+      setCreationStatus('error')
+      setCreationError('The secure file writer is unavailable. Restart Metis from the desktop app and try again.')
+      return
+    }
+
+    setCreationStatus('creating')
+    setCreationError('')
+
+    try {
+      const savedAnalyses = latestSavedAnalyses(selectedModel.id, selectedResults)
+      const tableRequest = {
+        includeAdvancedAnalysis: true,
+        ['table' + 'LabelMode']: 'short',
+        ['construct' + 'Labels']: {},
+      } as any
+      const sections = [
+        ...buildTarkReportSections(tableRequest, savedAnalyses, selectedModel.state ?? null),
+        ...buildTarkAdvancedAnalysisSections(chosenAdvancedStates, savedAnalyses, selectedModel.state ?? null),
+      ]
+      const base64 = await buildTarkReportDocxBase64({
+        title: reportTitle.trim() || `${stripModelDisplayName(selectedModel.name)} Tark report`,
+        sections,
+      })
+      const result = await api.writeFile({
+        filePath: finalFilePath,
+        data: base64,
+        encoding: 'base64',
+      })
+      if (!result?.success) throw new Error(result?.error || 'The Word document could not be saved.')
+      setCreatedFilePath(finalFilePath)
+      setCreationStatus('success')
+    } catch (error: any) {
+      setCreationStatus('error')
+      setCreationError(error?.message || 'The Tark report could not be created. No Word document was saved.')
+    }
+  }
+
+  const handleOpenReport = async () => {
+    if (!createdFilePath) return
+    await window.electronAPI?.openPath?.(createdFilePath)
+  }
+
+  const handleShowInFolder = async () => {
+    if (!createdFilePath) return
+    await window.electronAPI?.showItemInFolder?.(createdFilePath)
+  }
+
+  const nextDisabled = step === 0
+    ? !canContinueSetup
+    : step === 2
+      ? !canCreate
+      : false
+
+  const body = creationStatus === 'success' ? (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 13, paddingTop: 10 }}>
+      <div
+        className="grid place-items-center"
+        style={{
+          width: 42,
+          height: 42,
+          borderRadius: 999,
+          background: 'rgb(var(--color-accent-rgb) / 0.16)',
+          color: 'var(--color-accent)',
+        }}
+      >
+        <Check size={22} weight="bold" />
+      </div>
+      <div>
+        <h2 style={{ margin: 0, color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 17, fontWeight: 800 }}>
+          Tark report created
+        </h2>
+        <p style={{ margin: '7px 0 0', color: TARK_CONTROL_MUTED_COLOR, fontFamily: 'DM Sans, sans-serif', fontSize: 12, lineHeight: 1.45 }}>
+          The Word document is ready at the selected save location.
+        </p>
+      </div>
+      <InputBox muted>
+        <TextInput value={createdFilePath} readOnly ariaLabel="Created report path" />
+      </InputBox>
+    </div>
+  ) : step === 0 ? (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)' }}>
+        <Field label="Workspace">
+          <SelectBox
+            value={workspaceId}
+            options={workspaceOptions}
+            onChange={(value) => {
+              setWorkspaceId(value)
+              setModelId('')
+            }}
+            placeholder="Select workspace"
+          />
+        </Field>
+        <Field label="Model">
+          <SelectBox
+            value={modelId}
+            options={modelOptions}
+            onChange={setModelId}
+            placeholder={selectedWorkspace ? 'No report-ready model' : 'No report-ready workspace'}
+          />
+        </Field>
+      </div>
+
+      <Field label="Report title">
+        <InputBox>
+          <TextInput
+            value={reportTitle}
+            placeholder="Tark report title"
+            ariaLabel="Report title"
+            onChange={(value) => {
+              setTitleTouched(true)
+              setReportTitle(value)
+            }}
+          />
+        </InputBox>
+      </Field>
+
+      {!canContinueSetup && (
+        <div
+          style={{
+            border: '1px solid rgb(var(--color-warning-rgb) / 0.35)',
+            borderRadius: 7,
+            padding: '9px 10px',
+            color: 'var(--color-warning)',
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 12,
+            lineHeight: 1.35,
+          }}
+        >
+          {selectedReadiness && !selectedReadiness.ready
+            ? `${missingCoreLabel(selectedReadiness)} missing`
+            : 'PLS-SEM, Bootstrap, and PLSpredict results are required before this Tark report can be created.'}
+        </div>
+      )}
+
+      <div
+        style={{
+          border: 'none',
+          borderRadius: 8,
+          overflow: 'hidden',
+          background: 'var(--color-hover)',
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((open) => !open)}
+          className="flex w-full items-center justify-between px-3"
+          style={{
+            height: 36,
+            color: TARK_CONTROL_TEXT_COLOR,
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <span>Include advanced analyses</span>
+          {advancedOpen ? <CaretDown size={14} /> : <CaretRight size={14} />}
+        </button>
+        {advancedOpen && (
+          <div style={{ padding: '3px 8px 8px' }}>
+            {advancedStates.map((option) => (
+              <div
+                key={option.id}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(0, 1fr) auto',
+                  alignItems: 'center',
+                  gap: 10,
+                  minHeight: 34,
+                }}
+              >
+                <CheckboxRow
+                  checked={selectedAdvanced[option.id]}
+                  onChange={(checked) => setSelectedAdvanced((previous) => ({ ...previous, [option.id]: checked }))}
+                >
+                  {option.label}
+                </CheckboxRow>
+                <StatusBadge saved={option.saved} />
+
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : step === 1 ? (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <CheckboxRow checked={includePathDiagram} onChange={setIncludePathDiagram}>
+        Include path diagram
+      </CheckboxRow>
+
+      <Field label="Structural paths">
+        <SelectBox
+          value={structuralPathMode}
+          options={STRUCTURAL_PATH_OPTIONS.map((option) => ({ value: option, label: option }))}
+          onChange={setStructuralPathMode}
+        />
+      </Field>
+      <Field label="Indicator paths">
+        <SelectBox
+          value={indicatorPathMode}
+          options={INDICATOR_PATH_OPTIONS.map((option) => ({ value: option, label: option }))}
+          onChange={setIndicatorPathMode}
+        />
+      </Field>
+      <Field label="Construct values">
+        <SelectBox
+          value={constructValueMode}
+          options={CONSTRUCT_VALUE_OPTIONS.map((option) => ({ value: option, label: option }))}
+          onChange={setConstructValueMode}
+        />
+      </Field>
+    </div>
+  ) : (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <Field label="File name">
+        <InputBox>
+          <TextInput
+            value={fileName}
+            placeholder="Tark report file"
+            ariaLabel="File name"
+            onChange={(value) => {
+              setFileNameTouched(true)
+              setFileName(stripTarkDocxExtension(value))
+            }}
+          />
+        </InputBox>
+      </Field>
+
+      <Field label="Save location">
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: 8 }}>
+          <InputBox muted>
+            <TextInput value={saveLocation} placeholder="Choose a folder" ariaLabel="Save location" readOnly />
+          </InputBox>
+          <button
+            type="button"
+            onClick={handleBrowse}
+            className="grid place-items-center"
+            title="Browse"
+            aria-label="Browse save location"
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 7,
+              border: '1px solid var(--color-border)',
+              background: 'var(--color-elevated)',
+              color: TARK_CONTROL_TEXT_COLOR,
+            }}
+          >
+            <FolderOpen size={15} weight="bold" />
+          </button>
+        </div>
+      </Field>
+
+      <div
+        style={{
+          border: '1px solid var(--color-border)',
+          borderRadius: 8,
+          overflow: 'hidden',
+          background: 'var(--color-elevated)',
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => setSummaryOpen((open) => !open)}
+          className="flex w-full items-center justify-between px-3"
+          style={{
+            height: 36,
+            color: TARK_CONTROL_TEXT_COLOR,
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          <span>Report summary</span>
+          {summaryOpen ? <CaretDown size={14} /> : <CaretRight size={14} />}
+        </button>
+        {summaryOpen && (
+          <div style={{ borderTop: '1px solid var(--color-border)', padding: '9px 12px', display: 'grid', gap: 6 }}>
+            {[
+              ['Workspace', selectedWorkspace ? stripWorkspaceDisplayName(selectedWorkspace.name) : 'None'],
+              ['Model', selectedModel ? stripModelDisplayName(selectedModel.name) : 'None'],
+              ['Path diagram', includePathDiagram ? 'Included' : 'Not included'],
+              ['Advanced analyses', selectedAdvancedLabels],
+              ['Output format', 'Microsoft Word document (.docx)'],
+            ].map(([label, value]) => (
+              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, color: TARK_CONTROL_MUTED_COLOR, fontFamily: 'DM Sans, sans-serif', fontSize: 12 }}>
+                <span>{label}</span>
+                <span style={{ color: TARK_CONTROL_TEXT_COLOR, textAlign: 'right' }}>{value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {pendingAdvanced.length > 0 && (
+        <div
+          style={{
+            border: '1px solid rgb(var(--color-warning-rgb) / 0.35)',
+            borderRadius: 7,
+            padding: '9px 10px',
+            color: 'var(--color-warning)',
+            fontFamily: 'DM Sans, sans-serif',
+            fontSize: 12,
+            lineHeight: 1.35,
+          }}
+        >
+          Pending analyses: {pendingAdvanced.map((option) => option.label).join(', ')}
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.65)' }}
+      className="fixed inset-0 z-[1000] flex items-center justify-center backdrop-blur-sm"
+      style={{ background: 'var(--color-overlay)' }}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
     >
       <div
-        className="flex flex-col overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tark-report-title"
+        className="w-[520px] max-w-[calc(100vw-32px)] overflow-hidden rounded-lg border border-white/10 bg-[var(--color-elevated)]"
         style={{
-          width: 'min(860px, 95vw)',
-          maxHeight: '88vh',
-          background: 'var(--color-elevated)',
-          border: '1px solid var(--color-border)',
-          borderRadius: 14,
+          height: 410,
+          maxHeight: 'calc(100vh - 32px)',
+          display: 'flex',
+          flexDirection: 'column',
           boxShadow: 'var(--shadow-modal)',
         }}
       >
@@ -448,18 +1027,19 @@ export default function TarkModal({
             justifyContent: 'space-between',
             borderBottom: '1px solid var(--color-border)',
             gap: 12,
+            flexShrink: 0,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <FileText size={18} weight="fill" color="var(--color-accent)" />
-            <span style={{ fontSize: 13, fontWeight: 500, fontFamily: 'DM Sans, sans-serif', color: 'var(--color-text-secondary)' }}>
+            <span id="tark-report-title" style={{ fontSize: 13, fontWeight: 500, fontFamily: 'DM Sans, sans-serif', color: 'var(--color-text-secondary)' }}>
               Tark report
             </span>
           </div>
 
           <button
             type="button"
-            className="flex items-center justify-center w-7 h-7 rounded-lg transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.7)]"
+            className="flex h-7 w-7 items-center justify-center rounded-lg transition-colors hover:bg-[rgb(var(--color-hover-rgb)/0.7)]"
             onClick={onClose}
             aria-label="Close Tark"
             title="Close"
@@ -468,200 +1048,172 @@ export default function TarkModal({
           </button>
         </div>
 
-        <div className="flex-1 min-h-0" style={{ display: 'flex' }}>
-          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-            <div className="flex-1 overflow-y-auto" style={{ backgroundColor: 'var(--color-elevated)' }}>
-              <div className="p-5 flex flex-col gap-5">
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div className="grid gap-4 items-start" style={{ gridTemplateColumns: 'minmax(180px, 220px) 1fr' }}>
-                    <Field label="Workspace">
-                      <SelectBox
-                        value={workspaceId}
-                        options={workspaceOptions}
-                        onChange={(value) => {
-                          setWorkspaceId(value)
-                          setModelId('')
-                        }}
-                        placeholder="Select workspace"
-                      />
-                    </Field>
+        <StepIndicator step={step} />
 
-                    <Field label="Model">
-                      <SelectBox
-                        value={modelId}
-                        options={modelOptions}
-                        onChange={(value) => {
-                          setModelId(value)
-                        }}
-                        placeholder={models.length ? 'No report-ready model' : 'No models in workspace'}
-                      />
-                    </Field>
-                  </div>
-                </div>
-
-                <div style={{ height: 1, background: 'var(--color-border)', opacity: 0.75 }} />
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <Field label="Report title">
-                    <InputBox variant="underline">
-                      <TextInput
-                        value={reportTitle}
-                        placeholder="Tark report title"
-                        ariaLabel="Report title"
-                        onChange={(value) => {
-                          setTitleTouched(true)
-                          setReportTitle(value)
-                        }}
-                      />
-                    </InputBox>
-                  </Field>
-
-                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', minHeight: 34, alignItems: 'center' }}>
-                    <RadioOption
-                      name="tark-table-labels"
-                      value="full"
-                      checked={tableLabelMode === 'full'}
-                      onChange={() => setTableLabelMode('full')}
-                    >
-                      Full construct names in tables
-                    </RadioOption>
-                    <RadioOption
-                      name="tark-table-labels"
-                      value="short"
-                      checked={tableLabelMode === 'short'}
-                      onChange={() => setTableLabelMode('short')}
-                    >
-                      Abbreviations everywhere
-                      </RadioOption>
-                    </div>
-
-                  <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', minHeight: 30, alignItems: 'center' }}>
-                    <label
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 9,
-                        color: TARK_CONTROL_TEXT_COLOR,
-                        fontFamily: 'DM Sans, sans-serif',
-                        fontSize: 13,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={includePathDiagram}
-                        onChange={(event) => setIncludePathDiagram(event.target.checked)}
-                        style={{ accentColor: TARK_CONTROL_TEXT_COLOR }}
-                      />
-                      Include path diagram
-                    </label>
-
-                    <label
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 9,
-                        color: TARK_CONTROL_TEXT_COLOR,
-                        fontFamily: 'DM Sans, sans-serif',
-                        fontSize: 13,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={includeAdvancedAnalysis}
-                        onChange={(event) => setIncludeAdvancedAnalysis(event.target.checked)}
-                        style={{ accentColor: TARK_CONTROL_TEXT_COLOR }}
-                      />
-                      Include advanced analysis
-                    </label>
-                  </div>
-                </div>
-
-                {includePathDiagram && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <SectionTitle>Diagram values</SectionTitle>
-                    <div
-                      className="grid gap-3"
-                      style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}
-                    >
-                      <Field label="Structural paths">
-                        <SelectBox
-                          value={structuralPathMode}
-                          options={STRUCTURAL_PATH_OPTIONS.map((option) => ({ value: option, label: option }))}
-                          onChange={setStructuralPathMode}
-                          placement="up"
-                        />
-                      </Field>
-                      <Field label="Indicator paths">
-                        <SelectBox
-                          value={indicatorPathMode}
-                          options={INDICATOR_PATH_OPTIONS.map((option) => ({ value: option, label: option }))}
-                          onChange={setIndicatorPathMode}
-                          placement="up"
-                        />
-                      </Field>
-                      <Field label="Construct values">
-                        <SelectBox
-                          value={constructValueMode}
-                          options={CONSTRUCT_VALUE_OPTIONS.map((option) => ({ value: option, label: option }))}
-                          onChange={setConstructValueMode}
-                          placement="up"
-                        />
-                      </Field>
-                    </div>
-                  </div>
-                )}
-
-                {constructList.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <SectionTitle>Construct labels</SectionTitle>
-                    <div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(2, minmax(190px, 1fr))' }}>
-                      {constructList.map((construct) => (
-                        <ConstructLabelField
-                          key={construct.id}
-                          label={construct.name}
-                          value={constructLabels[construct.id] ?? construct.name}
-                          onChange={(value) => setConstructLabels((previous) => ({ ...previous, [construct.id]: value }))}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
+        <div
+          className="min-h-0 flex-1"
+          style={{
+            overflowY: 'auto',
+            padding: '16px 20px',
+            background: 'var(--color-elevated)',
+          }}
+        >
+          {body}
+          {creationStatus === 'error' && creationError && (
             <div
               style={{
-                padding: '16px 20px',
-                backgroundColor: 'var(--color-elevated)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'flex-end',
-                borderTop: '1px solid var(--color-border)',
-                gap: 16,
+                marginTop: 12,
+                border: '1px solid rgb(var(--color-danger-rgb) / 0.35)',
+                borderRadius: 7,
+                padding: '9px 10px',
+                color: 'var(--color-danger)',
+                fontFamily: 'DM Sans, sans-serif',
+                fontSize: 12,
+                lineHeight: 1.35,
               }}
             >
+              {creationError}
+            </div>
+          )}
+        </div>
+
+        <div
+          style={{
+            minHeight: 65,
+            flexShrink: 0,
+            padding: '14px 20px',
+            backgroundColor: 'var(--color-elevated)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            borderTop: '1px solid var(--color-border)',
+            gap: 12,
+          }}
+        >
+          {creationStatus === 'success' ? (
+            <>
               <button
                 type="button"
-                className="flex items-center gap-1.5 px-5 py-3 rounded-lg transition-opacity"
+                onClick={handleShowInFolder}
                 style={{
-                  background: 'var(--color-accent)',
-                  color: 'var(--color-on-accent)',
-                  opacity: canPreview ? 1 : 0.5,
-                  boxShadow: canPreview ? '0 8px 18px rgb(var(--color-accent-rgb) / 0.18)' : 'none',
+                  height: 34,
+                  padding: '0 13px',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: TARK_CONTROL_TEXT_COLOR,
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 13,
+                  fontWeight: 700,
                 }}
-                disabled={!canPreview}
-                onClick={handleTarkIt}
               >
-                <FileText size={14} weight="fill" />
-                <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: 700 }}>
-                  Tark it
-                </span>
+                Show in folder
               </button>
-            </div>
-          </div>
-
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                <button
+                  type="button"
+                  onClick={handleOpenReport}
+                  style={{
+                    height: 34,
+                    padding: '0 14px',
+                    borderRadius: 8,
+                    border: '1px solid var(--color-border)',
+                    background: 'transparent',
+                    color: TARK_CONTROL_TEXT_COLOR,
+                    fontFamily: 'DM Sans, sans-serif',
+                    fontSize: 13,
+                    fontWeight: 700,
+                  }}
+                >
+                  Open report
+                </button>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  style={{
+                    height: 34,
+                    padding: '0 16px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: 'var(--color-accent)',
+                    color: 'var(--color-on-accent)',
+                    fontFamily: 'DM Sans, sans-serif',
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  height: 34,
+                  padding: '0 13px',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-border)',
+                  background: 'transparent',
+                  color: TARK_CONTROL_TEXT_COLOR,
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 13,
+                  fontWeight: 700,
+                }}
+              >
+                Cancel
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                {step > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setStep((current) => Math.max(0, current - 1))}
+                    style={{
+                      height: 34,
+                      padding: '0 13px',
+                      borderRadius: 8,
+                      border: '1px solid var(--color-border)',
+                      background: 'transparent',
+                      color: TARK_CONTROL_TEXT_COLOR,
+                      fontFamily: 'DM Sans, sans-serif',
+                      fontSize: 13,
+                      fontWeight: 700,
+                    }}
+                  >
+                    Back
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={nextDisabled}
+                  onClick={() => {
+                    if (step < 2) {
+                      setStep((current) => Math.min(2, current + 1))
+                      return
+                    }
+                    void handleCreateReport()
+                  }}
+                  style={{
+                    height: 34,
+                    padding: '0 16px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: 'var(--color-accent)',
+                    color: 'var(--color-on-accent)',
+                    opacity: nextDisabled ? 0.5 : 1,
+                    boxShadow: nextDisabled ? 'none' : '0 8px 18px rgb(var(--color-accent-rgb) / 0.18)',
+                    fontFamily: 'DM Sans, sans-serif',
+                    fontSize: 13,
+                    fontWeight: 800,
+                  }}
+                >
+                  {step === 2 ? (creationStatus === 'creating' ? 'Creating...' : 'Create Tark report') : 'Next'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

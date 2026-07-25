@@ -4,6 +4,91 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-07-22 - Tark native Word-report workflow
+
+### User Request
+- Replace the old Tark in-app copy/paste preview with a three-step Word-export workflow.
+- Keep the exported tables consistent with the prior APA-style Tark preview.
+- Provide a parent-folder guide, `C:\Users\aaron\dev\how to use tark.md`, with screenshots and the full saved-results-to-Word-report flow.
+- Keep the compact modal responsive to Metis theme, accent, and UI-language settings.
+
+### Implemented
+- Rebuilt `src/components/TarkModal.tsx` as a compact three-step wizard: `Report setup`, `Path diagram`, and `Word document`.
+- Report setup permits only report-ready models with saved `PLS-SEM`, `Bootstrap`, and `PLSpredict` results. Optional saved analyses are NCA, IPMA, cIPMA, MICOM, and MGA.
+- Path-diagram settings cover structural-path values, indicator-path values, construct values, and inclusion of the diagram in the report.
+- Word-document settings provide report filename, native save-location browsing, a collapsed report summary, and success actions to open the report or reveal it in its folder.
+- Added `src/utils/tarkReportDocx.ts`, which uses JSZip to create a real editable `.docx`. Tables are native Word tables with APA-style no-vertical-border treatment, bold repeating headers, numeric alignment, notes, and landscape sections for wide tables.
+- `src/utils/tarkReportTables.ts` now provides the report sections used by the export, including saved PLSpredict sections and narrower model-fit rows.
+- Electron write/open policy now explicitly permits `.docx` output. The secure preload/type bridge exposes `showItemInFolder`, and the main process validates that path before revealing it.
+- Added `C:\Users\aaron\dev\how to use tark.md`, including the supplied screenshots and instructions for saving core/optional results before exporting a report.
+- The legacy preview route remains available as a fallback, but creating a new report no longer navigates to it.
+
+### Latest Refinements
+- Removed the divider below the wizard progress steps.
+- Removed Run buttons from the advanced-analysis accordion. It is now a status-and-selection surface only: users run analyses through their normal Metis analysis flows, save results, then select the saved analyses for inclusion.
+- The advanced-analysis accordion is borderless and uses `var(--color-hover)`: darker neutral grey in dark mode and an off-white neutral in light mode.
+- Step 3 stores and displays an extension-free filename. Users can clear and retype it without `.docx` returning; the system appends and sanitizes `.docx` only at the save boundary. Create is disabled while the filename is blank.
+- The generated Word report now uses an olive-green title, 10-point Candara body text with horizontal table-cell padding, and a centered footer with the official Metis logo plus a clickable `metis` link to `https://metis.emend.it.com`.
+- The standalone ResultsView HTML export now forces literal `#1A1F2B` text with `!important` on its light sidebar links (including visited/active links), table cells, and table headers. This prevents white-on-white export output while retaining the active accent for diagrams and subtle backgrounds.
+- Diagnosed a stale compiled Electron renderer as the reason a 2026-07-22 report still had the old white `--color-on-accent` CSS. Rebuilt the current dev renderer and repaired the affected report at `C:\Users\aaron\Downloads\metis\exports\metis-teaching_and_social-1784729312718.html` without changing analysis data.
+
+### Verification
+- Passed: `node tests\tarkReportDocx.test.mjs`.
+- Passed: `node tests\tarkWordExportFlowStatic.test.mjs`.
+- Passed: `node tests\tarkLaunchStatic.test.mjs`.
+- Passed: `node tests\tarkReportTables.test.mjs`, `node tests\tarkReadiness.test.mjs`, `node tests\resultsClipboardApa.test.mjs`, and `node tests\securityHardening.test.mjs`.
+- Passed: `npm run typecheck`.
+- Static and type-level coverage is green. The latest small visual refinements have not had a separate manual Electron screenshot pass.
+
+### Current Status
+- Tark is now a local native-Word export workflow rather than a results-copy workflow.
+- The worktree contains unrelated existing changes and has not been staged, committed, or pushed as part of this Tark work.
+
+## 2026-07-18 - Moderation and higher-order construct coverage for MICOM/permutation and MGA
+
+### User Question
+- User asked whether permutation analysis and multi-group analysis only cover mediation today, and specifically what happens when the model includes moderating variables or higher-order constructs.
+- User asked that, if Metis does not handle that robustly yet, we first populate project memory with the current state and the planned work before implementation.
+- User clarified that MICOM and MGA themselves were already completed. The intended 2026-07-18 scope is only the moderation and higher-order construct behavior inside those analyses.
+
+### Current System State From Inspection
+- Normal PLS-SEM and Bootstrap already carry moderation from the canvas into the analysis payload. `src/utils/plsModelPayload.ts` maps a moderation arrow into an `IV*Moderator -> DV` interaction path and adds the moderator main-effect path when needed.
+- Normal PLS-SEM and Bootstrap already carry higher-order construct metadata. `src/utils/plsModelPayload.ts` sends HOCs as `is_higher_order` constructs with `dimensions`, and `r-api/plumber.R` validates those dimensions, builds SEMinR `higher_composite(...)` definitions, and extracts HOC dimension results for reporting.
+- The R backend currently builds moderation interaction terms with `seminr::interaction_term(..., method = seminr::two_stage)`. That means the base model can estimate moderated structural paths, including when a HOC is used as a predictor, moderator, or outcome, as long as SEMinR can fit the two-stage model.
+- The MICOM implementation exists in `r-api/micom.R` and is designed for measurement invariance: configural invariance, compositional invariance, equality of construct score means, equality of construct score variances, admissibility, and classification. MICOM should not be reported as a moderation-effect significance test by itself.
+- Current frontend results support can display MICOM result tables and MGA result shapes when those result objects are present. Current moderation-specific panels are attached to `pls-sem` and `bootstrap` result modes, not to permutation/MICOM or MGA result modes.
+- Initial route-name search in the current checkout did not expose the expected `/run-permutation-analysis`, `/run-permutation-configural-precheck`, or `/run-multi-group-analysis` route layer in `r-api/plumber.R`, even though frontend services, Electron IPC, tests, and previous project-memory entries expect those routes. This is not the requested feature scope by itself; treat it only as a restoration blocker if HOC/moderation work cannot be verified through the current code.
+
+### Interpretation Decision
+- For models with moderators, MICOM should first answer whether construct scores are comparable across groups. After that, MGA should compare the generated interaction path coefficients (`IV*Moderator -> DV`) across groups, with group-specific estimates and bootstrap or permutation-based decision columns.
+- For models with higher-order constructs, MICOM and MGA should operate on the fitted construct scores produced by the same SEMinR model specification used by PLS-SEM. Reports must name HOCs clearly, preserve their lower-order dimensions, and avoid silently flattening HOC paths into ordinary indicator rows without context.
+- If a moderator is itself a HOC, or if a HOC is part of the moderated path, the report should show the interaction label, the HOC role, the affected structural path, the group-specific estimates, and whether the comparison is supported by invariant measurement.
+
+### Planned Work
+- Use systematic debugging to focus on the requested gap: what MICOM/MGA currently calculate and report when a fitted model includes moderation paths or HOCs.
+- Use TDD for the HOC/moderation slice: write or extend focused tests that fail because moderation/HOC-aware MICOM/MGA reporting is incomplete, then implement the smallest changes needed to pass.
+- Add moderation-aware MGA reporting: compare interaction effects across groups, include group-specific interaction estimates, include direct path context, and surface clear significance/decision wording for `IV*Moderator -> DV`.
+- Add HOC-aware reporting semantics for MICOM and MGA: carry HOC/dimension metadata through response mapping, label HOC rows distinctly, and show when a HOC participates in a compared structural or interaction path.
+- Restore missing base MICOM/MGA plumbing only if the current checkout cannot run or verify the HOC/moderation slice without it.
+- Add result-panel tests before UI changes: extend catalog/data/export contracts so moderation/HOC-aware MGA output has discoverable panels or table views without disrupting existing PLS-SEM and Bootstrap moderation panels.
+- Use UI/UX and frontend design guidance only after the data contract is stable, keeping the ResultsView dense, consistent with Metis, and free of explanatory marketing-style text.
+- Before final handoff, run focused Node contract tests, `npm run typecheck` for code changes, relevant R parse/smoke checks if `r-api/plumber.R` changes, and a requesting-code-review pass.
+
+### Completed Today
+- Implemented the requested HOC/moderation reporting slice without reopening the already-completed MICOM/MGA base work.
+- MGA now exposes a dedicated moderation comparison panel only when the saved analysis model contains moderation paths, so the app does not infer moderation from interaction-looking result labels alone.
+- MGA moderation rows report the IV, moderator, DV, interaction label, compared interaction path, HOC role context, group-specific estimates, confidence interval or p-value decision columns, and result text.
+- Permutation/MICOM and MGA now expose a higher-order construct context panel when the saved model or backend result payload contains HOC metadata.
+- HOC context rows can be reconstructed from existing `final_results.hoc_results` output when an analysis-time canvas snapshot is unavailable.
+- Saved analysis records now carry the analysis-time model snapshot so reopened results describe the model that produced the analysis, even if the canvas is edited later.
+- Verification passed on `2026-07-18`: `node tests\multiGroupAnalysisResultsContract.test.mjs`, `node tests\permutationAnalysisResultsContract.test.mjs`, `node tests\resultsPanelCatalog.test.mjs`, `node tests\resultsDerivedData.test.mjs`, `node tests\panelTableData.test.mjs`, `npm run typecheck`, and `git diff --check` with LF-to-CRLF warnings only.
+
+### Guardrails
+- Keep changes small and reviewable, one slice at a time.
+- Do not present MICOM as testing moderation; present it as the measurement-invariance prerequisite for trustworthy group comparisons.
+- Do not hide moderation or HOC complexity inside generic path tables when the user needs to know how the system calculated and reported those effects.
+- Treat previous memory entries as useful history, but verify current source before claiming capability exists.
+
 ## 2026-07-16 — MICOM / permutation analysis UI/backend progress and remaining work
 
 - `2026-07-16` — Current goal memory update requested by user: MICOM/permutation analysis is not being treated as complete until the real app-level flow is proved. Completed work includes the title-bar/menu labels, `NCA and IPMA` as one entry, `Permutation Analysis (MICOM)` with the `Beta` pill, `Multi Group Analysis (MGA)`, the approved PLS-SEM-sized permutation modal styling, app-coded grouping dropdowns, left/right group mapping and swap behavior, live configural-precheck plumbing, MICOM Plumber routes backed by `C:\Users\aaron\dev\micom.R`, and the first ResultsView panels for permutation output. Remaining work is to finish/prove a user-level Electron flow from an actual active workspace/model through opening the modal, selecting a grouping variable, calculating, saving the permutation result, and navigating to the ResultsView; if that flow exposes any UI/runtime issue, fix it before marking the goal done.

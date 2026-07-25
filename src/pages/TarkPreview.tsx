@@ -4,7 +4,6 @@ import { CaretDown, CaretRight, Copy } from '@phosphor-icons/react'
 import PathDiagram from '../components/PathDiagram'
 import TarkIcon from '../components/TarkIcon'
 import { dispatchToast } from '../components/Toast'
-import type { TarkReportRequest } from '../components/TarkModal'
 import { buildClipboardTableHtml, buildClipboardTableText, type ExportTableSection } from '../results/clipboardTables'
 import { readWorkspaceClientCache } from '../utils/workspaceClientCache'
 import { normalizeResultMode, type RequiredMode } from '../utils/tarkReadiness'
@@ -17,6 +16,19 @@ import type { Workspace, WorkspaceModelChild, WorkspaceResultChild } from '../ty
 
 interface TarkPreviewLocationState {
   tark?: TarkReportRequest
+}
+
+interface TarkReportRequest {
+  workspaceId: string
+  modelId: string
+  reportTitle: string
+  includePathDiagram: boolean
+  structuralPathMode: string
+  indicatorPathMode: string
+  constructValueMode: string
+  includeAdvancedAnalysis: boolean
+  tableLabelMode: 'full' | 'short'
+  constructLabels: Record<string, string>
 }
 
 interface SavedAnalysis {

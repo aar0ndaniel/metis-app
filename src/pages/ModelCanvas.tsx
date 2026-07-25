@@ -228,6 +228,7 @@ interface GroupResizeState {
 interface ModelDraftState {
   constructs: Construct[]
   paths: Path[]
+  preferredLatentShape?: ConstructShape
 }
 
 interface PersistCanvasSnapshotOptions {
@@ -276,8 +277,9 @@ function readAutosaveDraft(modelId?: string | null): ModelDraftState | null {
     const parsed = JSON.parse(raw)
     const constructs = Array.isArray(parsed?.constructs) ? parsed.constructs : null
     const paths = Array.isArray(parsed?.paths) ? parsed.paths : null
+    const preferredLatentShape = parsed?.preferredLatentShape
     if (!constructs || !paths) return null
-    return { constructs, paths }
+    return { constructs, paths, preferredLatentShape }
   } catch {
     return null
   }
@@ -1186,10 +1188,22 @@ export default function ModelCanvas({
     if (modelId === 'from-rcode') return readRCodeImportedState().paths
     return []
   })
+  const [preferredLatentShape, setPreferredLatentShape] = useState<ConstructShape>(() => {
+    return currentModel?.state?.preferredLatentShape ?? 'circle'
+  })
+  const [latentShapeMenuOpen, setLatentShapeMenuOpen] = useState(false)
+
+  useEffect(() => {
+    if (currentModel?.state?.preferredLatentShape) {
+      setPreferredLatentShape(currentModel.state.preferredLatentShape)
+    }
+  }, [currentModel?.id, currentModel?.state?.preferredLatentShape])
+
   const getCurrentSnapshot = useCallback((): ModelDraftState => ({
     constructs: cloneModelState(constructs),
     paths: cloneModelState(paths),
-  }), [constructs, paths])
+    preferredLatentShape,
+  }), [constructs, paths, preferredLatentShape])
   const currentGraphSignature = useMemo(
     () => buildAnalysisGraphSignature({ constructs, paths }),
     [constructs, paths]
@@ -1926,6 +1940,7 @@ export default function ModelCanvas({
         ...(currentModel.state || {}),
         constructs: snapshot.constructs,
         paths: snapshot.paths,
+        preferredLatentShape: snapshot.preferredLatentShape ?? preferredLatentShape,
       },
     }
     const updatedChildren = activeWs.children.map((child: any) => child.id === modelId ? updatedModel : child)
@@ -3836,6 +3851,10 @@ export default function ModelCanvas({
       setSelectedPaths([])
     }
 
+    // Expand the Properties panel whenever a construct is selected
+    setRightPanelCollapsed(false)
+    setRightTab('Properties')
+
     const dragIds = nextSelected.includes(id) ? nextSelected : [id]
     beginSelectionDrag(e, dragIds)
   }
@@ -3874,11 +3893,16 @@ export default function ModelCanvas({
       setSelectedPaths([])
     }
 
+    // Expand the Properties panel whenever an indicator is selected
+    setRightPanelCollapsed(false)
+    setRightTab('Properties')
+
     const dragIds = nextSelected.includes(id) ? nextSelected : [id]
     beginSelectionDrag(e, dragIds)
   }
 
   const onSvgMouseDown = (e: React.MouseEvent) => {
+    setLatentShapeMenuOpen(false)
     if (isSpaceDown || e.button === 1 || activeTool === 'pan') {
       setIsPanning(true)
       panStartRef.current = { x: e.clientX, y: e.clientY, px: panX, py: panY }
@@ -3902,11 +3926,13 @@ export default function ModelCanvas({
       setMarquee({ active: true, startX: mouseX, startY: mouseY, endX: mouseX, endY: mouseY })
       setSelected([])
       setSelectedPaths([])
+      setRightPanelCollapsed(true)
       return
     }
 
     setSelected([])
     setSelectedPaths([])
+    setRightPanelCollapsed(true)
   }
 
   const onSvgMouseMove = (e: React.MouseEvent) => {
@@ -4281,7 +4307,7 @@ export default function ModelCanvas({
       x: newConstructPos.x, y: newConstructPos.y, radius, 
       indicators: pendingVars.map(v => ({ name: v, loading: null })),
       labelColor: 'var(--color-text-primary)', labelBold: true, labelItalic: false, labelSize: 13,
-      shape: 'circle',
+      shape: preferredLatentShape,
       isHigherOrder: newConstructIsHigherOrder,
     }
     const updated = [...constructs, newC]
@@ -5008,13 +5034,36 @@ export default function ModelCanvas({
             })()}
 
             {/* Drawing Preview */}
-            {isDrawing && drawStart && drawCurrent && (
-              <circle 
-                cx={drawStart.x} cy={drawStart.y} 
-                r={Math.sqrt(Math.pow(drawCurrent.x - drawStart.x, 2) + Math.pow(drawCurrent.y - drawStart.y, 2))} 
-                fill="none" stroke={C.secondary} strokeWidth={2} strokeDasharray="5,5"
-              />
-            )}
+            {isDrawing && drawStart && drawCurrent && (() => {
+              const r = Math.max(20, Math.sqrt(Math.pow(drawCurrent.x - drawStart.x, 2) + Math.pow(drawCurrent.y - drawStart.y, 2)))
+              if (preferredLatentShape === 'oval') {
+                return (
+                  <ellipse
+                    cx={drawStart.x} cy={drawStart.y}
+                    rx={r * OVAL_RX_SCALE} ry={r * OVAL_RY_SCALE}
+                    fill="none" stroke={C.secondary} strokeWidth={2} strokeDasharray="5,5"
+                  />
+                )
+              }
+              if (preferredLatentShape === 'rectangle') {
+                const rx = r * OVAL_RX_SCALE
+                const ry = r * OVAL_RY_SCALE
+                return (
+                  <rect
+                    x={drawStart.x - rx} y={drawStart.y - ry}
+                    width={rx * 2} height={ry * 2} rx={6} ry={6}
+                    fill="none" stroke={C.secondary} strokeWidth={2} strokeDasharray="5,5"
+                  />
+                )
+              }
+              return (
+                <circle 
+                  cx={drawStart.x} cy={drawStart.y} 
+                  r={r} 
+                  fill="none" stroke={C.secondary} strokeWidth={2} strokeDasharray="5,5"
+                />
+              )
+            })()}
 
             {dragGuideLines.map((line, idx) => (
               <g key={`guide-${idx}`}>
@@ -6108,9 +6157,123 @@ export default function ModelCanvas({
         <TBtn id="tour-connect" onClick={() => setActiveTool('connect')} active={activeTool === 'connect'} activeTone={activeTool === 'connect' ? 'yellow' : undefined} activeLabel="Connect" title="Connect (C)">
           <ArrowRight size={18} color={activeTool === 'connect' ? C.textOnAccent : C.textSec} weight={activeTool === 'connect' ? 'bold' : 'regular'} />
         </TBtn>
-        <TBtn id="tour-latent-variable" onClick={() => setActiveTool('construct')} active={activeTool === 'construct'} activeTone={activeTool === 'construct' ? 'yellow' : undefined} activeLabel="Latent" title="Latent Variable (L)">
-          <Circle size={18} color={activeTool === 'construct' ? C.textOnAccent : C.textSec} weight={activeTool === 'construct' ? 'fill' : 'regular'} />
-        </TBtn>
+        <div
+          style={{
+            position: 'relative',
+            display: 'inline-flex',
+            alignItems: 'center',
+            height: 34,
+            borderRadius: 7,
+            boxSizing: 'border-box',
+            backgroundColor: activeTool === 'construct' ? 'var(--color-accent)' : 'transparent',
+            border: activeTool === 'construct' ? '1px solid rgb(var(--color-accent-rgb) / 0.58)' : '1px solid transparent',
+          }}
+        >
+          <TBtn
+            id="tour-latent-variable"
+            onClick={() => setActiveTool('construct')}
+            active={activeTool === 'construct'}
+            activeTone={activeTool === 'construct' ? 'yellow' : undefined}
+            activeLabel="Latent"
+            title="Latent Variable (L)"
+            style={{
+              borderTopRightRadius: 0,
+              borderBottomRightRadius: 0,
+              backgroundColor: 'transparent',
+              border: 'none',
+              height: 32,
+            }}
+          >
+            {preferredLatentShape === 'rectangle' ? (
+              <FrameCorners size={18} color={activeTool === 'construct' ? C.textOnAccent : C.textSec} weight="fill" />
+            ) : preferredLatentShape === 'oval' ? (
+              <Circle size={18} color={activeTool === 'construct' ? C.textOnAccent : C.textSec} weight="fill" style={{ transform: 'scaleX(1.35)' }} />
+            ) : (
+              <Circle size={18} color={activeTool === 'construct' ? C.textOnAccent : C.textSec} weight="fill" />
+            )}
+          </TBtn>
+          <button
+            id="latent-shape-picker"
+            onClick={(e) => {
+              e.stopPropagation()
+              setLatentShapeMenuOpen(open => !open)
+            }}
+            title="Select Latent Shape (Circle, Oval, Rectangle)"
+            style={{
+              height: 32,
+              padding: '0 6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '0 6px 6px 0',
+              border: 'none',
+              backgroundColor: 'transparent',
+              color: activeTool === 'construct' ? C.textOnAccent : C.textSec,
+              cursor: 'pointer',
+            }}
+          >
+            <CaretDown size={12} weight="bold" />
+          </button>
+
+          {latentShapeMenuOpen && (
+            <div
+              style={{
+                position: 'absolute',
+                bottom: 'calc(100% + 18px)',
+                left: 0,
+                zIndex: 100,
+                width: 140,
+                backgroundColor: C.panel,
+                border: `1px solid ${C.floatingBorder}`,
+                borderRadius: 8,
+                boxShadow: C.floatingDropdownShadow,
+                padding: 4,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 2,
+              }}
+            >
+              {[
+                { shape: 'circle', label: 'Circle', icon: <Circle size={14} weight="fill" /> },
+                { shape: 'oval', label: 'Oval', icon: <Circle size={14} weight="fill" style={{ transform: 'scaleX(1.35)' }} /> },
+                { shape: 'rectangle', label: 'Rectangle', icon: <FrameCorners size={14} weight="fill" /> },
+              ].map(({ shape, label, icon }) => {
+                const isActive = preferredLatentShape === shape
+                return (
+                  <button
+                    key={shape}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setPreferredLatentShape(shape as ConstructShape)
+                      setActiveTool('construct')
+                      setLatentShapeMenuOpen(false)
+                      commit(constructs, paths)
+                    }}
+                    style={{
+                      width: '100%',
+                      height: 30,
+                      padding: '0 8px',
+                      borderRadius: 6,
+                      border: 'none',
+                      backgroundColor: isActive ? C.panelControlActive : 'transparent',
+                      color: isActive ? C.secondary : C.textSec,
+                      fontWeight: isActive ? 600 : 400,
+                      fontSize: 11,
+                      fontFamily: 'DM Sans, sans-serif',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 18 }}>{icon}</span>
+                    <span>{label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
         <TBtn
           id="tour-delete"
           onClick={() => {
@@ -7458,7 +7621,7 @@ function ContextMenuItem({ label, icon, disabled, onClick }: { label: string; ic
   )
 }
 
-function TBtn({ onClick, title, children, active, disabled, id, activeTone, activeLabel }: { onClick: () => void; title?: string; children: React.ReactNode; active?: boolean; disabled?: boolean; id?: string; activeTone?: 'yellow' | 'green'; activeLabel?: string }) {
+function TBtn({ onClick, title, children, active, disabled, id, activeTone, activeLabel, style }: { onClick: () => void; title?: string; children: React.ReactNode; active?: boolean; disabled?: boolean; id?: string; activeTone?: 'yellow' | 'green'; activeLabel?: string; style?: React.CSSProperties }) {
   const activeBackground = activeTone === 'green'
     ? C.success
     : activeTone === 'yellow'
@@ -7491,6 +7654,7 @@ function TBtn({ onClick, title, children, active, disabled, id, activeTone, acti
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.34 : 1,
         color: active ? activeColor : C.textSec,
+        ...style,
       }}>
       {children}
       {active && activeLabel && (

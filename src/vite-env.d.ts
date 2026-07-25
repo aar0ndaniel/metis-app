@@ -35,6 +35,7 @@ interface Window {
     setThemePreference: (theme: 'dark' | 'light') => Promise<any>
     useSampleDataset: (data: { workspacePath: string; datasetId?: string }) => Promise<any>
     openPath: (targetPath: string) => Promise<any>
+    showItemInFolder: (targetPath: string) => Promise<any>
     openExternal: (url: string) => Promise<any>
     listWorkspaces: () => Promise<any>
     openWorkspaceFile: (filePath: string) => Promise<any>

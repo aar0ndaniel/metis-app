@@ -29,6 +29,7 @@ export interface PanelSection {
 
 export interface PanelCatalogOptions {
   hasInteractions?: boolean
+  hasHigherOrderConstructs?: boolean
 }
 
 const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
@@ -343,6 +344,31 @@ function clonePanelSections(sections: PanelSection[]): PanelSection[] {
 
 export function getPanelSectionsForMode(mode: AnalysisMode, options: PanelCatalogOptions = {}): PanelSection[] {
   const sections = clonePanelSections(PANEL_SECTIONS[mode])
+
+  if (options.hasHigherOrderConstructs && (mode === 'permutation' || mode === 'mga')) {
+    const items = sections[0]?.items
+    if (items && !items.some((item) => item.id === 'hoc-context')) {
+      const overviewIndex = items.findIndex((item) => item.id === 'overview')
+      items.splice(overviewIndex >= 0 ? overviewIndex + 1 : 0, 0, {
+        id: 'hoc-context',
+        label: 'Higher-Order Constructs',
+        iconKey: 'folders',
+      })
+    }
+  }
+
+  if (options.hasInteractions && mode === 'mga') {
+    const comparisonGroup = sections[0]?.items.find((item) => item.id === 'mga-comparisons')
+    if (comparisonGroup?.children && !comparisonGroup.children.some((item) => item.id === 'mga-moderation-effects')) {
+      const pathIndex = comparisonGroup.children.findIndex((item) => item.id === 'mga-path-coefficients')
+      comparisonGroup.children.splice(pathIndex >= 0 ? pathIndex + 1 : comparisonGroup.children.length, 0, {
+        id: 'mga-moderation-effects',
+        label: 'Moderation Effects',
+        iconKey: 'table',
+      })
+    }
+  }
+
   if (!options.hasInteractions) return sections
 
   if (mode === 'pls-sem') {

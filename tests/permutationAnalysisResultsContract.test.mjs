@@ -33,6 +33,7 @@ const panelCatalog = await bundleModule('src/results/panelCatalog.ts', 'permutat
 const panelData = await bundleModule('src/results/panelData.ts', 'permutationPanelData.test.bundle.mjs')
 const panelExport = await bundleModule('src/results/panelExport.ts', 'permutationPanelExport.test.bundle.mjs')
 const resultsViewSource = await readSource('src/pages/ResultsView.tsx')
+const modelCanvasSource = await readSource('src/pages/ModelCanvas.tsx')
 
 assert.match(
   await readSource('src/results/panelCatalog.ts'),
@@ -50,6 +51,17 @@ assert.deepEqual(permutationPanelIds, [
   'invariance-classification',
   'execution-log',
 ])
+const hocPermutationPanelIds = panelCatalog
+  .getPanelSectionsForMode('permutation', { hasHigherOrderConstructs: true })
+  .flatMap((section) => section.items.map((item) => item.id))
+assert.ok(
+  hocPermutationPanelIds.includes('hoc-context'),
+  'MICOM results should expose HOC context when the saved model has higher-order constructs.',
+)
+assert.ok(
+  !permutationPanelIds.includes('hoc-context'),
+  'MICOM results should not show HOC context for ordinary first-order models.',
+)
 assert.equal(
   permutationPanelIds.includes('configural-invariance'),
   false,
@@ -61,6 +73,7 @@ assert.equal(panelExport.getPanelTitle('compositional-invariance'), 'Composition
 assert.equal(panelExport.getPanelTitle('equality-means'), 'Equality of Means')
 assert.equal(panelExport.getPanelTitle('equality-variances'), 'Equality of Variances')
 assert.equal(panelExport.getPanelTitle('invariance-classification'), 'Invariance Classification')
+assert.equal(panelExport.getPanelTitle('hoc-context'), 'Higher-Order Construct Context')
 
 const sampleResults = {
   groups: {
@@ -96,6 +109,28 @@ const sampleResults = {
   ],
   invarianceClassification: [{ construct: 'Satisfaction', classification: 'full' }],
   execution_log: [{ message: 'MICOM ran for Gender = Male vs Female.' }],
+}
+
+const hocModel = {
+  constructs: [
+    { id: 'social', name: 'Social Interaction', indicators: [{ name: 'SOC1' }, { name: 'SOC2' }] },
+    { id: 'sharing', name: 'Content Sharing', indicators: [{ name: 'SHR1' }, { name: 'SHR2' }] },
+    {
+      id: 'engagement',
+      name: 'Engagement HOC',
+      type: 'Reflective',
+      isHigherOrder: true,
+      higherOrderType: 'reflective',
+      dimensions: ['Social Interaction', 'Content Sharing'],
+      indicators: [],
+    },
+    { id: 'loyalty', name: 'Loyalty', indicators: [{ name: 'LOY1' }, { name: 'LOY2' }] },
+  ],
+  paths: [
+    { id: 'hoc-social', from: 'engagement', to: 'social', kind: 'direct', hocRole: 'measurement' },
+    { id: 'hoc-sharing', from: 'engagement', to: 'sharing', kind: 'direct', hocRole: 'measurement' },
+    { id: 'engagement-loyalty', from: 'engagement', to: 'loyalty', kind: 'direct', hocRole: 'structural' },
+  ],
 }
 
 assert.deepEqual(panelData.getPanelDataFromResults('permutation', 'overview', sampleResults), [
@@ -134,6 +169,51 @@ assert.deepEqual(panelData.getPanelDataFromResults('permutation', 'equality-vari
 ])
 assert.deepEqual(panelData.getPanelDataFromResults('permutation', 'invariance-classification', sampleResults), sampleResults.invarianceClassification)
 assert.deepEqual(panelData.getPanelDataFromResults('permutation', 'execution-log', sampleResults), sampleResults.execution_log)
+assert.deepEqual(
+  panelData.getPanelDataFromResults('permutation', 'hoc-context', sampleResults, { savedModel: hocModel }),
+  [
+    {
+      'Higher-order construct': 'Engagement HOC',
+      Type: 'reflective',
+      Dimensions: 'Social Interaction, Content Sharing',
+      'Dimension count': 2,
+      'Structural role': 'Predictor in Engagement HOC -> Loyalty',
+      'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+    },
+  ],
+  'MICOM should report HOC context so invariance rows can be interpreted as fitted HOC construct scores.',
+)
+assert.deepEqual(
+  panelData.getPanelDataFromResults('permutation', 'hoc-context', {
+    final_results: {
+      hoc_results: [
+        {
+          hoc_construct: 'Engagement HOC',
+          loc_construct: 'Content Sharing',
+          hoc_type: 'reflective',
+          loc_type: 'reflective',
+          loading: 0.91,
+          weight: null,
+          vif: null,
+        },
+      ],
+    },
+  }),
+  [
+    {
+      'Higher-order construct': 'Engagement HOC',
+      Type: 'reflective',
+      Dimensions: 'Content Sharing',
+      'Dimension count': 1,
+      'Structural role': 'Available from saved HOC results',
+      Loading: 0.91,
+      Weight: null,
+      VIF: null,
+      'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+    },
+  ],
+  'MICOM HOC context should read the existing final_results.hoc_results fallback when no model snapshot is available.',
+)
 
 assert.match(
   resultsViewSource,
@@ -159,6 +239,31 @@ assert.match(
   resultsViewSource,
   /function shouldFormatOverviewInteger[\s\S]*groupacount[\s\S]*groupbcount[\s\S]*permutations[\s\S]*seed[\s\S]*Math\.round/,
   'MICOM overview counts, permutations, and seed should display as whole numbers while alpha keeps decimal precision.',
+)
+assert.match(
+  resultsViewSource,
+  /hasHigherOrderConstructs[\s\S]*buildSidebarSections\(analysisMode, moderationAvailable, mgaGroupLabels, hasHigherOrderConstructs\)/,
+  'ResultsView should pass HOC availability into the MICOM sidebar builder.',
+)
+assert.match(
+  resultsViewSource,
+  /savedAnalysis\?\.modelSnapshot[\s\S]*navState\?\.savedModelSnapshot[\s\S]*setSavedModel\(cloneResultsModelSnapshot\(analysisModelSnapshot/,
+  'ResultsView should prefer the analysis-time model snapshot embedded in saved analysis state.',
+)
+assert.match(
+  resultsViewSource,
+  /persistResultsToWorkspace\s*=\s*useCallback\(\(options:[\s\S]*modelSnapshot\?: \{ constructs: CanvasConstruct\[\]; paths: CanvasPath\[\] \} \| null[\s\S]*analysis:\s*\{[\s\S]*modelSnapshot:\s*options\.modelSnapshot/,
+  'ResultsView rerun persistence should write the analysis-time model snapshot into saved analysis state.',
+)
+assert.match(
+  resultsViewSource,
+  /handleRunPermutationFromResults\s*=\s*useCallback\(async \(settings: PermutationAnalysisSettings\)[\s\S]*persistResultsToWorkspace\(\{[\s\S]*mode:\s*'permutation'[\s\S]*modelSnapshot:\s*savedModel/,
+  'Results-screen MICOM reruns should preserve the model snapshot that produced the result.',
+)
+assert.match(
+  modelCanvasSource,
+  /analysis:\s*analysisState\s*\?[\s\S]*\.\.\.analysisState[\s\S]*modelSnapshot:\s*snapshot/,
+  'ModelCanvas should persist the analysis-time model snapshot inside saved analysis state.',
 )
 assert.match(
   resultsViewSource,

@@ -351,8 +351,13 @@ function flattenSidebarItems(items: SidebarItem[]): SidebarItem[] {
   return items.flatMap((item) => item.children?.length ? flattenSidebarItems(item.children) : [item])
 }
 
-function buildSidebarSections(mode: AnalysisMode, hasInteractions = false, mgaGroupLabels?: MgaGroupLabels): SidebarSection[] {
-  return getPanelSectionsForMode(mode, { hasInteractions }).map((section) => ({
+function buildSidebarSections(
+  mode: AnalysisMode,
+  hasInteractions = false,
+  mgaGroupLabels?: MgaGroupLabels,
+  hasHigherOrderConstructs = false,
+): SidebarSection[] {
+  return getPanelSectionsForMode(mode, { hasInteractions, hasHigherOrderConstructs }).map((section) => ({
     ...section,
     items: buildSidebarItems(section.items, mgaGroupLabels),
   }))
@@ -367,6 +372,22 @@ function getMgaGroupLabels(analysisResults: any): MgaGroupLabels {
     groupB,
     comparisonLabel: `${groupA} vs ${groupB}`,
   }
+}
+
+function modelHasHigherOrderConstructs(savedModel: any, analysisResults: any): boolean {
+  const savedModelHasHoc = Array.isArray(savedModel?.constructs) && savedModel.constructs.some((construct: any) => (
+    construct?.isHigherOrder === true || construct?.is_higher_order === true
+  ))
+  if (savedModelHasHoc) return true
+
+  const hocRows = analysisResults?.final_results?.hoc_results ?? analysisResults?.hocContext ?? analysisResults?.hoc_context
+  return Array.isArray(hocRows) && hocRows.length > 0
+}
+
+function modelHasSavedModerationPaths(savedModel: any): boolean {
+  return Array.isArray(savedModel?.paths) && savedModel.paths.some((path: any) => (
+    path?.kind === 'moderation' && Boolean(path?.targetPathId)
+  ))
 }
 
 function useSidebarResize(initialWidth: number, minWidth: number, maxWidth: number) {
@@ -4495,7 +4516,7 @@ function TablePanel({
     : analysisResults
   const showBootstrapIntervalControl = shouldRenderBootstrapSignificanceTable
   const showMgaComparisonMethodTabs = analysisMode === 'mga' &&
-    ['mga-path-coefficients', 'mga-outer-loadings', 'mga-outer-weights'].includes(selectedPanel)
+    ['mga-path-coefficients', 'mga-moderation-effects', 'mga-outer-loadings', 'mga-outer-weights'].includes(selectedPanel)
   const mgaComparisonMethodOptions: Array<{ value: MgaComparisonMethod; label: string }> = [
     { value: 'biasCorrectedConfidenceIntervals', label: 'Bias corrected' },
     { value: 'henselerPlsMga', label: 'Henseler' },
@@ -5083,13 +5104,14 @@ export default function ResultsView() {
     const savedAnalysis = navState?.savedAnalysis
 
     if (savedAnalysis?.results && (savedAnalysis?.mode === 'pls-sem' || savedAnalysis?.mode === 'bootstrap' || savedAnalysis?.mode === 'plspredict' || savedAnalysis?.mode === 'advanced' || savedAnalysis?.mode === 'permutation' || savedAnalysis?.mode === 'mga')) {
-      if (navState?.savedModelSnapshot) {
+      const analysisModelSnapshot = savedAnalysis?.modelSnapshot ?? navState?.savedModelSnapshot
+      if (analysisModelSnapshot) {
         try {
-          writeSharedStorageValue('results-canvas-model', JSON.stringify(cloneResultsModelSnapshot(navState.savedModelSnapshot)))
+          writeSharedStorageValue('results-canvas-model', JSON.stringify(cloneResultsModelSnapshot(analysisModelSnapshot)))
         } catch {
           // no-op
         }
-        setSavedModel(cloneResultsModelSnapshot(navState.savedModelSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] }))
+        setSavedModel(cloneResultsModelSnapshot(analysisModelSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] }))
       }
 
       if (savedAnalysis.mode !== 'bootstrap') {
@@ -5152,11 +5174,20 @@ export default function ResultsView() {
   }, [savedModel])
 
   const moderationAvailable = useMemo(
-    () => hasModerationInteractions(savedModel, analysisResults),
+    () => analysisMode === 'mga'
+      ? modelHasSavedModerationPaths(savedModel)
+      : hasModerationInteractions(savedModel, analysisResults),
+    [analysisMode, savedModel, analysisResults],
+  )
+  const hasHigherOrderConstructs = useMemo(
+    () => modelHasHigherOrderConstructs(savedModel, analysisResults),
     [savedModel, analysisResults],
   )
   const mgaGroupLabels = useMemo(() => getMgaGroupLabels(analysisResults), [analysisResults])
-  const sidebarData = useMemo(() => buildSidebarSections(analysisMode, moderationAvailable, mgaGroupLabels), [analysisMode, moderationAvailable, mgaGroupLabels])
+  const sidebarData = useMemo(
+    () => buildSidebarSections(analysisMode, moderationAvailable, mgaGroupLabels, hasHigherOrderConstructs),
+    [analysisMode, moderationAvailable, mgaGroupLabels, hasHigherOrderConstructs],
+  )
 
   useEffect(() => {
     const availablePanels = sidebarData.flatMap((section) => flattenSidebarItems(section.items).map((item) => item.id))
@@ -5240,6 +5271,7 @@ export default function ResultsView() {
       permutation?: PermutationAnalysisSettings
       mga?: MultiGroupAnalysisSettings
     }
+    modelSnapshot?: { constructs: CanvasConstruct[]; paths: CanvasPath[] } | null
     micomCache?: MicomCacheEntry | null
   }) => {
     const { allWorkspaces, migratedWorkspace, modelChild } = resolveWorkspaceContext()
@@ -5256,6 +5288,7 @@ export default function ResultsView() {
           mode: options.mode,
           results: options.results,
           savedAt: options.savedAt,
+          ...(options.modelSnapshot ? { modelSnapshot: options.modelSnapshot } : {}),
         },
         analysisSettings: {
           ...(existingState.analysisSettings || {}),
@@ -5565,6 +5598,7 @@ export default function ResultsView() {
   const derivedModerationPanelData = getDerivedModerationPanelData(analysisMode, selectedPanel, savedModel, analysisResults)
   const panelData = derivedModerationPanelData ?? getPanelDataFromResults(analysisMode, selectedPanel, analysisResults, {
     mgaComparisonMethod,
+    savedModel,
     mgaOverviewFallback: {
       headers: resultsGroupingData.headers,
       datasetRows: resultsGroupingData.datasetRows,
@@ -5694,6 +5728,7 @@ export default function ResultsView() {
         mode: 'permutation',
         results: result.results as Record<string, unknown>,
         savedAt,
+        modelSnapshot: savedModel,
         analysisSettings: {
           permutation: settings,
         },
@@ -5780,6 +5815,7 @@ export default function ResultsView() {
         mode: 'mga',
         results: mgaResults,
         savedAt,
+        modelSnapshot: savedModel,
         analysisSettings: {
           mga: settings,
         },
@@ -5907,7 +5943,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
 
   return `
     <div style="margin-bottom: 24px;">
-      <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #f0f0f5; text-transform: uppercase; letter-spacing: 0.5px;">Higher-Order Constructs</h3>
+      <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #1A1F2B; text-transform: uppercase; letter-spacing: 0.5px;">Higher-Order Constructs</h3>
       <table class="result-table">
         <thead>
           <tr>
@@ -5974,7 +6010,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
         }
 
         const derivedModerationRows = getDerivedModerationPanelData(analysisMode, item.id, savedModel, analysisResults)
-        const data = derivedModerationRows ?? getPanelDataFromResults(analysisMode, item.id, analysisResults, { mgaComparisonMethod })
+        const data = derivedModerationRows ?? getPanelDataFromResults(analysisMode, item.id, analysisResults, { mgaComparisonMethod, savedModel })
         if (analysisMode === 'mga' && item.id === 'overview' && isMgaOverviewPanelData(data)) {
           return `<section id="sec-${item.id}" class="result-section"><div class="section-head"><h2>${escapeHtml(item.label)}</h2></div>${buildMgaOverviewExportHtml(data)}</section>`
         }
@@ -6105,16 +6141,16 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     * { box-sizing: border-box; }
     body { margin:0; font-family: Inter, Segoe UI, Arial, sans-serif; background: var(--bg); color: var(--text); }
     .app { display:flex; height:100vh; overflow:hidden; }
-    .sidebar { width: 320px; background:#FFFFFF; border-right:1px solid var(--line); padding:18px 14px; overflow:auto; position:sticky; top:0; height:100vh; flex-shrink:0; }
+    .sidebar { width: 320px; background:#FFFFFF; border-right:1px solid var(--line); color:#1A1F2B; padding:18px 14px; overflow:auto; position:sticky; top:0; height:100vh; flex-shrink:0; }
     .brand { display:flex; gap:10px; align-items:center; margin-bottom:8px; }
     .logo { width:28px; height:28px; display:grid; place-items:center; flex-shrink:0; color:var(--brand); }
     .logo svg { width:100%; height:100%; display:block; }
     .brand-title { font-size:17px; font-weight:800; letter-spacing:.2px; }
     .model-name { color:var(--muted); font-size:12px; margin:4px 0 16px 38px; word-break:break-word; }
     .group-title { margin:14px 8px 6px; color:var(--muted); font-size:11px; text-transform:uppercase; font-weight:700; letter-spacing:.5px; }
-    .nav-item { display:block; width:100%; text-align:left; border:0; background:transparent; color:var(--color-on-accent); border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; margin:2px 0; text-decoration:none; }
+    .nav-item, .nav-item:visited { display:block; width:100%; text-align:left; border:0; background:transparent; color:#1A1F2B !important; border-radius:8px; padding:8px 10px; font-size:13px; cursor:pointer; margin:2px 0; text-decoration:none; }
     .nav-item:hover { background:rgb(var(--color-accent-rgb) / 0.08); }
-    .nav-item.active { background:rgb(var(--color-accent-rgb) / 0.16); color:var(--color-on-accent); font-weight:700; }
+    .nav-item.active { background:rgb(var(--color-accent-rgb) / 0.16); color:#1A1F2B !important; font-weight:700; }
     .content { flex:1; padding:18px; overflow:auto; height:100vh; }
     .result-section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; scroll-margin-top:10px; }
     .section-head { display:flex; align-items:center; gap:12px; margin:0 0 14px; }
@@ -6125,8 +6161,9 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     .copy-table-button.copied { color:var(--brand); border-color:rgb(var(--color-accent-rgb) / 0.55); background:rgb(var(--color-accent-rgb) / 0.12); }
     .table-wrap { overflow:auto; border:1px solid var(--line); border-radius:10px; }
     table { border-collapse: collapse; width:100%; font-size:12px; }
+    table, th, td { color:#1A1F2B !important; }
     th, td { border-bottom:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
-    th { background:rgb(var(--color-accent-rgb) / 0.16); color:var(--color-on-accent); font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
+    th { background:rgb(var(--color-accent-rgb) / 0.16); color:var(--text); font-size:11px; text-transform:uppercase; letter-spacing:.4px; }
     tr:nth-child(even) td { background:#F8FAFC; }
     .empty { color:var(--muted); font-size:13px; padding:12px; border:1px dashed var(--line); border-radius:10px; background:#FFFFFF; }
     .exec-log { margin:0; background:#F8FAFC; border:1px solid var(--line); border-radius:10px; padding:12px; font-size:12px; white-space:pre-wrap; }
@@ -6425,6 +6462,12 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
       const savedAtIso = new Date().toISOString()
       const resultId = `r-${Date.now()}`
       const resultName = `${modelBaseName} — ${modeLabel}`
+      const savedAnalysisState = {
+        mode: analysisMode,
+        results: analysisResults,
+        savedAt: savedAtIso,
+        modelSnapshot: savedModel,
+      }
 
       const savedResultChild = {
         id: resultId,
@@ -6436,11 +6479,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
         meta: `${modeLabel} result`,
         linkedModelId: modelId,
         state: {
-          analysis: {
-            mode: analysisMode,
-            results: analysisResults,
-            savedAt: savedAtIso,
-          },
+          analysis: savedAnalysisState,
           modelSnapshot: savedModel,
         },
       }
@@ -6453,11 +6492,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           updatedAt: new Date().toISOString(),
           state: {
             ...existingState,
-            analysis: {
-              mode: analysisMode,
-              results: analysisResults,
-              savedAt: new Date().toISOString(),
-            },
+            analysis: savedAnalysisState,
           },
         }
       }).concat(savedResultChild)
@@ -6512,7 +6547,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
   }, [canRunAdvancedAnalysis, handleExportRScript, isAnalysisRunning])
 
   return (
-    <div className="metis-results-view h-full w-full flex flex-col overflow-hidden select-none" style={{ backgroundColor: 'var(--color-sidebar-bg)' }}>
+    <div id="tour-results-view" className="metis-results-view h-full w-full flex flex-col overflow-hidden select-none" style={{ backgroundColor: 'var(--color-sidebar-bg)' }}>
 
       {/* ══════════════════════════════════════════════════════════════
           SINGLE FULL-WIDTH TOOLBAR

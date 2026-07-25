@@ -56,8 +56,8 @@ const approvedRendererOpenPaths = new Set<string>()
 const approvedWorkspacePaths = new Set<string>()
 const allowedDatasetReadExtensions = new Set(['.csv', '.xlsx', '.xls'])
 const allowedRendererReadExtensions = new Set([...allowedDatasetReadExtensions, '.r'])
-const allowedRendererWriteExtensions = new Set(['.csv', '.png', '.xlsx', '.html', '.htm', '.json', '.r'])
-const allowedRendererOpenExtensions = new Set(['.html', '.htm'])
+const allowedRendererWriteExtensions = new Set(['.csv', '.png', '.xlsx', '.html', '.htm', '.json', '.r', '.docx'])
+const allowedRendererOpenExtensions = new Set(['.html', '.htm', '.docx'])
 const WORKSPACE_FILE_EXTENSION = '.metisws'
 const LEGACY_WORKSPACE_FILE_EXTENSION = '.ada'
 const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FILE_EXTENSION]
@@ -526,7 +526,7 @@ async function notifyCrashReport(kind: string, summary: string, reportPath: stri
 
 function buildSplashHtml(): string {
   const splashTheme = readStoredThemePreference()
-  const splashVersionLabel = app.getVersion() || '0.2.2'
+  const splashVersionLabel = app.getVersion() || '0.3.0'
   const isLightSplash = splashTheme === 'light'
   const logoAssetPath = isLightSplash ? 'src/assets/logo-black.svg' : 'src/assets/logo-primary.svg'
   const splashColors = isLightSplash
@@ -4382,6 +4382,22 @@ ipcMain.handle('shell:openPath', async (_, targetPath: string) => {
     return { success: true, path: resolved }
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to open path' }
+  }
+})
+
+ipcMain.handle('shell:showItemInFolder', async (_, targetPath: string) => {
+  try {
+    const resolved = path.resolve(targetPath)
+    if (!hasApprovedPath(approvedRendererOpenPaths, resolved)) {
+      throw new Error('Renderer show-in-folder request blocked: target path was not created through an approved export flow.')
+    }
+    if (!hasAllowedExtension(resolved, allowedRendererOpenExtensions)) {
+      throw new Error('Renderer show-in-folder request blocked: unsupported file type.')
+    }
+    shell.showItemInFolder(resolved)
+    return { success: true, path: resolved }
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to show item in folder' }
   }
 })
 

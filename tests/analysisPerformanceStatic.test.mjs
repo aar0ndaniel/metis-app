@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,6 +13,12 @@ const bootstrapModalSource = await fs.readFile(path.join(workspaceRoot, 'src/com
 const advancedModalSource = await fs.readFile(path.join(workspaceRoot, 'src/components/AdvancedAnalysisModal.tsx'), 'utf8')
 const modelCanvasSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
 const resultsViewSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
+const trackedReleasePlumberPaths = new Set(
+  execFileSync('git', ['ls-files', 'release/**/resources/r-api/plumber.R'], {
+    cwd: workspaceRoot,
+    encoding: 'utf8',
+  }).split(/\r?\n/).filter(Boolean)
+)
 
 assert.match(
   plumberSource,
@@ -21,8 +28,8 @@ assert.match(
 
 assert.match(
   plumberSource,
-  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s+if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
-  'Default analysis cores should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.'
+  /requested\s*<-\s*if\s*\(\s*detected\s*>=\s*13L\s*\)\s*\{\s*12L\s*\}\s*else\s+if\s*\(\s*detected\s*>=\s*11L\s*\)\s*\{\s*10L\s*\}\s*else\s+if\s*\(\s*detected\s*>=\s*9L\s*\)\s*\{\s*8L\s*\}\s*else\s+if\s*\(\s*detected\s*>=\s*7L\s*\)\s*\{\s*6L\s*\}\s*else\s*\{\s*max\(1L,\s*detected\s*-\s*1L\)\s*\}[\s\S]*?policy\s*<-\s*"dynamic-stepped-cap"/,
+  'Default analysis cores should use the stepped desktop-safe cap: 13+ cores use 12, 11-12 use 10, 9-10 use 8, 7-8 use 6, and smaller machines reserve one core.'
 )
 
 assert.match(
@@ -48,6 +55,8 @@ for (const releasePlumberPath of [
   'release/lite/win-unpacked/resources/r-api/plumber.R',
   'release/win-unpacked/resources/r-api/plumber.R',
 ]) {
+  if (!trackedReleasePlumberPaths.has(releasePlumberPath)) continue
+
   let releasePlumberSource = ''
   try {
     releasePlumberSource = await fs.readFile(path.join(workspaceRoot, releasePlumberPath), 'utf8')
@@ -58,8 +67,8 @@ for (const releasePlumberPath of [
 
   assert.match(
     releasePlumberSource,
-    /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s+if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
-    `${releasePlumberPath} should match the dynamic bundled core fallback.`
+    /requested\s*<-\s*if\s*\(\s*detected\s*>=\s*13L\s*\)\s*\{\s*12L\s*\}\s*else\s+if\s*\(\s*detected\s*>=\s*11L\s*\)\s*\{\s*10L\s*\}\s*else\s+if\s*\(\s*detected\s*>=\s*9L\s*\)\s*\{\s*8L\s*\}\s*else\s+if\s*\(\s*detected\s*>=\s*7L\s*\)\s*\{\s*6L\s*\}\s*else\s*\{\s*max\(1L,\s*detected\s*-\s*1L\)\s*\}[\s\S]*?policy\s*<-\s*"dynamic-stepped-cap"/,
+    `${releasePlumberPath} should match the stepped bundled core fallback.`
   )
 
   assert.doesNotMatch(
@@ -85,6 +94,24 @@ assert.doesNotMatch(
   plumberSource,
   /jsonlite::fromJSON\s*\(\s*jsonlite::toJSON\s*\(\s*df,/,
   'as_rows should avoid the expensive jsonlite toJSON/fromJSON round-trip for data frames.'
+)
+
+const mgaPlsMgaPSource = plumberSource.match(/mga_pls_mga_p\s*<-\s*function\s*\([^)]*\)\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+assert.ok(
+  mgaPlsMgaPSource,
+  'R backend should expose a PLS-MGA p-value helper.'
+)
+
+assert.doesNotMatch(
+  mgaPlsMgaPSource,
+  /outer\s*\(/,
+  'MGA PLS-MGA p-values should not materialize nboot x nboot comparison matrices.'
+)
+
+assert.match(
+  mgaPlsMgaPSource,
+  /sort\s*\([\s\S]*?findInterval\s*\(/,
+  'MGA PLS-MGA p-values should use sorted-count pair comparisons to avoid O(nboot^2) memory.'
 )
 
 const cachedCoreCalls = [

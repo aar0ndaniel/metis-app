@@ -1,6 +1,6 @@
 {
   "name": "metis",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "type": "module",
   "description": "metis",
   "main": "dist-electron/main.js",

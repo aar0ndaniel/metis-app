@@ -12,8 +12,10 @@ import InstallerPreview from './pages/InstallerPreview'
 import SetupWizard from './pages/SetupWizard'
 import TarkPreview from './pages/TarkPreview'
 import OnboardingTour from './components/OnboardingTour'
+import WhatsNewModal from './components/WhatsNewModal'
 import PreferencesModal from './components/PreferencesModal'
-import TarkModal, { type TarkReportRequest } from './components/TarkModal'
+import LocalizationRuntime from './i18n/LocalizationRuntime'
+import TarkModal from './components/TarkModal'
 import NewWorkspaceDialog from './components/NewWorkspaceDialog'
 import NewModelDialog from './components/NewModelDialog'
 import { dispatchToast, useToast, ToastContainer } from './components/Toast'
@@ -33,6 +35,15 @@ import {
 } from './utils/datasetViewCache'
 import { readWorkspaceClientCache, writeWorkspaceClientCache } from './utils/workspaceClientCache'
 import { stripModelDisplayName } from './utils/displayNames'
+import {
+  completeWalkthrough,
+  completeWhatsNew,
+  dismissOnboarding,
+  readWalkthroughStep,
+  resolveOnboardingStage,
+  saveWalkthroughStep,
+  type WalkthroughStepId,
+} from './utils/onboardingReleaseState'
 import {
   DEFAULT_ACCENT_CHOICE,
   LEGACY_PREF_ACCENT_COLOR_KEY,
@@ -75,8 +86,6 @@ const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
 const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
 const DEFAULT_INTERFACE_CONTRAST = 75
 const MIN_READABLE_INTERFACE_CONTRAST = 75
-const METIS_TOUR_COMPLETED_KEY = 'metis:tour-completed'
-const LEGACY_TOUR_COMPLETED_KEY = 'pls:tour-completed'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
 const METIS_FEEDBACK_URL = 'https://metis.emend.it.com/submit-feedback.html'
 const METIS_BUG_REPORT_URL = 'https://github.com/aar0ndaniel/metis-app/issues/new?labels=bug'
@@ -108,7 +117,8 @@ function getSavedTheme(): AppTheme {
 
 function getInstallerPreviewTheme(): AppTheme {
   const raw = localStorage.getItem(INSTALLER_PREF_THEME_KEY)
-  return raw === 'Dark' ? 'Dark' : 'Light'
+  if (raw === 'Light' || raw === 'Dark') return raw
+  return getSystemTheme()
 }
 
 function readStartupFontScale(): string {
@@ -288,14 +298,16 @@ function AppShell() {
   const location  = useLocation()
   const navigate  = useNavigate()
   const isInstallerPreview = location.pathname.startsWith('/installer-preview') || location.pathname.startsWith('/setup-wizard')
-  const [themePreference, setThemePreference] = useState<ThemePreference>(() => isInstallerPreview ? 'Light' : getSavedThemePreference())
-  const [theme, setTheme] = useState<AppTheme>(() => isInstallerPreview ? 'Light' : getSavedTheme())
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => isInstallerPreview ? getInstallerPreviewTheme() : getSavedThemePreference())
+  const [theme, setTheme] = useState<AppTheme>(() => isInstallerPreview ? getInstallerPreviewTheme() : getSavedTheme())
   const [prefsOpen,      setPrefsOpen]      = useState(false)
   const [tarkOpen, setTarkOpen] = useState(false)
   const [prefsInitialTab, setPrefsInitialTab] = useState<'general' | 'updates'>('general')
   const [newWsOpen,      setNewWsOpen]      = useState(false)
   const [newModelOpen,   setNewModelOpen]   = useState(false)
+  const [showWhatsNew,   setShowWhatsNew]   = useState(false)
   const [showTour,       setShowTour]       = useState(false)
+  const [tourStepId, setTourStepId] = useState<WalkthroughStepId>(() => readWalkthroughStep(localStorage))
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false)
   const [welcomeContext, setWelcomeContext] = useState<WelcomeContext | null>(null)
   const { toasts, toast: _toast } = useToast()  // global toast listener
@@ -547,7 +559,7 @@ function AppShell() {
     }
 
     if (isInstallerPreview) {
-      setTheme('Light')
+      setTheme(getInstallerPreviewTheme())
     } else {
       setTheme(getSavedTheme())
     }
@@ -815,11 +827,12 @@ function AppShell() {
     return cleanup
   }, [openWorkspaceFromFilePath])
 
-  // ── Auto-launch tour on first WorkspaceHome view (never during installer) ─
+  // ── Auto-launch the versioned release updates before the walkthrough ───────
   useEffect(() => {
     if (location.pathname !== '/') return
-    const completed = localStorage.getItem(METIS_TOUR_COMPLETED_KEY) ?? localStorage.getItem(LEGACY_TOUR_COMPLETED_KEY)
-    if (!completed) setShowTour(true)
+    const stage = resolveOnboardingStage(localStorage)
+    if (stage === 'whats-new') setShowWhatsNew(true)
+    if (stage === 'walkthrough') setShowTour(true)
   }, [location.pathname])
 
   // ── Screen determination ───────────────────────────────────────────────────
@@ -1247,6 +1260,7 @@ function AppShell() {
           modelId: currentCanvasModelId || undefined,
           saveMode: 'save-as-new',
         })
+        window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'dataset-added' } }))
 
         dispatchToast(
           'success',
@@ -1269,6 +1283,7 @@ function AppShell() {
       if (!normalized) return
       console.log('[App] pls:dataset-imported received', normalized)
       applyImportedDataset(normalized)
+      window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'dataset-added' } }))
     }
     window.addEventListener('pls:dataset-imported', handler)
     return () => window.removeEventListener('pls:dataset-imported', handler)
@@ -1313,13 +1328,6 @@ function AppShell() {
   const showBridgeBanner = !isInstallerPreview && import.meta.env.DEV && !(window as any).electronAPI
   const isElectronUserAgent = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent)
 
-  function handleTarkIt(request: TarkReportRequest) {
-    setTarkOpen(false)
-    navigate(`/tark-preview/${request.workspaceId}/${request.modelId}`, {
-      state: { tark: request },
-    })
-  }
-
   return (
     <div
       className="metis-app-shell h-screen w-screen flex flex-col overflow-hidden select-none"
@@ -1351,6 +1359,7 @@ function AppShell() {
       )}
       {!isInstallerPreview && <TitleBar currentScreen={currentScreen} theme={theme} activeModelName={activeTitleModelName} />}
       <div className="flex-1 overflow-hidden">
+        <LocalizationRuntime />
         <Routes>
           <Route path="/installer-preview" element={<InstallerPreview />} />
           <Route path="/setup-wizard" element={<SetupWizard />} />
@@ -1385,16 +1394,35 @@ function AppShell() {
           <Route path="/dataview/:workspaceId/:datasetId" element={<DataView workspaces={workspaces} />} />
         </Routes>
       </div>
+      {showWhatsNew && (
+        <WhatsNewModal
+          theme={theme}
+          onComplete={() => {
+            completeWhatsNew(localStorage)
+            setShowWhatsNew(false)
+            setShowTour(true)
+          }}
+          onDismiss={() => {
+            dismissOnboarding(localStorage)
+            setShowWhatsNew(false)
+          }}
+        />
+      )}
       {showTour && (
         <OnboardingTour
           currentScreen={currentScreen}
           theme={theme}
           displayName={welcomeContext?.displayName ?? ''}
           workspacePath={welcomeContext?.dataPath ?? ''}
-          onClose={() => {
+          initialStepId={tourStepId}
+          onStepChange={(stepId) => {
+            setTourStepId(stepId)
+            saveWalkthroughStep(localStorage, stepId)
+          }}
+          onClose={(reason) => {
             setShowTour(false)
-            localStorage.setItem(METIS_TOUR_COMPLETED_KEY, 'true')
-            localStorage.setItem(LEGACY_TOUR_COMPLETED_KEY, 'true')
+            if (reason === 'completed') completeWalkthrough(localStorage)
+            else dismissOnboarding(localStorage)
           }}
         />
       )}
@@ -1405,7 +1433,6 @@ function AppShell() {
         <TarkModal
           workspaces={workspaces}
           activeWorkspaceId={activeWorkspaceId}
-          onTarkIt={handleTarkIt}
           onClose={() => setTarkOpen(false)}
         />
       )}
@@ -1490,6 +1517,7 @@ function AppShell() {
             setWorkspaces(prev => [...prev, wsWithPath])
             setActiveWorkspaceId(id)
             setNewWsOpen(false)
+            window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'workspace-created' } }))
           }}
         />
       )}
@@ -1554,6 +1582,7 @@ function AppShell() {
             })
 
             setNewModelOpen(false)
+            window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'model-created' } }))
             openModelInCanvas(modelId, targetWsId)
           }}
         />

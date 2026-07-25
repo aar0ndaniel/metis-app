@@ -73,8 +73,17 @@ assert.match(
   'Permutation modal should keep the latest precheck callback in a ref so parent status updates do not retrigger the same precheck.',
 )
 
-const precheckEffectMatch = modalSource.match(/useEffect\(\(\) => \{[\s\S]*?Promise\.resolve\([\s\S]*?\n  \}, \[\n([\s\S]*?)\n  \]\)/)
-assert.ok(precheckEffectMatch, 'Permutation modal should run the configural precheck from a dedicated effect.')
+const precheckCallIndex = modalSource.indexOf('Promise.resolve(onPrecheckRef.current?.(buildSettings()))')
+const precheckEffectStart = modalSource.lastIndexOf('useEffect(() => {', precheckCallIndex)
+const precheckEffectEnd = modalSource.indexOf('const handleRun', precheckCallIndex)
+const precheckEffectBlock = precheckEffectStart >= 0 && precheckEffectEnd > precheckEffectStart
+  ? modalSource.slice(precheckEffectStart, precheckEffectEnd)
+  : ''
+const precheckEffectMatch = precheckEffectBlock.match(/\}, \[\r?\n([\s\S]*?)\r?\n  \]\)/)
+assert.ok(
+  precheckEffectBlock.includes('activePrecheckKeyRef.current = precheckRequestKey') && precheckEffectMatch,
+  'Permutation modal should run the configural precheck from a dedicated effect.',
+)
 assert.doesNotMatch(
   precheckEffectMatch[1],
   /\bonPrecheck\b/,

@@ -108,8 +108,8 @@ assert.match(
 
 assert.match(
   plumberSource,
-  /reserve\s*<-\s*if\s*\(\s*detected\s*>\s*16L\s*\)\s*\{\s*4L\s*\}\s*else\s*if\s*\(\s*detected\s*>\s*10L\s*\)\s*\{\s*2L\s*\}\s*else\s*\{\s*1L\s*\}[\s\S]*?requested\s*<-\s*detected\s*-\s*reserve/,
-  'R backend should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.'
+  /requested\s*<-\s*if\s*\(\s*detected\s*>=\s*13L\s*\)\s*\{\s*12L\s*\}\s*else\s*if\s*\(\s*detected\s*>=\s*11L\s*\)\s*\{\s*10L\s*\}\s*else\s*if\s*\(\s*detected\s*>=\s*9L\s*\)\s*\{\s*8L\s*\}\s*else\s*if\s*\(\s*detected\s*>=\s*7L\s*\)\s*\{\s*6L\s*\}\s*else\s*\{\s*max\(1L,\s*detected\s*-\s*1L\)\s*\}[\s\S]*?policy\s*<-\s*"dynamic-stepped-cap"/,
+  'R backend should use the stepped desktop-safe core fallback.'
 )
 
 console.log('PASS launch dataset flow static guards')

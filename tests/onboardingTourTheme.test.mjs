@@ -51,8 +51,14 @@ assert.match(
 
 assert.match(
   onboardingTour,
-  /background: 'linear-gradient\(180deg, rgb\(var\(--color-panel-pop-rgb\) \/ 0\.98\), rgb\(var\(--color-panel-rgb\) \/ 0\.98\)\)'/,
-  'Onboarding tour preview panels should adapt to light and dark theme tokens.'
+  /style=\{\{ pointerEvents: 'none' \}\}/,
+  'The themed overlay should allow interaction with highlighted app controls.'
+)
+
+assert.match(
+  onboardingTour,
+  /background: 'rgb\(var\(--color-elevated-rgb\) \/ 0\.42\)'/,
+  'Onboarding tour action chrome should adapt to light and dark theme tokens.'
 )
 
 assert.doesNotMatch(

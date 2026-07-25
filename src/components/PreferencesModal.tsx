@@ -53,6 +53,8 @@ interface Props {
 
 const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
+const METIS_PREF_LANGUAGE_KEY = 'metis:prefs:language'
+const LEGACY_PREF_LANGUAGE_KEY = 'pls:prefs:language'
 const METIS_PREF_FONT_SCALE_KEY = 'metis:prefs:fontScale'
 const METIS_PREF_INTERFACE_CONTRAST_KEY = 'metis:prefs:interfaceContrast'
 const LEGACY_PREF_INTERFACE_CONTRAST_KEY = 'pls:prefs:interfaceContrast'
@@ -60,9 +62,11 @@ const DEFAULT_INTERFACE_CONTRAST = 75
 const MIN_READABLE_INTERFACE_CONTRAST = 75
 const METIS_UPDATES_URL = 'https://metis.emend.it.com/updates.html'
 const METIS_DOCS_URL = 'https://metis.emend.it.com/docs.html'
-const GENERAL_PREVIEW_WIDTH = 1920
+const GENERAL_PREVIEW_WIDTH = 2040
 const GENERAL_PREVIEW_HEIGHT = 1026
+const LANGUAGE_OPTIONS = ['English', 'Español', 'Português', 'Français'] as const
 const FONT_SIZE_OPTIONS = ['Small', 'Default', 'Large', 'Extra Large'] as const
+type LanguagePreference = typeof LANGUAGE_OPTIONS[number]
 type FontSizeOption = typeof FONT_SIZE_OPTIONS[number]
 type ThemePreference = 'Dark' | 'Light' | 'Auto'
 
@@ -76,6 +80,23 @@ function getSavedSetting<T>(key: string, defaultVal: T): T {
     }
   } catch (e) {}
   return defaultVal
+}
+
+function normalizeLanguagePreference(value: unknown): LanguagePreference {
+  const language = String(value ?? '').trim().toLowerCase()
+  if (language === 'español' || language === 'spanish' || language.startsWith('es')) return 'Español'
+  if (language === 'português' || language === 'portuguese' || language.startsWith('pt')) return 'Português'
+  if (language === 'français' || language === 'french' || language.startsWith('fr')) return 'Français'
+  return 'English'
+}
+
+function getSavedLanguageSetting(): LanguagePreference {
+  try {
+    const raw = localStorage.getItem(METIS_PREF_LANGUAGE_KEY) ?? localStorage.getItem(LEGACY_PREF_LANGUAGE_KEY)
+    return normalizeLanguagePreference(raw)
+  } catch {
+    return 'English'
+  }
 }
 
 function normalizeThemePreference(raw: string | null): ThemePreference {
@@ -234,7 +255,7 @@ function SelectBox({ value, options, onChange, width = 200, direction = 'down' }
         className="flex items-center justify-between"
         style={{ width, height: 32, background: UI.input, border: `1px solid ${UI.border}`, borderRadius: 12, padding: '0 12px', gap: 6, cursor: 'pointer' }}
       >
-        <span style={{ color: UI.text, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600 }}>{value}</span>
+        <span style={{ color: UI.text, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap' }}>{value}</span>
         <CaretDown size={12} color="var(--color-text-muted)" style={{ transform: opensUpward ? 'rotate(180deg)' : undefined }} />
       </button>
       {open && (
@@ -256,7 +277,7 @@ function SelectBox({ value, options, onChange, width = 200, direction = 'down' }
               key={opt}
               onClick={() => { onChange(opt); setOpen(false) }}
               className="flex items-center justify-between px-3 hover:bg-[rgb(var(--color-hover-rgb)/0.75)] transition-colors"
-              style={{ height: 32, color: opt === value ? UI.accent : UI.textSecondary, fontFamily: 'DM Sans, sans-serif', fontSize: 12 }}
+              style={{ height: 32, color: opt === value ? UI.accent : UI.textSecondary, fontFamily: 'DM Sans, sans-serif', fontSize: 12, whiteSpace: 'nowrap' }}
             >
               {opt}
               {opt === value && <Check size={11} color="var(--color-accent)" />}
@@ -379,7 +400,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   }, [initialTab])
 
   // General
-  const [language, setLanguage]           = useState(getSavedSetting('language', 'English'))
+  const [language, setLanguage]           = useState<LanguagePreference>(() => getSavedLanguageSetting())
   const [startupAction, setStartupAction] = useState(getSavedSetting('startupAction', 'Open last workspace'))
   const [realtimeCalc, setRealtimeCalc]   = useState(getSavedSetting('realtimeCalc', true))
   const [showHocPathPrompt, setShowHocPathPrompt] = useState(getSavedSetting('showHocPathPrompt', true))
@@ -433,7 +454,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   }, [])
 
   const [initialPreferences] = useState(() => ({
-    language: getSavedSetting('language', 'English'),
+    language: getSavedLanguageSetting(),
     startupAction: getSavedSetting('startupAction', 'Open last workspace'),
     realtimeCalc: getSavedSetting('realtimeCalc', true),
     showHocPathPrompt: getSavedSetting('showHocPathPrompt', true),
@@ -506,7 +527,8 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   }
 
   const persistPreferences = async () => {
-    localStorage.setItem('pls:prefs:language', language)
+    localStorage.setItem(METIS_PREF_LANGUAGE_KEY, language)
+    localStorage.setItem(LEGACY_PREF_LANGUAGE_KEY, language)
     localStorage.setItem('pls:prefs:startupAction', startupAction)
     localStorage.setItem('pls:prefs:realtimeCalc', String(realtimeCalc))
     localStorage.setItem('metis:prefs:showHocPathPrompt', String(showHocPathPrompt))
@@ -781,7 +803,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const settingRow = (label: string, description: string, control: React.ReactNode, controlWidth: number, height = 78, labelWeight: React.CSSProperties['fontWeight'] = 500) => (
     <div className="flex items-center" style={{ height, padding: '0 24px', gap: 18, width: '100%' }}>
       {labelBlock(label, description, labelWeight)}
-      <div className="flex items-center justify-center" style={{ width: controlWidth, gap: 10, flexShrink: 0 }}>
+      <div className="flex items-center justify-center" style={{ width: 'max-content', minWidth: controlWidth, gap: 10, flexShrink: 0 }}>
         {control}
       </div>
     </div>
@@ -852,13 +874,13 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     options: readonly { label: string; value: string; width: number; fontWeight?: React.CSSProperties['fontWeight'] }[],
     selectedValue: string,
     onSelect: (value: string) => void,
-    width?: number,
+    minWidth?: number,
     height = 44,
     padding = 4,
   ) => (
     <div
       className="flex items-center"
-      style={{ width, height, borderRadius: 14, background: preferenceColors.segment, border: `1px solid ${preferenceColors.border}`, padding, gap: 4 }}
+      style={{ width: 'max-content', minWidth, height, borderRadius: 14, background: preferenceColors.segment, border: `1px solid ${preferenceColors.border}`, padding, gap: 4 }}
     >
       {options.map((option) => {
         const selected = selectedValue === option.value
@@ -870,13 +892,17 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             className="flex items-center justify-center"
             style={{
               ...controlButtonBase,
-              width: option.width,
+              width: 'max-content',
+              minWidth: option.width,
               height: height - (padding * 2),
+              padding: '0 16px',
               borderRadius: 10,
               background: selected ? selectedPillBackground : preferenceColors.segment,
               color: selected ? selectedPillText : preferenceColors.muted,
               fontSize: 16,
               fontWeight: selected ? 500 : option.fontWeight ?? 500,
+              whiteSpace: 'nowrap',
+              flexShrink: 0,
               transition: 'background 180ms ease-in-out, color 180ms ease-in-out, transform 180ms ease-in-out',
             }}
           >
@@ -1147,7 +1173,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             <>
               {labelBlock('Language', 'Interface language used across Metis.')}
               <div className="flex items-center justify-center" style={{ width: 220, gap: 10, flexShrink: 0 }}>
-                {selectShell(language, 180, undefined, undefined, false, false, preferenceColors.fieldAlt)}
+                {selectShell(language, 180, [...LANGUAGE_OPTIONS], (value) => setLanguage(normalizeLanguagePreference(value)), true, false, preferenceColors.fieldAlt, 'language')}
               </div>
             </>,
           )}
@@ -1155,7 +1181,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           {generalRow(
             <>
               {labelBlock('On startup', 'Choose what Metis opens at launch.')}
-              <div className="flex items-center justify-center" style={{ width: 570, gap: 10, flexShrink: 0 }}>
+              <div className="flex items-center justify-center" style={{ width: 'max-content', minWidth: 570, gap: 10, flexShrink: 0 }}>
                 {segmentedControl(
                   [
                     { label: 'Open last workspace', value: 'Open last workspace', width: 190 },
@@ -1440,7 +1466,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       {settingRow('Max iterations', 'Upper limit for the iterative estimation loop.', stepperControl(maxIterations, setMaxIterations, 50, 10000), 310)}
       {rowDivider()}
       {settingRow('Stop criterion', 'Convergence threshold used to finish estimation.', selectShell(stopCriterion, 160, ['1e-5', '1e-6', '1e-7', '1e-8', '1e-10'], setStopCriterion, true, false, preferenceColors.field, 'stop-criterion'), 190)}
-      {includeLanguage && settingRow('Language', 'Interface language used across Metis.', selectShell(language, 180, undefined, undefined, false), 220)}
+      {includeLanguage && settingRow('Language', 'Interface language used across Metis.', selectShell(language, 180, [...LANGUAGE_OPTIONS], (value) => setLanguage(normalizeLanguagePreference(value)), true, false, preferenceColors.field, 'algorithm-language'), 220)}
     </div>
   )
 
@@ -1501,10 +1527,10 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
         type="button"
         onClick={onClick}
         className="flex items-center justify-center"
-        style={{ ...controlButtonBase, width: 180, height: 42, borderRadius: 12, background: btnBg, border: isAccent ? 'none' : `1px solid ${preferenceColors.border}`, padding: '0 14px', gap: 9 }}
+        style={{ ...controlButtonBase, width: 'max-content', minWidth: 180, height: 42, borderRadius: 12, background: btnBg, border: isAccent ? 'none' : `1px solid ${preferenceColors.border}`, padding: '0 16px', gap: 9, flexShrink: 0 }}
       >
         {clonedIcon}
-        <span style={{ color: textColor, fontSize: 17, fontWeight: 500, lineHeight: '22px' }}>{label}</span>
+        <span style={{ color: textColor, fontSize: 17, fontWeight: 500, lineHeight: '22px', whiteSpace: 'nowrap' }}>{label}</span>
       </button>
     )
   }
@@ -1562,8 +1588,6 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           {aboutRow('Licence', 'Open-source licence used by Metis.', aboutValue('GNU GPL v3', 150), 180)}
           {rowDivider()}
           {aboutRow('Built by', 'Project ownership shown in the existing preferences.', aboutValue(`${APP_BRAND_NAME} team`, 150), 180)}
-          {rowDivider()}
-          {aboutRow('UI', 'Desktop interface stack.', aboutValue('Electron + React + TypeScript', 270), 300)}
         </div>
       </div>
     </>
@@ -1647,7 +1671,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           <aside
             className="flex flex-col shrink-0"
             style={{
-              width: 340,
+              width: 410,
               height: '100%',
               background: preferenceColors.sidebar,
               padding: '24px 12px',
@@ -1660,7 +1684,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
               className="flex items-center"
               style={{
                 ...controlButtonBase,
-                width: 316,
+                width: 386,
                 height: 48,
                 padding: '0 14px',
                 gap: 13,
@@ -1668,12 +1692,12 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
               }}
             >
               <ArrowLeft size={18} color={preferenceColors.muted} />
-              <span style={{ color: preferenceColors.muted, fontSize: 16, fontWeight: 600, lineHeight: '22px' }}>
+              <span style={{ color: preferenceColors.muted, fontSize: 16, fontWeight: 600, lineHeight: '22px', whiteSpace: 'nowrap' }}>
                 Back to workspace
               </span>
             </button>
 
-            <nav className="flex flex-col" style={{ width: 316, gap: 4 }}>
+            <nav className="flex flex-col" style={{ width: 386, gap: 4 }}>
               {fullPreferenceNavItems.map((item) => {
                 const Icon = item.icon
                 const active = activePreferenceTab === item.id
@@ -1689,7 +1713,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                     className="flex items-center"
                     style={{
                       ...controlButtonBase,
-                      width: 316,
+                      width: 386,
                       height: 46,
                       borderRadius: 12,
                       padding: '0 14px',
@@ -1698,8 +1722,8 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                       color: itemColor,
                     }}
                   >
-                    <Icon size={18} color={itemColor} weight="regular" />
-                    <span style={{ color: itemColor, fontSize: 16, fontWeight: 400, lineHeight: '22px' }}>
+                    <Icon size={18} color={itemColor} weight="regular" style={{ flexShrink: 0 }} />
+                    <span style={{ color: itemColor, fontSize: 16, fontWeight: 400, lineHeight: '22px', whiteSpace: 'nowrap' }}>
                       {item.label}
                     </span>
                   </button>
@@ -1708,7 +1732,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             </nav>
 
             <div className="flex-1" />
-            <div className="flex flex-col" style={{ width: 316, minHeight: 66, padding: 18, gap: 10 }}>
+            <div className="flex flex-col" style={{ width: 386, minHeight: 66, padding: 18, gap: 10 }}>
               <div
                 className="flex items-center"
                 style={{
@@ -1805,7 +1829,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     >
       <div
         className="flex flex-col overflow-hidden"
-        style={{ width: 'min(860px, 96vw)', maxHeight: '90vh', background: UI.page, borderRadius: 22, border: 'none', boxShadow: 'var(--shadow-modal)' }}
+        style={{ width: 'min(1180px, 96vw)', maxHeight: '90vh', background: UI.page, borderRadius: 22, border: 'none', boxShadow: 'var(--shadow-modal)' }}
       >
         {/* ── Header ── */}
         <div
@@ -1823,7 +1847,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
             <button
               onClick={handleReset}
               className="flex items-center justify-center hover:bg-[rgb(var(--color-hover-rgb)/0.75)] transition-colors"
-              style={{ height: 32, padding: '0 12px', borderRadius: 12, border: 'none', background: UI.input, cursor: 'pointer', gap: 7 }}
+              style={{ height: 32, padding: '0 12px', borderRadius: 12, border: 'none', background: UI.input, cursor: 'pointer', gap: 7, whiteSpace: 'nowrap' }}
             >
               <ArrowCounterClockwise size={13} color="var(--color-text-secondary)" />
               <span style={{ color: UI.textSecondary, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600 }}>Reset to defaults</span>
@@ -1844,7 +1868,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           {/* Left nav */}
           <div
             className="flex flex-col shrink-0"
-            style={{ width: 185, background: UI.elevated, padding: '10px 8px', gap: 2 }}
+            style={{ width: 360, background: UI.elevated, padding: '10px 8px', gap: 2 }}
           >
             {NAV_ITEMS.map(item => {
               const Icon = item.icon
@@ -1854,10 +1878,10 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                   key={item.id}
                   onClick={() => setTab(item.id)}
                   className="flex items-center text-left transition-colors"
-                  style={{ gap: 10, height: 38, padding: '0 12px', borderRadius: 14, border: 'none', cursor: 'pointer', background: active ? UI.surface : 'transparent' }}
+                  style={{ gap: 10, height: 38, padding: '0 12px', borderRadius: 14, border: 'none', cursor: 'pointer', background: active ? UI.surface : 'transparent', width: '100%' }}
                 >
-                  <Icon size={14} color={active ? 'var(--color-accent)' : 'var(--color-text-muted)'} weight={active ? 'fill' : 'regular'} />
-                  <span style={{ color: active ? UI.text : UI.textMuted, fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: active ? 600 : 400 }}>
+                  <Icon size={14} color={active ? 'var(--color-accent)' : 'var(--color-text-muted)'} weight={active ? 'fill' : 'regular'} style={{ flexShrink: 0 }} />
+                  <span style={{ color: active ? UI.text : UI.textMuted, fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: active ? 600 : 400, whiteSpace: 'nowrap' }}>
                     {item.label}
                   </span>
                 </button>
@@ -1881,7 +1905,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                 <Card>
                   <CardHeader icon={<SlidersHorizontal size={16} />} title="Regional" />
                   <SettingRowSimple label="Language">
-                    <SelectBox value={language} options={['English']} onChange={setLanguage} />
+                    <SelectBox value={language} options={[...LANGUAGE_OPTIONS]} onChange={(value) => setLanguage(normalizeLanguagePreference(value))} />
                   </SettingRowSimple>
                   {language !== 'English' && (
                     <div className="flex items-start" style={{ gap: 7, marginTop: 10, padding: '8px 10px', borderRadius: 14, background: 'rgb(var(--color-accent-rgb) / 0.07)' }}>
@@ -1900,6 +1924,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                       value={startupAction}
                       options={['Open last workspace', 'Show workspace picker', 'Start blank']}
                       onChange={setStartupAction}
+                      width={270}
                     />
                   </SettingRowSimple>
                   <Divider />
@@ -2126,7 +2151,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                 <div className="flex flex-col" style={{ padding: 16, gap: 10 }}>
                   {/* Updates panel */}
                   <div style={{ background: UI.elevated, borderRadius: 16, padding: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <div className="flex items-center" style={{ gap: 8 }}>
+                    <div className="flex items-center" style={{ gap: 8, flexWrap: 'nowrap' }}>
                       <RocketLaunch size={15} color="var(--color-accent)" weight="fill" />
                       <span style={{ color: UI.text, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>Updates</span>
                     </div>
@@ -2134,18 +2159,18 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                       <button
                         onClick={() => openMetisExternal(METIS_UPDATES_URL)}
                         className="flex items-center justify-center hover:opacity-90 transition-opacity"
-                        style={{ height: 32, padding: '0 12px', borderRadius: 12, border: 'none', background: 'rgba(170,17,85,0.11)', cursor: 'pointer', gap: 7 }}
+                        style={{ height: 32, minWidth: 178, padding: '0 12px', borderRadius: 12, border: 'none', background: 'rgba(170,17,85,0.11)', cursor: 'pointer', gap: 7, flexShrink: 0 }}
                       >
                         <ArrowsClockwise size={13} color="var(--color-accent)" />
-                        <span style={{ color: UI.accent, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700 }}>Check updates</span>
+                        <span style={{ color: UI.accent, fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}>Check updates</span>
                       </button>
                       <button
                         onClick={() => openMetisExternal(METIS_UPDATES_URL)}
                         className="flex items-center justify-center hover:bg-[rgb(var(--color-hover-rgb)/0.75)] transition-colors"
-                        style={{ height: 32, padding: '0 12px', borderRadius: 12, border: 'none', background: UI.input, cursor: 'pointer', gap: 7 }}
+                        style={{ height: 32, minWidth: 170, padding: '0 12px', borderRadius: 12, border: 'none', background: UI.input, cursor: 'pointer', gap: 7, flexShrink: 0 }}
                       >
                         <Notebook size={13} color="var(--color-text-secondary)" />
-                        <span style={{ color: UI.textSecondary, fontFamily: 'DM Sans, sans-serif', fontSize: 10.5, fontWeight: 700 }}>Release notes</span>
+                        <span style={{ color: UI.textSecondary, fontFamily: 'DM Sans, sans-serif', fontSize: 10.5, fontWeight: 700, whiteSpace: 'nowrap' }}>Release notes</span>
                       </button>
                     </div>
                     <span style={{ color: UI.textMuted, fontFamily: 'DM Sans, sans-serif', fontSize: 9.5 }}>Updates are installed on restart.</span>
@@ -2180,7 +2205,6 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                         ['Build',    'desktop-dev',         false],
                         ['Licence',  'GNU GPL v3',           false],
                         ['Built by', `${APP_BRAND_NAME} team`, false],
-                        ['UI',      'Electron + React + TypeScript', false],
                       ] as [string, string, boolean][]).map(([k, v, highlight]) => (
                         <div key={k} className="flex items-center justify-between">
                             <span style={{ color: UI.textMuted, fontFamily: 'DM Sans, sans-serif', fontSize: 10.5, fontWeight: 600 }}>{k}</span>

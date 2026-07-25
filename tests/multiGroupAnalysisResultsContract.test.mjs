@@ -33,6 +33,7 @@ const panelCatalog = await bundleModule('src/results/panelCatalog.ts', 'multiGro
 const panelData = await bundleModule('src/results/panelData.ts', 'multiGroupPanelData.test.bundle.mjs')
 const panelExport = await bundleModule('src/results/panelExport.ts', 'multiGroupPanelExport.test.bundle.mjs')
 const resultsViewSource = await readSource('src/pages/ResultsView.tsx')
+const modelCanvasSource = await readSource('src/pages/ModelCanvas.tsx')
 
 function collectLeafPanelIds(items) {
   return items.flatMap((item) => item.children?.length ? collectLeafPanelIds(item.children) : [item.id])
@@ -200,6 +201,28 @@ assert.ok(
   ) || panelId.includes('-structural-effects') || ['mga-group-a-path-coef', 'mga-group-a-total-indirect', 'mga-group-a-specific-indirect', 'mga-group-a-total-effects', 'mga-group-b-path-coef', 'mga-group-b-total-indirect', 'mga-group-b-specific-indirect', 'mga-group-b-total-effects'].includes(panelId)),
   'MGA group-specific structural panels should be the only group-specific path/effect leaves.',
 )
+const moderatedHocMgaSections = panelCatalog.getPanelSectionsForMode('mga', { hasInteractions: true, hasHigherOrderConstructs: true })
+const moderatedHocMgaPanelIds = collectPanelIds(moderatedHocMgaSections)
+const moderatedHocComparisonIds = moderatedHocMgaSections
+  .find((section) => section.id === 'multi-group-results')
+  ?.items.find((item) => item.id === 'mga-comparisons')
+  ?.children?.map((item) => item.id) ?? []
+assert.ok(
+  moderatedHocComparisonIds.includes('mga-moderation-effects'),
+  'MGA should expose a dedicated moderation comparison panel when the saved model has moderation paths.',
+)
+assert.ok(
+  moderatedHocMgaPanelIds.includes('hoc-context'),
+  'MGA should expose higher-order construct context when the saved model has HOCs.',
+)
+assert.ok(
+  !collectPanelIds(panelCatalog.getPanelSectionsForMode('mga', { hasInteractions: true })).includes('hoc-context'),
+  'MGA should not show HOC context for models without higher-order constructs.',
+)
+assert.ok(
+  !collectPanelIds(panelCatalog.getPanelSectionsForMode('mga', { hasHigherOrderConstructs: true })).includes('mga-moderation-effects'),
+  'MGA should not show moderation comparisons for models without moderation paths.',
+)
 
 assert.equal(panelExport.getModeResultsLabel('mga'), 'Multi Group Analysis Results')
 assert.equal(panelExport.getPanelTitle('overview'), 'Overview')
@@ -207,8 +230,34 @@ assert.deepEqual(panelExport.getExportSectionTitles('overview', 2), ['Analysis S
 assert.equal(panelExport.getPanelTitle('mga-path-coefficients'), 'Path Coefficients - Multi-Group Comparison')
 assert.equal(panelExport.getPanelTitle('mga-outer-loadings'), 'Outer Loadings - Multi-Group Comparison')
 assert.equal(panelExport.getPanelTitle('mga-outer-weights'), 'Outer Weights - Multi-Group Comparison')
+assert.equal(panelExport.getPanelTitle('mga-moderation-effects'), 'Moderation Effects - Multi-Group Comparison')
+assert.equal(panelExport.getPanelTitle('hoc-context'), 'Higher-Order Construct Context')
 assert.equal(panelExport.getPanelTitle('mga-group-a-path-coef'), 'Path Coefficients - Group A')
 assert.equal(panelExport.getPanelTitle('mga-group-b-total-effects'), 'Total Effects - Group B')
+
+const moderatedHocModel = {
+  constructs: [
+    { id: 'image', name: 'Image', indicators: [{ name: 'IMAG1' }, { name: 'IMAG2' }] },
+    { id: 'social', name: 'Social Interaction', indicators: [{ name: 'SOC1' }, { name: 'SOC2' }] },
+    { id: 'sharing', name: 'Content Sharing', indicators: [{ name: 'SHR1' }, { name: 'SHR2' }] },
+    {
+      id: 'engagement',
+      name: 'Engagement HOC',
+      type: 'Reflective',
+      isHigherOrder: true,
+      higherOrderType: 'reflective',
+      dimensions: ['Social Interaction', 'Content Sharing'],
+      indicators: [],
+    },
+    { id: 'loyalty', name: 'Loyalty', indicators: [{ name: 'LOY1' }, { name: 'LOY2' }] },
+  ],
+  paths: [
+    { id: 'hoc-social', from: 'engagement', to: 'social', kind: 'direct', hocRole: 'measurement' },
+    { id: 'hoc-sharing', from: 'engagement', to: 'sharing', kind: 'direct', hocRole: 'measurement' },
+    { id: 'image-loyalty', from: 'image', to: 'loyalty', kind: 'direct', hocRole: 'structural' },
+    { id: 'engagement-moderates-image-loyalty', from: 'engagement', to: 'loyalty', kind: 'moderation', targetPathId: 'image-loyalty' },
+  ],
+}
 
 const sampleResults = {
   method: 'MGA',
@@ -371,6 +420,52 @@ const sampleResults = {
   pathCoefficients: [],
   significantDifferences: [],
   execution_log: [{ message: 'MGA ran for Gender = Male vs Female.' }],
+}
+
+const moderatedHocMgaResults = {
+  ...sampleResults,
+  bootstrapMGA: {
+    ...sampleResults.bootstrapMGA,
+    pathCoefficients: {
+      biasCorrectedConfidenceIntervals: [
+        ...sampleResults.bootstrapMGA.pathCoefficients.biasCorrectedConfidenceIntervals,
+        {
+          path: 'Image*Engagement HOC -> Loyalty',
+          groupA_beta: 0.22,
+          groupA_ci_lower: 0.09,
+          groupA_ci_upper: 0.35,
+          groupB_beta: -0.04,
+          groupB_ci_lower: -0.16,
+          groupB_ci_upper: 0.07,
+          ci_overlap: false,
+          result: 'Significant',
+        },
+      ],
+      henselerPlsMga: [
+        ...sampleResults.bootstrapMGA.pathCoefficients.henselerPlsMga,
+        {
+          path: 'Image*Engagement HOC -> Loyalty',
+          groupA_beta: 0.22,
+          groupB_beta: -0.04,
+          diff: 0.26,
+          pls_mga_p: 0.018,
+          result: 'Significant',
+        },
+      ],
+      parametricTest: [
+        ...sampleResults.bootstrapMGA.pathCoefficients.parametricTest,
+        {
+          path: 'Image*Engagement HOC -> Loyalty',
+          groupA_beta: 0.22,
+          groupB_beta: -0.04,
+          diff: 0.26,
+          t_value: 2.48,
+          p_value: 0.014,
+          result: 'Significant',
+        },
+      ],
+    },
+  },
 }
 
 assert.deepEqual(panelData.getPanelDataFromResults('mga', 'overview', sampleResults), {
@@ -579,6 +674,101 @@ assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-outer-weights', s
     Result: 'Not significant',
   },
 ])
+assert.deepEqual(
+  panelData.getPanelDataFromResults('mga', 'mga-moderation-effects', moderatedHocMgaResults, { savedModel: moderatedHocModel }),
+  [
+    {
+      IV: 'Image',
+      Moderator: 'Engagement HOC',
+      DV: 'Loyalty',
+      Interaction: 'Image*Engagement HOC',
+      Path: 'Image*Engagement HOC -> Loyalty',
+      'HOC role': 'Moderator is higher-order construct: Social Interaction, Content Sharing',
+      'Male β': 0.22,
+      'Male CI lower': 0.09,
+      'Male CI upper': 0.35,
+      'Female β': -0.04,
+      'Female CI lower': -0.16,
+      'Female CI upper': 0.07,
+      'CI overlap': 'No',
+      Result: 'Significant',
+    },
+  ],
+  'MGA moderation panel should filter and label interaction path comparisons explicitly.',
+)
+assert.deepEqual(
+  panelData.getPanelDataFromResults('mga', 'mga-moderation-effects', moderatedHocMgaResults, {
+    savedModel: moderatedHocModel,
+    mgaComparisonMethod: 'parametricTest',
+  }),
+  [
+    {
+      IV: 'Image',
+      Moderator: 'Engagement HOC',
+      DV: 'Loyalty',
+      Interaction: 'Image*Engagement HOC',
+      Path: 'Image*Engagement HOC -> Loyalty',
+      'HOC role': 'Moderator is higher-order construct: Social Interaction, Content Sharing',
+      'Male β': 0.22,
+      'Female β': -0.04,
+      'Difference (Male − Female)': 0.26,
+      't-value': 2.48,
+      'p-value': 0.014,
+      Result: 'Significant',
+    },
+  ],
+  'MGA moderation panel should support the same comparison-method tabs as the main path panel.',
+)
+assert.deepEqual(
+  panelData.getPanelDataFromResults('mga', 'mga-moderation-effects', moderatedHocMgaResults),
+  null,
+  'MGA should not infer moderation reporting from interaction-looking rows without an analysis-time saved model.',
+)
+assert.deepEqual(
+  panelData.getPanelDataFromResults('mga', 'hoc-context', moderatedHocMgaResults, { savedModel: moderatedHocModel }),
+  [
+    {
+      'Higher-order construct': 'Engagement HOC',
+      Type: 'reflective',
+      Dimensions: 'Social Interaction, Content Sharing',
+      'Dimension count': 2,
+      'Structural role': 'Moderator in Image*Engagement HOC -> Loyalty',
+      'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+    },
+  ],
+  'MGA should report HOC context instead of hiding HOC participation inside generic path rows.',
+)
+assert.deepEqual(
+  panelData.getPanelDataFromResults('mga', 'hoc-context', {
+    final_results: {
+      hoc_results: [
+        {
+          hoc_construct: 'Engagement HOC',
+          loc_construct: 'Social Interaction',
+          hoc_type: 'reflective',
+          loc_type: 'reflective',
+          loading: 0.88,
+          weight: null,
+          vif: null,
+        },
+      ],
+    },
+  }),
+  [
+    {
+      'Higher-order construct': 'Engagement HOC',
+      Type: 'reflective',
+      Dimensions: 'Social Interaction',
+      'Dimension count': 1,
+      'Structural role': 'Available from saved HOC results',
+      Loading: 0.88,
+      Weight: null,
+      VIF: null,
+      'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+    },
+  ],
+  'MGA HOC context should read the existing final_results.hoc_results fallback when no model snapshot is available.',
+)
 
 assert.match(
   resultsViewSource,
@@ -614,8 +804,28 @@ assert.match(
 
 assert.match(
   resultsViewSource,
-  /getMgaGroupLabels[\s\S]*leftValue[\s\S]*rightValue[\s\S]*groupA[\s\S]*groupB[\s\S]*comparisonLabel[\s\S]*buildSidebarSections\(analysisMode, moderationAvailable, mgaGroupLabels\)/,
+  /getMgaGroupLabels[\s\S]*leftValue[\s\S]*rightValue[\s\S]*groupA[\s\S]*groupB[\s\S]*comparisonLabel[\s\S]*buildSidebarSections\(analysisMode, moderationAvailable, mgaGroupLabels, hasHigherOrderConstructs\)/,
   'ResultsView should label MGA group and comparison parent rows with the modal-selected left/right group values from the JSON.',
+)
+assert.match(
+  resultsViewSource,
+  /const moderationAvailable = useMemo\([\s\S]*modelHasSavedModerationPaths\(savedModel\)[\s\S]*buildSidebarSections\(analysisMode, moderationAvailable, mgaGroupLabels, hasHigherOrderConstructs\)/,
+  'ResultsView should gate the MGA moderation panel from saved model moderation paths, not inferred interaction-looking rows.',
+)
+assert.match(
+  resultsViewSource,
+  /savedAnalysis\?\.modelSnapshot[\s\S]*navState\?\.savedModelSnapshot[\s\S]*setSavedModel\(cloneResultsModelSnapshot\(analysisModelSnapshot/,
+  'ResultsView should prefer the analysis-time model snapshot embedded in saved analysis state.',
+)
+assert.match(
+  resultsViewSource,
+  /handleRunMultiGroupFromResults\s*=\s*useCallback\(async \(settings: MultiGroupAnalysisSettings\)[\s\S]*persistResultsToWorkspace\(\{[\s\S]*mode:\s*'mga'[\s\S]*modelSnapshot:\s*savedModel/,
+  'Results-screen MGA reruns should preserve the model snapshot that produced the result.',
+)
+assert.match(
+  modelCanvasSource,
+  /analysis:\s*analysisState\s*\?[\s\S]*\.\.\.analysisState[\s\S]*modelSnapshot:\s*snapshot/,
+  'ModelCanvas should persist the analysis-time model snapshot inside saved analysis state.',
 )
 
 assert.match(
@@ -715,6 +925,11 @@ assert.match(
 )
 assert.match(
   resultsViewSource,
+  /showMgaComparisonMethodTabs[\s\S]*mga-moderation-effects[\s\S]*mgaComparisonMethodOptions/,
+  'ResultsView should give MGA moderation comparisons the same comparison-method tabs as path coefficients.',
+)
+assert.match(
+  resultsViewSource,
   /function MgaOverviewPanel[\s\S]*setup[\s\S]*descriptives[\s\S]*GenericDataTable/,
   'ResultsView should render MGA overview as setup and group descriptives tables.',
 )
@@ -732,6 +947,11 @@ assert.match(
   resultsViewSource,
   /const hasMgaOverviewGroupGap = isMgaOverviewGroupBoundary\(rows, rowIndex, analysisMode, selectedPanel\)[\s\S]*borderTop: hasMgaOverviewGroupGap \? '8px solid var\(--color-right-panel-bg\)' : undefined[\s\S]*paddingTop: hasMgaOverviewGroupGap \? 14 : undefined/,
   'MGA overview group descriptives should render a visible space before the second group.',
+)
+assert.match(
+  resultsViewSource,
+  /getPanelDataFromResults\(analysisMode, selectedPanel, analysisResults, \{[\s\S]*savedModel/,
+  'ResultsView should pass the saved model into panel data so HOC and moderation context can be derived.',
 )
 
 console.log('PASS multi-group analysis results contract')

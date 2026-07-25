@@ -1233,7 +1233,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                             }}
                           />
                         ) : (
-                          <span style={{
+                          <span data-i18n-skip style={{
                             color: 'var(--color-text-primary)',
                             fontFamily: 'DM Sans, sans-serif',
                             fontSize: 12,
@@ -1312,7 +1312,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                               }}
                             />
                           ) : (
-                            <span style={{
+                            <span data-i18n-skip style={{
                               color: activeId === child.id ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
                               fontFamily: 'DM Sans, sans-serif',
                               fontSize: 11,
@@ -1496,7 +1496,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                           }}
                         />
                       ) : (
-                        <span style={{
+                        <span data-i18n-skip style={{
                           color: 'var(--color-text-primary)',
                           fontFamily: 'DM Sans, sans-serif',
                           fontSize: 12,
@@ -1536,7 +1536,10 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
       >
         {/* Header row */}
         <div className="flex items-center justify-between shrink-0">
-          <span style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 18, fontWeight: 700 }}>
+          <span
+            data-i18n-skip={activeWorkspace ? true : undefined}
+            style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 18, fontWeight: 700 }}
+          >
             {activeWorkspace ? getWorkspaceLabel(activeWorkspace.name) : 'No Workspace Selected'}
           </span>
           <div className="flex items-center" style={{ gap: 8 }}>
@@ -1644,6 +1647,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                     <div className="flex items-start justify-between w-full" style={{ gap: 10, padding: '0 2px' }}>
                       <div className="flex flex-col min-w-0" style={{ gap: 4 }}>
                         <span
+                          data-i18n-skip
                           style={{
                             color: 'var(--color-text-primary)',
                             fontFamily: 'DM Sans, sans-serif',
@@ -1743,7 +1747,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                   >
                     <div className="flex items-center flex-1 min-w-0" style={{ gap: 8 }}>
                       <Graph size={14} color="var(--color-text-muted)" style={{ flexShrink: 0 }} />
-                      <span style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <span data-i18n-skip style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 13, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {getModelLabel(model.name)}
                       </span>
                     </div>
@@ -1878,12 +1882,18 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                       <ArrowRight size={12} color={hoveredId === result.id ? 'rgb(var(--color-accent-rgb) / 0.72)' : 'var(--color-text-muted)'} />
                     </div>
                     <div className="flex flex-col flex-1 min-w-0" style={{ gap: 4 }}>
-                      <span style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      <span data-i18n-skip style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {result.name}
                       </span>
-                      <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {result.meta || 'Saved analysis output'}
-                      </span>
+                      {result.meta ? (
+                        <span data-i18n-skip style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {result.meta}
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          Saved analysis output
+                        </span>
+                      )}
                       <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11 }}>
                         Created {formatRelativeAge(resolveCreatedAt(result))}
                       </span>
@@ -1919,11 +1929,11 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
                 >
                   <FileCsv size={18} color="var(--color-accent)" style={{ flexShrink: 0 }} />
                   <div className="flex flex-col flex-1 min-w-0" style={{ gap: 2 }}>
-                    <span style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span data-i18n-skip style={{ color: 'var(--color-text-primary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {dataset.name}
                     </span>
                     {dataset.meta && (
-                      <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11 }}>
+                      <span data-i18n-skip style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11 }}>
                         {dataset.meta}
                       </span>
                     )}
@@ -2074,7 +2084,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
 
             <div style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
               <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 13, lineHeight: 1.5 }}>
-                This will permanently delete <strong>{pendingDelete.name}</strong> from this workspace.
+                This will permanently delete <strong data-i18n-skip>{pendingDelete.name}</strong> from this workspace.
               </span>
               <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 12 }}>
                 This action cannot be undone.

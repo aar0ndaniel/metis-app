@@ -77,16 +77,16 @@ assert.doesNotMatch(
   'Properties panel should not auto-expand from a selected-state effect.',
 )
 
-assert.doesNotMatch(
+assert.match(
   constructMouseDown,
   /setRightPanelCollapsed\(false\)[\s\S]*setRightTab\('Properties'\)/,
-  'Construct clicks should not auto-expand the Properties panel.',
+  'Construct clicks must auto-expand the Properties panel and switch to the Properties tab.',
 )
 
-assert.doesNotMatch(
+assert.match(
   indicatorMouseDown,
   /setRightPanelCollapsed\(false\)[\s\S]*setRightTab\('Properties'\)/,
-  'Indicator clicks should not auto-expand the Properties panel.',
+  'Indicator clicks must auto-expand the Properties panel and switch to the Properties tab.',
 )
 
 assert.doesNotMatch(
@@ -95,10 +95,10 @@ assert.doesNotMatch(
   'Creating a construct should not auto-expand the Properties panel.',
 )
 
-assert.doesNotMatch(
+assert.match(
   svgMouseDown,
   /setRightPanelCollapsed\(true\)/,
-  'Blank canvas clicks should not auto-collapse the Properties panel.',
+  'Blank canvas clicks must auto-collapse the Properties panel.',
 )
 
 console.log('PASS model canvas HOC static coverage')

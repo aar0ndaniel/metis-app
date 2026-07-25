@@ -17,7 +17,7 @@ import { stripModelDisplayName } from '../utils/displayNames'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type MenuItem =
-  | { type: 'item'; label: string; shortcut?: string; icon?: string; badge?: string; disabled?: boolean; color?: string; action?: string }
+  | { type: 'item'; label: string; shortcut?: string; icon?: string; badge?: string; disabled?: boolean; color?: string; action?: string; tourId?: string }
   | { type: 'separator' }
   | { type: 'checked'; label: string; checked: boolean; disabled?: boolean; action?: string }
   | { type: 'submenu'; label: string; items?: MenuItem[]; disabled?: boolean }
@@ -123,12 +123,12 @@ function buildViewMenu(screen: string, showVars: boolean, showProps: boolean, sh
 function buildAnalysisMenu(screen: string, status: any): MenuItem[] {
   const noCanvas = screen !== 'canvas'
   return [
-    { type: 'item', label: 'Run PLS-SEM',       shortcut: 'Ctrl+Enter', disabled: noCanvas || !status.hasCanvasItems, action: 'run-pls' },
+    { type: 'item', label: 'Run PLS-SEM',       shortcut: 'Ctrl+Enter', disabled: noCanvas || !status.hasCanvasItems, action: 'run-pls', tourId: 'tour-analysis-run' },
     { type: 'item', label: 'Run Bootstrap',      shortcut: 'Ctrl+B',    disabled: noCanvas || !status.hasCanvasItems, action: 'run-bootstrap' },
     { type: 'item', label: 'PLS Predict',       disabled: noCanvas || !status.hasCanvasItems, action: 'run-pls-predict' },
-    { type: 'item', label: 'NCA and IPMA', disabled: noCanvas || !status.canRunAdvanced, action: 'run-advanced-analysis' },
-    { type: 'item', label: 'Permutation Analysis (MICOM)', badge: 'Beta', disabled: noCanvas || !status.canRunAdvanced, action: 'run-permutation-analysis' },
-    { type: 'item', label: 'Multi Group Analysis (MGA)', disabled: noCanvas || !status.canRunAdvanced, action: 'run-multi-group-analysis' },
+    { type: 'item', label: 'NCA and IPMA', disabled: noCanvas || !status.hasCanvasItems, action: 'run-advanced-analysis' },
+    { type: 'item', label: 'Permutation Analysis (MICOM)', badge: 'Beta', disabled: noCanvas || !status.hasCanvasItems, action: 'run-permutation-analysis' },
+    { type: 'item', label: 'Multi Group Analysis (MGA)', disabled: noCanvas || !status.hasCanvasItems, action: 'run-multi-group-analysis' },
     { type: 'separator' },
     { type: 'item', label: 'Algorithm Settings', disabled: noCanvas || !status.hasCanvasItems },
   ]
@@ -241,6 +241,7 @@ function MenuDropdown({
         return (
           <button
             key={i}
+            id={item.tourId}
             className={`titlebar-menu-row w-full flex items-center justify-between gap-2 px-3.5 h-8 ${item.disabled ? 'titlebar-menu-row-disabled cursor-default' : ''}`}
             onClick={handleClick}
           >
@@ -574,14 +575,19 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
           <div key={menu.label} className="relative">
             <div className="relative h-full flex items-center">
             <button
-              id={menu.label === 'Tark it' ? 'tour-tark' : menu.label === 'Help' ? 'tour-help' : undefined}
+              id={menu.label === 'Analysis' ? 'tour-analysis-menu' : menu.label === 'Tark it' ? 'tour-tark' : menu.label === 'Help' ? 'tour-help' : undefined}
               className="px-3 h-7 rounded-[6px] text-[13px] font-medium outline-none"
               style={{
                 color: openMenu === menu.label ? 'var(--color-text-secondary-alt)' : 'var(--color-title-tab)',
                 backgroundColor: 'transparent',
                 fontFamily: 'Inter, DM Sans, sans-serif'
               }}
-              onClick={() => toggleMenu(menu.label)}
+              onClick={() => {
+                toggleMenu(menu.label)
+                if (menu.label === 'Analysis') {
+                  window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'analysis-opened' } }))
+                }
+              }}
               onMouseEnter={() => {
                 if (openMenu && openMenu !== menu.label) {
                   setOpenMenu(menu.label)

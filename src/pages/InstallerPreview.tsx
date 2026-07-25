@@ -218,6 +218,7 @@ export default function InstallerPreview() {
   const [installError, setInstallError] = useState('')
   const [isBrowsing, setIsBrowsing] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState<SetupTheme>(() => getInitialSetupTheme())
+  const [mockTelemetryConsent, setMockTelemetryConsent] = useState<'pending' | 'accepted' | 'declined'>('pending')
   const logoSrc = selectedTheme === 'Light' ? logoBlack : logoWhite
   const brand = displayBrandName()
 
@@ -382,6 +383,62 @@ export default function InstallerPreview() {
               {resolvedInstallPath || displayPath}
             </p>
           </div>
+
+          <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+              Anonymous Installation Telemetry (Optional Preview)
+            </span>
+            <p style={{ margin: 0, color: TEXT_SECONDARY, fontFamily: FF, fontSize: 11.5, lineHeight: 1.45 }}>
+              Send a single non-identifying ping (OS, App Version, CPU Arch) to help report adoption metrics. No research data leaves your computer.
+            </p>
+            {mockTelemetryConsent === 'pending' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => setMockTelemetryConsent('declined')}
+                  style={{
+                    ...NO_DRAG_STYLE,
+                    flex: 1,
+                    height: 32,
+                    borderRadius: 8,
+                    background: 'var(--color-input)',
+                    border: `1px solid ${BORDER_STRONG}`,
+                    color: TEXT_PRIMARY,
+                    fontFamily: FF,
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  No Thanks (Esc)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMockTelemetryConsent('accepted')}
+                  style={{
+                    ...NO_DRAG_STYLE,
+                    flex: 1,
+                    height: 32,
+                    borderRadius: 8,
+                    background: 'var(--color-input)',
+                    border: `1px solid rgb(${ACCENT_RGB} / 0.35)`,
+                    color: ACCENT_HEX,
+                    fontFamily: FF,
+                    fontSize: 11.5,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Send Anonymous Ping
+                </button>
+              </div>
+            ) : (
+              <span style={{ color: ACCENT_HEX, fontFamily: FF, fontSize: 11.5, fontWeight: 600 }}>
+                ✓ [Mock Preview] Preference recorded ({mockTelemetryConsent === 'accepted' ? 'Ping sent' : 'Ping declined'}).
+              </span>
+            )}
+          </div>
+
           <div style={{ borderRadius: 10, background: `rgb(${ACCENT_RGB} / 0.08)`, border: `1px solid rgb(${ACCENT_RGB} / 0.18)`, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
             <Check size={16} weight="bold" color={ACCENT_HEX} />
             <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12 }}>

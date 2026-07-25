@@ -30,6 +30,8 @@ export default function NewWorkspaceDialog({ onClose, onCreate }: Props) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
+        id="tour-new-workspace-dialog"
+        tabIndex={-1}
         className="flex flex-col"
         style={{
           width: 480,

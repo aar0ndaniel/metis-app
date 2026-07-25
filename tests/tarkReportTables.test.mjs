@@ -30,6 +30,7 @@ async function importTsModule(relativeEntry, outfileName) {
 const {
   buildTarkDiagramResults,
   buildTarkReportSections,
+  buildTarkAdvancedAnalysisSections,
   TARK_USER_FILL_CELL,
 } = await importTsModule('src/utils/tarkReportTables.ts', 'tarkReportTables.test.bundle.mjs')
 
@@ -244,4 +245,323 @@ assert.equal(diagramResults.measurementResults['PEOU::PEOU1'].loading, 0.812)
 assert.equal(diagramResults.measurementResults['PEOU::PEOU1'].weight, 0.412)
 assert.equal(diagramResults.constructScores.ATT.r2, 0.42)
 
+const micomResults = {
+  groups: {
+    groupingVariable: 'Gender',
+    groupA: 'Female',
+    groupB: 'Male',
+    leftValue: 'Female',
+    rightValue: 'Male',
+    counts: { groupA: 146, groupB: 173 },
+  },
+  settings: { permutations: 500, alpha: 0.05, seed: 123 },
+  configuralInvariance: {
+    checks: [
+      { check: 'same model structure', status: 'passed' },
+      { check: 'same indicators', status: 'passed' },
+      { check: 'same construct specification', status: 'passed' },
+    ],
+    passed: true,
+    status: 'passed',
+  },
+  compositionalInvariance: [
+    { construct: 'Satisfaction', c_value: 0.997, ci_lower: 0.991, p_value: 0.002, decision: 'supported' },
+  ],
+  equalityAssessment: [
+    {
+      construct: 'Satisfaction',
+      mean_diff: 0.12,
+      mean_ci_lower: -0.08,
+      mean_ci_upper: 0.25,
+      mean_decision: 'supported',
+      variance_diff: 0.03,
+      variance_ci_lower: -0.1,
+      variance_ci_upper: 0.12,
+      variance_decision: 'supported',
+    },
+  ],
+  invarianceClassification: [
+    {
+      construct: 'Satisfaction',
+      configural_invariance: 'passed',
+      compositional_invariance: 'supported',
+      equality_of_means: 'supported',
+      equality_of_variances: 'supported',
+      classification: 'Partial measurement invariance',
+    },
+  ],
+  hocContext: [
+    {
+      higher_order_construct: 'Engagement HOC',
+      dimensions: 'Social Interaction, Content Sharing',
+      invariance_result: 'Partial measurement invariance',
+      notes: 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+    },
+  ],
+}
+
+const mgaResults = {
+  groups: {
+    groupingVariable: 'Gender',
+    groupA: 'Female',
+    groupB: 'Male',
+    leftValue: 'Female',
+    rightValue: 'Male',
+    counts: { groupA: 146, groupB: 173 },
+  },
+  settings: { nboot: 500, alpha: 0.05, seed: 123 },
+  groupSpecific: {
+    groupA: {
+      final_results: {
+        path_coefficients: [
+          { row_name: 'Image -> Satisfaction', 'Original Est.': 0.51, 'T Stat.': 6.38, 'P Value': 0.001 },
+          { row_name: 'Service -> Loyalty', 'Original Est.': 0.22, 'T Stat.': 2.04, 'P Value': 0.041 },
+        ],
+      },
+    },
+    groupB: {
+      final_results: {
+        path_coefficients: [
+          { row_name: 'Image -> Satisfaction', 'Original Est.': 0.31, 'T Stat.': 3.44, 'P Value': 0.002 },
+          { row_name: 'Service -> Loyalty', 'Original Est.': 0.19, 'T Stat.': 1.77, 'P Value': 0.076 },
+        ],
+      },
+    },
+  },
+  bootstrapMGA: {
+    pathCoefficients: {
+      biasCorrectedConfidenceIntervals: [
+        {
+          path: 'Image -> Satisfaction',
+          groupA_beta: 0.51,
+          groupA_ci_lower: 0.2,
+          groupA_ci_upper: 0.7,
+          groupB_beta: 0.31,
+          groupB_ci_lower: -0.1,
+          groupB_ci_upper: 0.1,
+          diff: 0.2,
+          difference_ci_lower: 0.2,
+          difference_ci_upper: 0.7,
+          ci_overlap: false,
+          result: 'Significant',
+        },
+      ],
+      henselerPlsMga: [
+        {
+          path: 'Image -> Satisfaction',
+          groupA_beta: 0.51,
+          groupB_beta: 0.31,
+          diff: 0.2,
+          pls_mga_p: 0.01,
+          result: 'Significant',
+        },
+      ],
+      parametricTest: [
+        {
+          path: 'Image -> Satisfaction',
+          groupA_beta: 0.51,
+          groupB_beta: 0.31,
+          diff: 0.2,
+          p_value: 0.02,
+          result: 'Significant',
+        },
+      ],
+    },
+    outerLoadings: {
+      biasCorrectedConfidenceIntervals: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_loading: 0.82,
+          groupB_loading: 0.79,
+          diff: 0.03,
+          difference_ci_lower: 0.01,
+          difference_ci_upper: 0.05,
+          result: 'Significant',
+        },
+      ],
+      henselerPlsMga: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_loading: 0.82,
+          groupB_loading: 0.79,
+          diff: 0.03,
+          pls_mga_p: 0.03,
+          result: 'Significant',
+        },
+      ],
+      parametricTest: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_loading: 0.82,
+          groupB_loading: 0.79,
+          diff: 0.03,
+          p_value: 0.04,
+          result: 'Significant',
+        },
+      ],
+    },
+    outerWeights: {
+      biasCorrectedConfidenceIntervals: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_weight: 0.31,
+          groupB_weight: 0.27,
+          diff: 0.04,
+          difference_ci_lower: 0.02,
+          difference_ci_upper: 0.06,
+          result: 'Significant',
+        },
+      ],
+      henselerPlsMga: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_weight: 0.31,
+          groupB_weight: 0.27,
+          diff: 0.04,
+          pls_mga_p: 0.03,
+          result: 'Significant',
+        },
+      ],
+      parametricTest: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_weight: 0.31,
+          groupB_weight: 0.27,
+          diff: 0.04,
+          p_value: 0.04,
+          result: 'Significant',
+        },
+      ],
+    },
+  },
+  hocContext: [
+    {
+      higher_order_construct: 'Engagement HOC',
+      dimensions: 'Social Interaction, Content Sharing',
+      role: 'Predictor',
+      compared_path: 'Engagement HOC -> Loyalty',
+      groupA_estimate: 0.44,
+      groupB_estimate: 0.39,
+      difference: 0.05,
+      decision: 'Established',
+    },
+  ],
+  pathCoefficients: {
+    henselerPlsMga: [
+      {
+        path: 'Image -> Satisfaction',
+        group1_beta: 0.51,
+        group2_beta: 0.31,
+        diff: 0.2,
+        pls_mga_p: 0.01,
+        p_value: 0.01,
+        p_value_inverse: 0.99,
+        significant: true,
+        decision: 'significant',
+      },
+    ],
+  },
+  significantDifferences: [
+    {
+      path: 'Image -> Satisfaction',
+      group1_beta: 0.51,
+      group2_beta: 0.31,
+      diff: 0.2,
+      pls_mga_p: 0.01,
+      p_value: 0.01,
+      significant: true,
+      decision: 'significant',
+    },
+  ],
+  execution_log: [{ message: 'MGA ran for Gender = Female vs Male.' }],
+}
+
+const advancedSections = buildTarkAdvancedAnalysisSections(
+  [
+    { id: 'micom', label: 'MICOM', saved: true },
+    { id: 'mga', label: 'MGA', saved: true },
+  ],
+  new Map([
+    ['pls-sem', { mode: 'pls-sem', results: plsResults }],
+    ['bootstrap', { mode: 'bootstrap', results: bootstrapResults }],
+    ['plspredict', { mode: 'plspredict', results: plsPredictResults }],
+    ['permutation', { mode: 'permutation', results: micomResults }],
+    ['mga', { mode: 'mga', results: mgaResults }],
+  ]),
+  savedModel,
+)
+
+const advancedByTitle = new Map(advancedSections.map((section) => [section.title, section]))
+
+assert.deepEqual(
+  advancedSections.map((section) => section.title),
+  [
+    'Measurement invariance assessment',
+    'Configural invariance assessment',
+    'Compositional invariance assessment',
+    'Equality of construct means',
+    'Equality of construct variances',
+    'Measurement invariance classification',
+    'Higher-order construct invariance context',
+    'Multi-group analysis',
+    'Group-specific structural path results',
+    'Multi-group comparison of path coefficients',
+    'Multi-group comparison of outer loadings',
+    'Multi-group comparison of outer weights',
+    'Higher-order construct context in multi-group analysis',
+  ],
+  'The Tark advanced-report helper should emit dedicated MICOM and MGA section families instead of generic leaf tables.',
+)
+
+const configural = advancedByTitle.get('Configural invariance assessment')
+assert.deepEqual(configural.headers, ['Requirement', 'Group A', 'Group B', 'Status'])
+assert.deepEqual(configural.rows[0], ['Same model structure', 'Female', 'Male', 'Passed'])
+
+const compositional = advancedByTitle.get('Compositional invariance assessment')
+assert.deepEqual(compositional.headers, ['Construct', 'Original correlation', '5% quantile', 'Permutation p-value', 'Decision'])
+assert.deepEqual(compositional.rows[0], ['Satisfaction', '0.997', '0.991', '0.002', 'Established'])
+
+const equalityMeans = advancedByTitle.get('Equality of construct means')
+assert.deepEqual(equalityMeans.headers, ['Construct', 'Group A mean', 'Group B mean', 'Mean difference', '95% permutation interval', 'Decision'])
+assert.equal(equalityMeans.note.includes('Female'), true)
+assert.equal(equalityMeans.note.includes('Male'), true)
+assert.deepEqual(equalityMeans.rows[0], ['Satisfaction', '—', '—', '0.120', '[-0.080, 0.250]', 'Established'])
+
+const equalityVariances = advancedByTitle.get('Equality of construct variances')
+assert.deepEqual(equalityVariances.rows[0], ['Satisfaction', '—', '—', '0.030', '[-0.100, 0.120]', 'Established'])
+
+const classification = advancedByTitle.get('Measurement invariance classification')
+assert.deepEqual(classification.headers, ['Construct', 'Configural invariance', 'Compositional invariance', 'Equality of means', 'Equality of variances', 'Classification'])
+assert.deepEqual(classification.rows[0], ['Satisfaction', 'Passed', 'Established', 'Established', 'Established', 'Partial measurement invariance'])
+
+const hocContext = advancedByTitle.get('Higher-order construct invariance context')
+assert.deepEqual(hocContext.headers, ['Higher-order construct', 'Dimensions', 'Invariance result', 'Notes'])
+assert.deepEqual(hocContext.rows[0], ['Engagement HOC', 'Social Interaction, Content Sharing', 'Partial measurement invariance', 'Uses fitted HOC construct scores from the same SEMinR model specification.'])
+
+const mgaGroupSpecific = advancedByTitle.get('Group-specific structural path results')
+assert.deepEqual(mgaGroupSpecific.headers, ['Path', 'Group A β', 'Group A t-value', 'Group A p-value', 'Group B β', 'Group B t-value', 'Group B p-value'])
+assert.deepEqual(mgaGroupSpecific.rows[0], ['Image → Satisfaction', '0.510', '6.380', '0.001', '0.310', '3.440', '0.002'])
+
+const mgaComparison = advancedByTitle.get('Multi-group comparison of path coefficients')
+assert.deepEqual(mgaComparison.headers, ['Path', 'Group A β', 'Group B β', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision'])
+assert.deepEqual(mgaComparison.rows[0], ['Image → Satisfaction', '0.510', '0.310', '0.200', '[0.200, 0.700]', '0.010', '0.020', 'Significant difference'])
+
+const mgaOuterLoadings = advancedByTitle.get('Multi-group comparison of outer loadings')
+assert.deepEqual(mgaOuterLoadings.headers, ['Construct', 'Indicator', 'Group A loading', 'Group B loading', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision'])
+assert.deepEqual(mgaOuterLoadings.rows[0], ['Image', 'IMAG1', '0.820', '0.790', '0.030', '[0.010, 0.050]', '0.030', '0.040', 'Significant difference'])
+
+const mgaOuterWeights = advancedByTitle.get('Multi-group comparison of outer weights')
+assert.deepEqual(mgaOuterWeights.rows[0], ['Image', 'IMAG1', '0.310', '0.270', '0.040', '[0.020, 0.060]', '0.030', '0.040', 'Significant difference'])
+
+const mgaHocContext = advancedByTitle.get('Higher-order construct context in multi-group analysis')
+assert.deepEqual(mgaHocContext.headers, ['Higher-order construct', 'Dimensions', 'Role', 'Compared path', 'Group A estimate', 'Group B estimate', 'Difference', 'Decision'])
+assert.deepEqual(mgaHocContext.rows[0], ['Engagement HOC', 'Social Interaction, Content Sharing', 'Predictor', 'Engagement HOC -> Loyalty', '0.440', '0.390', '0.050', 'Established'])
+
 console.log('PASS Tark report table builders use saved result values')
+

@@ -7,6 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = path.resolve(__dirname, '..')
 
 const source = await fs.readFile(path.join(workspaceRoot, 'src/components/TitleBar.tsx'), 'utf8')
+const modelCanvasSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
 const analysisMenuMatch = source.match(/function buildAnalysisMenu[\s\S]*?\n\}/)
 
 assert.ok(analysisMenuMatch, 'TitleBar should keep a buildAnalysisMenu function.')
@@ -53,6 +54,37 @@ assert.match(
   analysisMenu,
   /label:\s*'Multi Group Analysis \(MGA\)'[\s\S]*action:\s*'run-multi-group-analysis'/,
   'Analysis menu should expose Multi Group Analysis (MGA).'
+)
+
+for (const [label, escapedLabel] of [
+  ['NCA and IPMA', 'NCA and IPMA'],
+  ['Permutation Analysis (MICOM)', 'Permutation Analysis \\(MICOM\\)'],
+  ['Multi Group Analysis (MGA)', 'Multi Group Analysis \\(MGA\\)'],
+]) {
+  assert.match(
+    analysisMenu,
+    new RegExp(`label:\\s*'${escapedLabel}'[^\\n]*disabled:\\s*noCanvas \\|\\| !status\\.hasCanvasItems`),
+    `${label} should be available for a populated model without requiring a saved PLS-SEM result.`,
+  )
+}
+
+assert.doesNotMatch(
+  analysisMenu,
+  /canRunAdvanced/,
+  'Analysis menu children should not depend on the saved-PLS canRunAdvanced status.',
+)
+
+const advancedActionMatch = modelCanvasSource.match(/case 'run-advanced-analysis':[\s\S]*?break/)
+assert.ok(advancedActionMatch, 'ModelCanvas should handle the NCA and IPMA analysis action.')
+assert.match(
+  advancedActionMatch[0],
+  /if \(!isAnyCalculationRunning\) setShowAdvancedAnalysisModal\(true\)/,
+  'NCA and IPMA should open when no calculation is running, without requiring a prior PLS-SEM result.',
+)
+assert.doesNotMatch(
+  advancedActionMatch[0],
+  /canRunAdvancedAnalysis/,
+  'NCA and IPMA action handling should not retain the saved-PLS prerequisite.',
 )
 
 assert.match(

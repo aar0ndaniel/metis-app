@@ -63,6 +63,8 @@ export default function NewModelDialog({
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
+        id="tour-new-model-dialog"
+        tabIndex={-1}
         className="flex flex-col"
         style={{
           width: 480,

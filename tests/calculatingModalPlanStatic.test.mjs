@@ -101,7 +101,7 @@ assert.doesNotMatch(calculatingChipSource, /estimatedSeconds|Est\.|bg-neutral-|t
 assert.match(calculatingChipSource, /background:\s*'var\(--color-panel-pop\)'[\s\S]*color:\s*'var\(--color-text-primary\)'/, 'Hidden calculation chip should use theme-aware surface and text tokens.')
 
 assert.match(plumberSource, /analysis_core_plan <- function\(\)[\s\S]*max\(1L, min\(as\.integer\(requested\), as\.integer\(detected\)\)\)[\s\S]*analysis_cores <- function\(\)/, 'R API should keep bounded analysis core planning and compatibility selection.')
-assert.match(plumberSource, /reserve <- if \(detected > 16L\) \{\s*4L\s*\} else if \(detected > 10L\) \{\s*2L\s*\} else \{\s*1L\s*\}[\s\S]*requested <- detected - reserve/, 'R API should reserve four cores above 16 detected cores, two cores from 11 to 16 cores, and one core at 10 or fewer detected cores.')
+assert.match(plumberSource, /requested <- if \(detected >= 13L\) \{\s*12L\s*\} else if \(detected >= 11L\) \{\s*10L\s*\} else if \(detected >= 9L\) \{\s*8L\s*\} else if \(detected >= 7L\) \{\s*6L\s*\} else \{\s*max\(1L, detected - 1L\)\s*\}[\s\S]*policy <- "dynamic-stepped-cap"/, 'R API should use the stepped desktop-safe core fallback.')
 assert.doesNotMatch(plumberSource, /coerce_boot_array|run-bootstrap-chunk|finalize-bootstrap|chunk_n|accumulated|Chunked bootstrap|chunked bootstrap/, 'R API should not expose chunked bootstrap routes or helpers.')
 assert.match(plumberSource, /assemble_bootstrap_response <- function/, 'R API should share bootstrap response assembly for the single bootstrap route.')
 assert.match(plumberSource, /"\/run-bootstrap"/, 'R API should expose the single /run-bootstrap route.')

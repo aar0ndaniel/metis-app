@@ -23,9 +23,9 @@ assert.doesNotMatch(
 for (const [label, guard] of [
   ['Run Bootstrap', 'noCanvas || !status.hasCanvasItems'],
   ['PLS Predict', 'noCanvas || !status.hasCanvasItems'],
-  ['NCA and IPMA', 'noCanvas || !status.canRunAdvanced'],
-  ['Permutation Analysis (MICOM)', 'noCanvas || !status.canRunAdvanced'],
-  ['Multi Group Analysis (MGA)', 'noCanvas || !status.canRunAdvanced'],
+  ['NCA and IPMA', 'noCanvas || !status.hasCanvasItems'],
+  ['Permutation Analysis (MICOM)', 'noCanvas || !status.hasCanvasItems'],
+  ['Multi Group Analysis (MGA)', 'noCanvas || !status.hasCanvasItems'],
   ['Algorithm Settings', 'noCanvas || !status.hasCanvasItems'],
 ]) {
   assert.match(
@@ -89,6 +89,35 @@ assert.match(
   'HTML export should use the light app palette and expose dynamic diagram accent tokens.',
 )
 
+
+assert.match(
+  resultsSource,
+  /\.sidebar \{[^}]*color:#1A1F2B[^}]*\}/,
+  'HTML export sidebar should hard-code the dark report text color.',
+)
+
+assert.match(
+  resultsSource,
+  /\.nav-item,\s*\.nav-item:visited \{[^}]*color:#1A1F2B !important;/,
+  'HTML export navigation should force black text for unvisited and visited links.',
+)
+
+assert.match(
+  resultsSource,
+  /\.nav-item\.active \{[^}]*color:#1A1F2B !important;/,
+  'HTML export active navigation should force black text.',
+)
+
+assert.match(
+  resultsSource,
+  /table, th, td \{[^}]*color:#1A1F2B !important;/,
+  'HTML export table headers and cells should force black text.',
+)
+assert.match(
+  resultsSource,
+  /<h3 style="[^"]*color: #1A1F2B;[^"]*">Higher-Order Constructs<\/h3>/,
+  'Higher-order construct headings should use a dark report color.',
+)
 assert.doesNotMatch(
   resultsSource,
   /--bg:#F7F4EC|--line:#E6DECA|--muted:#8E6D49/,

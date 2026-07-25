@@ -209,6 +209,12 @@ interface MgaOverviewFallbackInput {
   }>
 }
 
+interface PanelDataOptions {
+  mgaComparisonMethod?: string
+  mgaOverviewFallback?: MgaOverviewFallbackInput
+  savedModel?: any
+}
+
 const MGA_MICOM_NOT_RUN_MESSAGE = 'MICOM was not run for this analysis. Interpret results well.'
 
 function getMgaMicomOverviewValue(results: any): string {
@@ -587,6 +593,361 @@ function getMgaComparisonData(
   return null
 }
 
+function textValue(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function uniqueTextValues(values: unknown[]): string[] {
+  const seen = new Set<string>()
+  const output: string[] = []
+  values.forEach((value) => {
+    const text = textValue(typeof value === 'object' && value != null && 'name' in value ? (value as any).name : value)
+    if (!text || seen.has(normalizeKey(text))) return
+    seen.add(normalizeKey(text))
+    output.push(text)
+  })
+  return output
+}
+
+function savedModelConstructs(savedModel: any): any[] {
+  return Array.isArray(savedModel?.constructs) ? savedModel.constructs : []
+}
+
+function savedModelPaths(savedModel: any): any[] {
+  return Array.isArray(savedModel?.paths) ? savedModel.paths : []
+}
+
+function isHigherOrderConstruct(construct: any): boolean {
+  return construct?.isHigherOrder === true || construct?.is_higher_order === true
+}
+
+function constructDisplayName(construct: any): string {
+  return textValue(construct?.name ?? construct?.label ?? construct?.id)
+}
+
+function constructHocType(construct: any): string {
+  return textValue(construct?.higherOrderType ?? construct?.higher_order_type ?? construct?.type ?? 'higher-order').toLowerCase()
+}
+
+function buildConstructNameById(savedModel: any): Map<string, string> {
+  return new Map(savedModelConstructs(savedModel).map((construct) => [
+    textValue(construct?.id),
+    constructDisplayName(construct),
+  ]))
+}
+
+function nameForConstructId(id: unknown, nameById: Map<string, string>): string {
+  const raw = textValue(id)
+  return nameById.get(raw) ?? raw
+}
+
+function constructDimensions(construct: any, savedModel: any, nameById: Map<string, string>): string[] {
+  const explicit = uniqueTextValues([
+    ...(Array.isArray(construct?.dimensions) ? construct.dimensions : []),
+    ...(Array.isArray(construct?.lowerOrderConstructs) ? construct.lowerOrderConstructs : []),
+  ])
+  if (explicit.length) return explicit
+
+  const hocId = textValue(construct?.id)
+  return uniqueTextValues(savedModelPaths(savedModel)
+    .filter((path) => textValue(path?.hocRole).toLowerCase() === 'measurement')
+    .map((path) => {
+      const from = textValue(path?.from)
+      const to = textValue(path?.to)
+      if (from === hocId) return nameForConstructId(to, nameById)
+      if (to === hocId) return nameForConstructId(from, nameById)
+      return ''
+    }))
+}
+
+type ModerationDefinition = {
+  iv: string
+  moderator: string
+  dv: string
+  interaction: string
+  path: string
+}
+
+function moderationDefinitionsFromModel(savedModel: any): ModerationDefinition[] {
+  const paths = savedModelPaths(savedModel)
+  const pathById = new Map(paths.map((path) => [textValue(path?.id), path]))
+  const nameById = buildConstructNameById(savedModel)
+  const definitions: ModerationDefinition[] = []
+  const seen = new Set<string>()
+
+  paths.forEach((path) => {
+    if (path?.kind !== 'moderation' || !path?.targetPathId) return
+    const targetPath = pathById.get(textValue(path.targetPathId))
+    if (!targetPath) return
+
+    const iv = nameForConstructId(targetPath.from, nameById)
+    const moderator = nameForConstructId(path.from, nameById)
+    const dv = nameForConstructId(targetPath.to ?? path.to, nameById)
+    if (!iv || !moderator || !dv) return
+
+    const interaction = `${iv}*${moderator}`
+    const key = `${normalizeKey(interaction)}:::${normalizeKey(dv)}`
+    if (seen.has(key)) return
+    seen.add(key)
+    definitions.push({
+      iv,
+      moderator,
+      dv,
+      interaction,
+      path: `${interaction} -> ${dv}`,
+    })
+  })
+
+  return definitions
+}
+
+function parsePathParts(pathLabel: string): { from: string; to: string } | null {
+  const parts = textValue(pathLabel)
+    .split(/->|→|~>|=>/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+  if (parts.length !== 2) return null
+  return { from: parts[0], to: parts[1] }
+}
+
+function parseInteractionParts(source: string): { iv: string; moderator: string } | null {
+  const text = textValue(source)
+  if (!text) return null
+  const splitters = [/\*/, /×/, /\s+x\s+/i, /\s+by\s+/i, /:/]
+  for (const splitter of splitters) {
+    const parts = text.split(splitter).map((part) => part.trim()).filter(Boolean)
+    if (parts.length === 2) return { iv: parts[0], moderator: parts[1] }
+  }
+  return null
+}
+
+function interactionPartsMatch(source: string, iv: string, moderator: string): boolean {
+  const parsed = parseInteractionParts(source)
+  if (parsed) {
+    return normalizeKey(parsed.iv) === normalizeKey(iv) && normalizeKey(parsed.moderator) === normalizeKey(moderator)
+  }
+
+  const normalizedSource = normalizeKey(source)
+  const normalizedIv = normalizeKey(iv)
+  const normalizedModerator = normalizeKey(moderator)
+  return normalizedSource === `${normalizedIv}${normalizedModerator}`
+    || normalizedSource === `${normalizedIv}x${normalizedModerator}`
+    || normalizedSource === `${normalizedIv}by${normalizedModerator}`
+}
+
+function comparisonPathLabel(row: Record<string, unknown>): string {
+  return textValue(row.path ?? row.Path ?? row.relationship ?? row.Relationship ?? row.row_name ?? row.Row)
+}
+
+function rowMatchesModerationDefinition(row: Record<string, unknown>, definition: ModerationDefinition): boolean {
+  const parsed = parsePathParts(comparisonPathLabel(row))
+  if (!parsed) return false
+  return interactionPartsMatch(parsed.from, definition.iv, definition.moderator) &&
+    normalizeKey(parsed.to) === normalizeKey(definition.dv)
+}
+
+function hocRowsFromModel(savedModel: any): Array<{ name: string; type: string; dimensions: string[] }> {
+  const nameById = buildConstructNameById(savedModel)
+  return savedModelConstructs(savedModel)
+    .filter(isHigherOrderConstruct)
+    .map((construct) => ({
+      name: constructDisplayName(construct),
+      type: constructHocType(construct),
+      dimensions: constructDimensions(construct, savedModel, nameById),
+    }))
+    .filter((row) => row.name)
+}
+
+function hocRoleForModeration(definition: ModerationDefinition, savedModel: any): string {
+  const hocs = hocRowsFromModel(savedModel)
+  if (!hocs.length) return 'None'
+
+  const roleParts: string[] = []
+  const roleFor = (label: string, role: string) => {
+    const hoc = hocs.find((row) => normalizeKey(row.name) === normalizeKey(label))
+    if (!hoc) return
+    const dimensionText = hoc.dimensions.length ? `: ${hoc.dimensions.join(', ')}` : ''
+    roleParts.push(`${role} is higher-order construct${dimensionText}`)
+  }
+
+  roleFor(definition.iv, 'IV')
+  roleFor(definition.moderator, 'Moderator')
+  roleFor(definition.dv, 'DV')
+  return roleParts.length ? roleParts.join('; ') : 'None'
+}
+
+function mapMgaModerationComparisonRow(
+  row: Record<string, unknown>,
+  definition: ModerationDefinition,
+  method: string,
+  labels: { groupA: string; groupB: string },
+  savedModel: any,
+): Record<string, unknown> {
+  const base = {
+    IV: definition.iv,
+    Moderator: definition.moderator,
+    DV: definition.dv,
+    Interaction: definition.interaction,
+    Path: comparisonPathLabel(row) || definition.path,
+    'HOC role': hocRoleForModeration(definition, savedModel),
+  }
+
+  if (method === 'henselerPlsMga') {
+    return {
+      ...base,
+      [`${labels.groupA} β`]: getOwnValue(row, ['groupA_beta', 'group1_beta']),
+      [`${labels.groupB} β`]: getOwnValue(row, ['groupB_beta', 'group2_beta']),
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      'PLS-MGA p': row.pls_mga_p ?? row.p_value,
+      Result: row.result,
+    }
+  }
+
+  if (method === 'parametricTest') {
+    return {
+      ...base,
+      [`${labels.groupA} β`]: getOwnValue(row, ['groupA_beta', 'group1_beta']),
+      [`${labels.groupB} β`]: getOwnValue(row, ['groupB_beta', 'group2_beta']),
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      't-value': row.t_value,
+      'p-value': row.p_value,
+      Result: row.result,
+    }
+  }
+
+  return {
+    ...base,
+    [`${labels.groupA} β`]: getOwnValue(row, ['groupA_beta', 'group1_beta']),
+    [`${labels.groupA} CI lower`]: row.groupA_ci_lower,
+    [`${labels.groupA} CI upper`]: row.groupA_ci_upper,
+    [`${labels.groupB} β`]: getOwnValue(row, ['groupB_beta', 'group2_beta']),
+    [`${labels.groupB} CI lower`]: row.groupB_ci_lower,
+    [`${labels.groupB} CI upper`]: row.groupB_ci_upper,
+    'CI overlap': formatCiOverlap(row.ci_overlap),
+    Result: row.result,
+  }
+}
+
+function getMgaModerationComparisonData(
+  results: any,
+  savedModel: any,
+  method = 'biasCorrectedConfidenceIntervals',
+): Array<Record<string, unknown>> | null {
+  const family = getMgaComparisonFamily(results, 'mga-path-coefficients')
+  if (!family) return null
+  const rows = family[method] ?? []
+  if (!Array.isArray(rows)) return null
+
+  const definitions = moderationDefinitionsFromModel(savedModel)
+  if (!definitions.length) return null
+
+  const labels = getMgaGroupLabels(results)
+  return rows
+    .map((row: Record<string, unknown>) => {
+      const definition = definitions.find((candidate) => rowMatchesModerationDefinition(row, candidate))
+      return definition ? mapMgaModerationComparisonRow(row, definition, method, labels, savedModel) : null
+    })
+    .filter((row): row is Record<string, unknown> => row != null)
+}
+
+function getHocStructuralRole(hocName: string, savedModel: any): string {
+  const nameById = buildConstructNameById(savedModel)
+  const paths = savedModelPaths(savedModel)
+  const pathById = new Map(paths.map((path) => [textValue(path?.id), path]))
+  const roles = new Set<string>()
+
+  paths.forEach((path) => {
+    const from = nameForConstructId(path?.from, nameById)
+    const to = nameForConstructId(path?.to, nameById)
+    if (path?.kind === 'moderation' && path?.targetPathId) {
+      const targetPath = pathById.get(textValue(path.targetPathId))
+      if (!targetPath) return
+      const iv = nameForConstructId(targetPath.from, nameById)
+      const moderator = nameForConstructId(path.from, nameById)
+      const dv = nameForConstructId(targetPath.to ?? path.to, nameById)
+      const interactionPath = `${iv}*${moderator} -> ${dv}`
+      if (normalizeKey(iv) === normalizeKey(hocName)) roles.add(`IV in ${interactionPath}`)
+      if (normalizeKey(moderator) === normalizeKey(hocName)) roles.add(`Moderator in ${interactionPath}`)
+      if (normalizeKey(dv) === normalizeKey(hocName)) roles.add(`DV in ${interactionPath}`)
+      return
+    }
+
+    if (textValue(path?.hocRole).toLowerCase() === 'measurement') return
+    if (normalizeKey(from) === normalizeKey(hocName)) roles.add(`Predictor in ${from} -> ${to}`)
+    if (normalizeKey(to) === normalizeKey(hocName)) roles.add(`Outcome in ${from} -> ${to}`)
+  })
+
+  return roles.size ? Array.from(roles).join('; ') : 'Measurement model only'
+}
+
+function normalizeHocResultRows(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return rows
+    .map((row) => {
+      const hocName = textValue(getOwnValue(row, [
+        'hoc_construct',
+        'higher_order_construct',
+        'higherOrderConstruct',
+        'hoc',
+        'construct',
+      ]))
+      const dimension = textValue(getOwnValue(row, [
+        'loc_construct',
+        'lower_order_construct',
+        'lowerOrderConstruct',
+        'dimension',
+        'indicator',
+        'loc',
+      ]))
+      const hocType = textValue(getOwnValue(row, [
+        'hoc_type',
+        'higher_order_type',
+        'higherOrderType',
+        'type',
+      ])).toLowerCase()
+
+      return {
+        'Higher-order construct': hocName,
+        Type: hocType || 'higher-order',
+        Dimensions: dimension || 'Not specified',
+        'Dimension count': dimension ? 1 : 0,
+        'Structural role': 'Available from saved HOC results',
+        Loading: getOwnValue(row, ['loading', 'outer_loading', 'outerLoading']),
+        Weight: getOwnValue(row, ['weight', 'outer_weight', 'outerWeight']),
+        VIF: getOwnValue(row, ['vif']),
+        'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+      }
+    })
+    .filter((row) => textValue(row['Higher-order construct']))
+}
+
+function getHocContextRows(results: any, savedModel: any): Array<Record<string, unknown>> | null {
+  const suppliedRows = rowsFromUnknown(
+    results?.hocContext ??
+    results?.hoc_context ??
+    results?.meta?.hocContext ??
+    results?.meta?.hoc_context
+  )
+  if (suppliedRows.length) return suppliedRows
+
+  const finalHocRows = rowsFromUnknown(
+    results?.final_results?.hoc_results ??
+    results?.finalResults?.hocResults
+  )
+  if (finalHocRows.length) return normalizeHocResultRows(finalHocRows)
+
+  const hocs = hocRowsFromModel(savedModel)
+  if (!hocs.length) return null
+
+  return hocs.map((hoc) => ({
+    'Higher-order construct': hoc.name,
+    Type: hoc.type,
+    Dimensions: hoc.dimensions.length ? hoc.dimensions.join(', ') : 'Not specified',
+    'Dimension count': hoc.dimensions.length,
+    'Structural role': getHocStructuralRole(hoc.name, savedModel),
+    'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+  }))
+}
+
 const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, string[]>>> = {
   bootstrap: {
     'htmt-confidence-intervals': [
@@ -644,12 +1005,13 @@ export function getPanelDataFromResults(
   mode: AnalysisMode,
   panelId: string,
   analysisResults: any,
-  options: { mgaComparisonMethod?: string; mgaOverviewFallback?: MgaOverviewFallbackInput } = {},
+  options: PanelDataOptions = {},
 ): any {
   const results = unwrapAnalysisResults(analysisResults)
 
   if (mode === 'permutation') {
     if (panelId === 'overview') return getPermutationOverview(results)
+    if (panelId === 'hoc-context') return getHocContextRows(results, options.savedModel)
     if (panelId === 'configural-invariance') return null
     if (panelId === 'equality-means') return getPermutationEqualityRows(results, 'mean')
     if (panelId === 'equality-variances') return getPermutationEqualityRows(results, 'variance')
@@ -657,6 +1019,10 @@ export function getPanelDataFromResults(
 
   if (mode === 'mga') {
     if (panelId === 'overview') return getMgaOverview(results, options.mgaOverviewFallback)
+    if (panelId === 'hoc-context') return getHocContextRows(results, options.savedModel)
+    if (panelId === 'mga-moderation-effects') {
+      return getMgaModerationComparisonData(results, options.savedModel, options.mgaComparisonMethod)
+    }
     if (panelId.startsWith('mga-group-')) {
       const source = getMgaGroupSpecificResultsSource(panelId, results)
       const basePanelId = getMgaGroupPanelBaseId(panelId)

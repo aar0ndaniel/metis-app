@@ -125,6 +125,8 @@ metis_micom_step1 <- function(model, data, group_var, group_a = NULL, group_b = 
   selection <- .metis_select_two_groups(data, group_var, group_a, group_b)
   indicators <- .metis_model_indicators(model)
   construct_names <- .metis_construct_names(model)
+  available_inputs <- .metis_micom_score_source_names(selection$data, model)
+  missing_indicators <- setdiff(indicators, available_inputs)
 
   rows <- list(
     .metis_step1_row("same model object", TRUE, "The same fitted seminr model object is rerun for both selected groups."),
@@ -135,8 +137,12 @@ metis_micom_step1 <- function(model, data, group_var, group_a = NULL, group_b = 
     ),
     .metis_step1_row(
       "identical indicators",
-      all(indicators %in% names(selection$data)),
-      sprintf("Model indicators checked: %d.", length(indicators))
+      length(missing_indicators) == 0L,
+      if (length(missing_indicators)) {
+        sprintf("Missing model indicator or HOC score input(s): %s.", paste(missing_indicators, collapse = ", "))
+      } else {
+        sprintf("Model indicators and HOC score inputs checked: %d.", length(indicators))
+      }
     ),
     .metis_step1_row(
       "construct specification",
@@ -171,6 +177,8 @@ metis_micom_step2 <- function(
   selection <- .metis_select_two_groups(data, group_var, group_a, group_b)
   constructs <- .metis_construct_names(model)
   indicators_by_construct <- .metis_indicators_by_construct(model, constructs)
+  pooled_model <- seminr::rerun(model, data = selection$data)
+  score_source <- .metis_micom_score_source_data(selection$data, pooled_model)
 
   if (isTRUE(quick)) {
     message("quick = TRUE does not skip MICOM permutation logic; use a smaller permutations value for exploratory runs.")
@@ -178,10 +186,10 @@ metis_micom_step2 <- function(
 
   set.seed(seed)
 
-  group_model_a <- seminr::rerun(model, data = selection$data[selection$condition, , drop = FALSE])
-  group_model_b <- seminr::rerun(model, data = selection$data[!selection$condition, , drop = FALSE])
+  group_model_a <- seminr::rerun(pooled_model, data = selection$data[selection$condition, , drop = FALSE])
+  group_model_b <- seminr::rerun(pooled_model, data = selection$data[!selection$condition, , drop = FALSE])
   observed <- .metis_micom_c_values(
-    data = selection$data,
+    data = score_source,
     constructs = constructs,
     indicators_by_construct = indicators_by_construct,
     weights_a = group_model_a$outer_weights,
@@ -195,14 +203,14 @@ metis_micom_step2 <- function(
   permutation_list <- .metis_micom_parallel_lapply(seq_len(permutations), function(i) {
     perm_condition <- permutation_conditions[[i]]
     tryCatch({
-      perm_model_a <- seminr::rerun(model, data = selection$data[perm_condition, , drop = FALSE])
-      perm_model_b <- seminr::rerun(model, data = selection$data[!perm_condition, , drop = FALSE])
+      perm_model_a <- seminr::rerun(pooled_model, data = selection$data[perm_condition, , drop = FALSE])
+      perm_model_b <- seminr::rerun(pooled_model, data = selection$data[!perm_condition, , drop = FALSE])
       # v2: drop inadmissible permutation re-estimations (cf. cSEM drop policy)
       if (!.metis_is_admissible(perm_model_a) || !.metis_is_admissible(perm_model_b)) {
         rep(NA_real_, length(constructs))
       } else {
         .metis_micom_c_values(
-          data = selection$data,
+          data = score_source,
           constructs = constructs,
           indicators_by_construct = indicators_by_construct,
           weights_a = perm_model_a$outer_weights,
@@ -540,6 +548,34 @@ print.metis_micom <- function(x, ...) {
     stop("Could not determine indicator names from model$outer_weights.")
   }
   indicators
+}
+
+.metis_micom_score_source_data <- function(data, model) {
+  source <- as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE)
+  scores <- model$construct_scores
+  if (is.null(scores)) return(source)
+
+  score_df <- as.data.frame(scores, stringsAsFactors = FALSE, check.names = FALSE)
+  if (!nrow(score_df) || nrow(score_df) != nrow(source)) return(source)
+
+  for (name in names(score_df)) {
+    if (!nzchar(name)) next
+    source[[name]] <- score_df[[name]]
+  }
+
+  source
+}
+
+.metis_micom_score_source_names <- function(data, model) {
+  source_names <- names(as.data.frame(data, stringsAsFactors = FALSE, check.names = FALSE))
+  scores <- model$construct_scores
+  if (is.null(scores)) return(source_names)
+
+  score_df <- as.data.frame(scores, stringsAsFactors = FALSE, check.names = FALSE)
+  score_names <- names(score_df)
+  score_names <- score_names[nzchar(score_names)]
+
+  unique(c(source_names, score_names))
 }
 
 .metis_indicators_by_construct <- function(model, constructs) {

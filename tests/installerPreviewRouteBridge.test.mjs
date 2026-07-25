@@ -18,14 +18,14 @@ assert.doesNotMatch(appSource, /const INSTALLER_PREVIEW_ROUTES = \['\/installer-
 
 assert.match(
   appSource,
-  /useState<AppTheme>\(\(\) => isInstallerPreview \? 'Light' : getSavedTheme\(\)\)/,
-  'Installer routes should not inherit an existing dark app preference on first render.'
+  /useState<AppTheme>\(\(\) => isInstallerPreview \? getInstallerPreviewTheme\(\) : getSavedTheme\(\)\)/,
+  'Installer routes should use the setup/system theme on first render instead of hardcoded Light.'
 )
 
 assert.match(
   appSource,
-  /if \(isInstallerPreview\) \{\s+setTheme\('Light'\)\s+\} else \{\s+setTheme\(getSavedTheme\(\)\)\s+\}/,
-  'Installer routes should reset their wrapper theme to Light when opened.'
+  /if \(isInstallerPreview\) \{\s+setTheme\(getInstallerPreviewTheme\(\)\)\s+\} else \{\s+setTheme\(getSavedTheme\(\)\)\s+\}/,
+  'Installer routes should reset their wrapper theme to the setup/system theme when opened.'
 )
 
 assert.match(

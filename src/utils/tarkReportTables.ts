@@ -725,48 +725,62 @@ function buildOuterVifLookup(pls: Record<string, unknown> | undefined, savedMode
   return lookup
 }
 
-function buildFSquareLookup(pls: Record<string, unknown> | undefined, savedModel?: TarkSavedModelLike | null): Map<string, number> {
+function buildFSquareLookup(
+  pls: Record<string, unknown> | undefined,
+  bootstrap?: Record<string, unknown> | undefined,
+  savedModel?: TarkSavedModelLike | null,
+  savedAnalyses?: Map<string, TarkSavedAnalysis>,
+): Map<string, number> {
   const lookup = new Map<string, number>()
-  const validPaths = new Set(
-    (savedModel?.paths ?? []).map((path) => pathKey(
-      resolveConstructName(path.from, savedModel),
-      resolveConstructName(path.to, savedModel),
-    )),
-  )
   const setFSquare = (from: string, to: string, value: number) => {
-    if (!from || !to) return
+    if (!from || !to || !Number.isFinite(value)) return
     lookup.set(pathKey(from, to), value)
+    lookup.set(pathKey(to, from), value)
   }
 
-  toRows((pls as any)?.quality_criteria?.f_square).forEach((row) => {
-    const directValue = toNumber(readValue(row, ['f²', 'f2', 'f_square', 'f-square', 'f square', 'value', 'effect_size']))
-    const directParts = getPathParts(row, savedModel)
-    if (directValue != null && directParts.from && directParts.to) {
-      setFSquare(directParts.from, directParts.to, directValue)
-      return
-    }
+  const candidateSources = [
+    pls,
+    bootstrap,
+    ...(savedAnalyses ? Array.from(savedAnalyses.values()).map((s) => s.results) : []),
+  ].filter(Boolean)
 
-    const rowConstruct = resolveConstructName(readValue(row, ['row_name', 'row', 'endogenous', 'target', 'Construct', 'from', 'source', 'predictor']), savedModel)
-    if (!rowConstruct) return
-    Object.entries(row).forEach(([key, value]) => {
-      if (isOmittedKey(key)) return
-      const numeric = toNumber(value)
-      if (numeric == null || numeric === 0) return
-      const columnConstruct = resolveConstructName(key, savedModel)
-      const rowToColumn = pathKey(rowConstruct, columnConstruct)
-      const columnToRow = pathKey(columnConstruct, rowConstruct)
-      if (validPaths.has(rowToColumn)) {
+  candidateSources.forEach((source) => {
+    const fSquareRaw = (source as any)?.quality_criteria?.f_square
+      ?? (source as any)?.quality_criteria?.f_squared
+      ?? (source as any)?.quality_criteria?.f2
+      ?? (source as any)?.qualityCriteria?.fSquare
+      ?? (source as any)?.qualityCriteria?.f2
+      ?? (source as any)?.final_results?.f_square
+      ?? (source as any)?.final_results?.f2
+      ?? (source as any)?.f_square
+      ?? (source as any)?.f2
+
+    toRows(fSquareRaw).forEach((row) => {
+      const directValue = toNumber(readValue(row, ['f²', 'f2', 'f_square', 'f-square', 'f square', 'value', 'effect_size', 'f_squared', 'f2_interaction']))
+      const directFrom = readValue(row, ['from', 'source', 'predictor', 'From', 'Predictor', 'iv', 'independent_variable'])
+      const directTo = readValue(row, ['to', 'target', 'outcome', 'endogenous', 'To', 'Target', 'Endogenous', 'dv', 'dependent_variable'])
+      
+      const resolvedFrom = resolveConstructName(directFrom, savedModel)
+      const resolvedTo = resolveConstructName(directTo, savedModel)
+      if (directValue != null && resolvedFrom && resolvedTo) {
+        setFSquare(resolvedFrom, resolvedTo, directValue)
+        return
+      }
+
+      const rowConstruct = resolveConstructName(readValue(row, ['row_name', 'row', 'endogenous', 'target', 'Construct', 'from', 'source', 'predictor']), savedModel)
+      if (!rowConstruct) return
+      Object.entries(row).forEach(([key, value]) => {
+        if (isOmittedKey(key)) return
+        const numeric = toNumber(value)
+        if (numeric == null || numeric === 0) return
+        const columnConstruct = resolveConstructName(key, savedModel)
+        if (!columnConstruct) return
         setFSquare(rowConstruct, columnConstruct, numeric)
-        return
-      }
-      if (validPaths.has(columnToRow)) {
         setFSquare(columnConstruct, rowConstruct, numeric)
-        return
-      }
-      setFSquare(rowConstruct, columnConstruct, numeric)
-      setFSquare(columnConstruct, rowConstruct, numeric)
+      })
     })
   })
+
   return lookup
 }
 
@@ -801,6 +815,7 @@ function buildMeasurementSection(
         isFirstConstructRow ? stats.ave ?? '—' : TARK_USER_FILL_CELL,
       ]
     }),
+    note: 'Note. Loading = outer loading; VIF = variance inflation factor; rho_A = Dijkstra-Henseler rho; CR = composite reliability; AVE = average variance extracted.',
   }
 }
 
@@ -823,6 +838,7 @@ function buildDiscriminantSection(request: TarkReportTableRequest, pls: Record<s
         ...valueHeaders.map((header) => formatCell(row[header])),
       ]
     }),
+    note: 'Note. Values report HTMT ratios. Values below the selected threshold support discriminant validity.',
   }
 }
 
@@ -831,10 +847,11 @@ function buildStructuralSection(
   bootstrap: Record<string, unknown> | undefined,
   pls: Record<string, unknown> | undefined,
   savedModel?: TarkSavedModelLike | null,
+  savedAnalyses?: Map<string, TarkSavedAnalysis>,
 ): TarkReportSection | null {
-  const rows = toRows((bootstrap as any)?.final_results?.path_coefficients)
+  const rows = toRows((bootstrap as any)?.final_results?.path_coefficients ?? (pls as any)?.final_results?.path_coefficients)
   if (!rows.length) return null
-  const fSquareLookup = buildFSquareLookup(pls, savedModel)
+  const fSquareLookup = buildFSquareLookup(pls, bootstrap, savedModel, savedAnalyses)
 
   return {
     title: 'Structural model assessment',
@@ -844,7 +861,9 @@ function buildStructuralSection(
       const tValue = readValue(row, ['T Stat.', 'T.Stat.', 'T Statistic', 'T statistics', 'T statistics (|O/STDEV|)', 'T Value', 'T values', 't_value'])
       const pValue = readPValue(row) ?? approximateTwoTailedPValueFromT(tValue)
       const numericP = parsePValue(pValue)
-      const fSquare = path.from && path.to ? fSquareLookup.get(pathKey(path.from, path.to)) ?? null : null
+      const fSquare = path.from && path.to
+        ? (fSquareLookup.get(pathKey(path.from, path.to)) ?? fSquareLookup.get(pathKey(path.to, path.from)) ?? null)
+        : null
       return [
         TARK_USER_FILL_CELL,
         formatMappedPath(request, path.from, path.to, path.label),
@@ -859,6 +878,7 @@ function buildStructuralSection(
         numericP == null ? '—' : numericP < 0.05 ? 'Supported' : 'Not supported',
       ]
     }),
+    note: 'Note. β = standardized path coefficient; STDEV = bootstrap standard deviation; CI = confidence interval; f² = effect size.',
   }
 }
 
@@ -886,6 +906,7 @@ function buildPowerSection(
         TARK_USER_FILL_CELL,
       ]
     }),
+    note: 'Note. R² and adjusted R² are from the PLS-SEM estimate. Q² values are from the saved PLSpredict output.',
   }
 }
 
@@ -926,7 +947,7 @@ function buildModelFitSection(pls: Record<string, unknown> | undefined): TarkRep
 
   if (directSrmr != null) fitRows.unshift(['SRMR', formatCell(directSrmr)])
 
-  const allowed = new Set(['srmr', 'duls', 'dg', 'nfi', 'rmstheta', 'chisquare'])
+  const allowed = new Set(['srmr', 'duls', 'dg', 'nfi'])
   const seen = new Set<string>()
   const dedupedRows = fitRows.filter(([label]) => {
     const key = normalizeMetricKey(label)
@@ -940,6 +961,7 @@ function buildModelFitSection(pls: Record<string, unknown> | undefined): TarkRep
     title: 'Model fit assessment',
     headers: ['Fit index', 'Value'],
     rows: dedupedRows,
+    note: 'Note. Model fit reports SRMR, NFI, d_ULS, and d_G from the fitted Standard PLS or PLSc model.',
   }
 }
 
@@ -957,7 +979,725 @@ function buildPlsPredictSection(plspredict: Record<string, unknown> | undefined)
       formatCell(readValue(row, ['LM_RMSE', 'LM RMSE'])),
       formatCell(readValue(row, ['LM_MAE', 'LM MAE'])),
     ]),
+    note: 'Note. Q²predict values above zero indicate predictive relevance. PLS and LM errors support comparison of predictive performance.',
   }
+}
+
+interface TarkAdvancedAnalysisStateLike {
+  id: string
+  label: string
+  saved: boolean
+}
+
+function readGroupValues(results: Record<string, unknown> | undefined): { groupA: string; groupB: string } {
+  const groups = (results as any)?.groups ?? {}
+  return {
+    groupA: String(groups.leftValue ?? groups.groupA ?? 'Group A').trim() || 'Group A',
+    groupB: String(groups.rightValue ?? groups.groupB ?? 'Group B').trim() || 'Group B',
+  }
+}
+
+function normalizeDecisionLabel(value: unknown, establishedLabel = 'Established', notEstablishedLabel = 'Not established'): string {
+  const text = String(readScalar(value) ?? value ?? '').trim().toLowerCase()
+  if (!text) return '—'
+  if (['passed', 'supported', 'established', 'significant', 'full', 'partial measurement invariance'].includes(text)) return establishedLabel
+  if (['failed', 'not supported', 'not established', 'nonsignificant', 'no measurement invariance'].includes(text)) return notEstablishedLabel
+  if (text === 'partial') return 'Partial measurement invariance'
+  if (text === 'full') return 'Full measurement invariance'
+  if (text === 'none') return 'No measurement invariance'
+  return String(readScalar(value) ?? value)
+}
+
+function formatInterval(lower: unknown, upper: unknown): string {
+  const hasLower = lower != null && String(readScalar(lower) ?? lower).trim() !== ''
+  const hasUpper = upper != null && String(readScalar(upper) ?? upper).trim() !== ''
+  if (!hasLower && !hasUpper) return '—'
+  return `[${formatCell(lower)}, ${formatCell(upper)}]`
+}
+
+function titleCaseLabel(value: unknown): string {
+  const text = String(readScalar(value) ?? value ?? '').trim()
+  if (!text) return '—'
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function buildMicomConfiguralSection(results: Record<string, unknown> | undefined): TarkReportSection | null {
+  const rows = toRows((results as any)?.configuralInvariance?.checks ?? (results as any)?.configuralInvariance)
+  if (!rows.length) return null
+  const { groupA, groupB } = readGroupValues(results)
+  return {
+    title: 'Configural invariance assessment',
+    headers: ['Requirement', 'Group A', 'Group B', 'Status'],
+    rows: rows.map((row, index) => [
+      titleCaseLabel(readValue(row, ['check', 'Requirement', 'requirement']) ?? `Requirement ${index + 1}`),
+      groupA,
+      groupB,
+      normalizeDecisionLabel(readValue(row, ['status', 'result', 'decision', 'passed']), 'Passed', 'Failed'),
+    ]),
+    note: `Note. Group A = ${groupA}; Group B = ${groupB}.`,
+  }
+}
+
+function buildMicomCompositionalSection(results: Record<string, unknown> | undefined): TarkReportSection | null {
+  const rows = toRows((results as any)?.compositionalInvariance)
+  if (!rows.length) return null
+  return {
+    title: 'Compositional invariance assessment',
+    headers: ['Construct', 'Original correlation', '5% quantile', 'Permutation p-value', 'Decision'],
+    rows: rows.map((row, index) => [
+      String(readValue(row, ['construct', 'Construct']) ?? `Construct ${index + 1}`),
+      formatCell(readValue(row, ['c_value', 'original_correlation', 'original_correlation_value', 'correlation'])),
+      formatCell(readValue(row, ['ci_lower', 'lower', 'quantile', '5% quantile'])),
+      formatPValueCell(readValue(row, ['p_value', 'permutation_p_value', 'pvalue'])),
+      normalizeDecisionLabel(readValue(row, ['decision', 'status']), 'Established', 'Not established'),
+    ]),
+    note: 'Note. Decisions follow the saved MICOM compositional-invariance results.',
+  }
+}
+
+function buildMicomEqualitySection(
+  results: Record<string, unknown> | undefined,
+  kind: 'mean' | 'variance',
+  savedAnalyses?: Map<string, TarkSavedAnalysis>,
+): TarkReportSection | null {
+  const rows = toRows((results as any)?.equalityAssessment)
+  if (!rows.length) return null
+  const { groupA, groupB } = readGroupValues(results)
+  const allDescriptives: Array<Record<string, unknown>> = []
+  const sources = [
+    results,
+    ...(savedAnalyses ? Array.from(savedAnalyses.values()).map((s) => s.results) : []),
+  ].filter(Boolean)
+
+  sources.forEach((source) => {
+    const desc = toRows((source as any)?.descriptives ?? (source as any)?.overview?.descriptives)
+    allDescriptives.push(...desc)
+  })
+
+  const title = kind === 'mean' ? 'Equality of construct means' : 'Equality of construct variances'
+  return {
+    title,
+    headers: kind === 'mean'
+      ? ['Construct', 'Group A mean', 'Group B mean', 'Mean difference', '95% permutation interval', 'Decision']
+      : ['Construct', 'Group A variance', 'Group B variance', 'Variance difference', '95% permutation interval', 'Decision'],
+    rows: rows.map((row, index) => {
+      const construct = String(readValue(row, ['construct', 'Construct']) ?? `Construct ${index + 1}`)
+      const descA = allDescriptives.find((d) => normalizeMetricKey(String(readValue(d, ['construct', 'Construct']) ?? '')) === normalizeMetricKey(construct) && normalizeMetricKey(String(readValue(d, ['group', 'Group']) ?? '')) === normalizeMetricKey(groupA))
+      const descB = allDescriptives.find((d) => normalizeMetricKey(String(readValue(d, ['construct', 'Construct']) ?? '')) === normalizeMetricKey(construct) && normalizeMetricKey(String(readValue(d, ['group', 'Group']) ?? '')) === normalizeMetricKey(groupB))
+      
+      const directA = readValue(row, kind === 'mean' ? ['groupA_mean', 'mean_group_a', 'group_a_mean', 'mean_a'] : ['groupA_variance', 'variance_group_a', 'group_a_variance', 'var_a'])
+      const directB = readValue(row, kind === 'mean' ? ['groupB_mean', 'mean_group_b', 'group_b_mean', 'mean_b'] : ['groupB_variance', 'variance_group_b', 'group_b_variance', 'var_b'])
+
+      const valA = directA ?? (descA ? readValue(descA, kind === 'mean' ? ['Mean', 'mean'] : ['Variance', 'variance']) : null)
+      const valB = directB ?? (descB ? readValue(descB, kind === 'mean' ? ['Mean', 'mean'] : ['Variance', 'variance']) : null)
+
+      const diff = kind === 'mean'
+        ? readValue(row, ['mean_diff', 'difference', 'diff'])
+        : readValue(row, ['variance_diff', 'difference', 'diff'])
+      const intervalLower = kind === 'mean'
+        ? readValue(row, ['mean_ci_lower', 'ci_lower', 'lower'])
+        : readValue(row, ['variance_ci_lower', 'ci_lower', 'lower'])
+      const intervalUpper = kind === 'mean'
+        ? readValue(row, ['mean_ci_upper', 'ci_upper', 'upper'])
+        : readValue(row, ['variance_ci_upper', 'ci_upper', 'upper'])
+      return [
+        construct,
+        formatCell(valA),
+        formatCell(valB),
+        formatCell(diff),
+        formatInterval(intervalLower, intervalUpper),
+        normalizeDecisionLabel(readValue(row, kind === 'mean' ? ['mean_decision', 'decision', 'status'] : ['variance_decision', 'decision', 'status']), 'Established', 'Not established'),
+      ]
+    }),
+    note: kind === 'mean'
+      ? `Note. Group A = ${groupA}; Group B = ${groupB}. Group means follow the saved MICOM equality-of-means results when available.`
+      : `Note. Group A = ${groupA}; Group B = ${groupB}. Group variances follow the saved MICOM equality-of-variances results when available.`,
+  }
+}
+
+function buildMicomClassificationSection(results: Record<string, unknown> | undefined): TarkReportSection | null {
+  const rows = toRows((results as any)?.invarianceClassification)
+  if (!rows.length) return null
+  const configuralCheck = (results as any)?.configuralInvariance
+  const compositionalRows = toRows((results as any)?.compositionalInvariance)
+  const equalityRows = toRows((results as any)?.equalityAssessment)
+
+  return {
+    title: 'Measurement invariance classification',
+    headers: ['Construct', 'Configural invariance', 'Compositional invariance', 'Equality of means', 'Equality of variances', 'Classification'],
+    rows: rows.map((row, index) => {
+      const construct = String(readValue(row, ['construct', 'Construct']) ?? `Construct ${index + 1}`)
+      const compRow = compositionalRows.find((r) => normalizeMetricKey(String(readValue(r, ['construct', 'Construct']) ?? '')) === normalizeMetricKey(construct))
+      const eqRow = equalityRows.find((r) => normalizeMetricKey(String(readValue(r, ['construct', 'Construct']) ?? '')) === normalizeMetricKey(construct))
+
+      const configuralVal = readValue(row, ['configural_invariance', 'configuralInvariance', 'configural'])
+        ?? (configuralCheck?.passed !== false ? 'Passed' : 'Failed')
+      const compositionalVal = readValue(row, ['compositional_invariance', 'compositionalInvariance', 'compositional'])
+        ?? (compRow ? readValue(compRow, ['decision', 'status']) : 'Established')
+      const meanVal = readValue(row, ['equality_of_means', 'equalityOfMeans', 'mean_decision'])
+        ?? (eqRow ? readValue(eqRow, ['mean_decision', 'decision', 'status']) : null)
+      const varVal = readValue(row, ['equality_of_variances', 'equalityOfVariances', 'variance_decision'])
+        ?? (eqRow ? readValue(eqRow, ['variance_decision', 'decision', 'status']) : null)
+
+      return [
+        construct,
+        normalizeDecisionLabel(configuralVal, 'Passed', 'Failed'),
+        normalizeDecisionLabel(compositionalVal, 'Established', 'Not established'),
+        normalizeDecisionLabel(meanVal, 'Established', 'Not established'),
+        normalizeDecisionLabel(varVal, 'Established', 'Not established'),
+        String(readScalar(readValue(row, ['classification', 'invariance', 'result'])) ?? readValue(row, ['classification', 'invariance', 'result']) ?? '—'),
+      ]
+    }),
+    note: 'Note. Classification is taken from the saved MICOM result when provided.',
+  }
+}
+
+function buildMicomHocSection(results: Record<string, unknown> | undefined): TarkReportSection | null {
+  const rows = toRows((results as any)?.hocContext ?? (results as any)?.hoc_context ?? (results as any)?.final_results?.hoc_results)
+  if (!rows.length) return null
+  return {
+    title: 'Higher-order construct invariance context',
+    headers: ['Higher-order construct', 'Dimensions', 'Invariance result', 'Notes'],
+    rows: rows.map((row, index) => [
+      String(readValue(row, ['higher_order_construct', 'hoc_construct', 'construct', 'Higher-order construct']) ?? `HOC ${index + 1}`),
+      String(readValue(row, ['dimensions', 'Dimensions', 'dimension']) ?? '—'),
+      String(readValue(row, ['invariance_result', 'invariance', 'status', 'result']) ?? '—'),
+      String(readValue(row, ['notes', 'note', 'MICOM/MGA handling']) ?? 'Uses fitted HOC construct scores from the same SEMinR model specification.'),
+    ]),
+  }
+}
+
+function buildMicomSections(
+  results: Record<string, unknown> | undefined,
+  savedAnalyses?: Map<string, TarkSavedAnalysis>,
+): TarkReportSection[] {
+  const sections = [
+    buildMicomConfiguralSection(results),
+    buildMicomCompositionalSection(results),
+    buildMicomEqualitySection(results, 'mean', savedAnalyses),
+    buildMicomEqualitySection(results, 'variance', savedAnalyses),
+    buildMicomClassificationSection(results),
+    buildMicomHocSection(results),
+  ].filter((section): section is TarkReportSection => Boolean(section && section.rows.length))
+
+  if (!sections.length) return []
+  const heading = readGroupValues(results)
+  return [{
+    title: 'Measurement invariance assessment',
+    headers: [],
+    rows: [],
+    note: `Note. Group A = ${heading.groupA}; Group B = ${heading.groupB}.`,
+  }, ...sections]
+}
+
+function getArrayEntryByMode(results: Record<string, unknown> | undefined, path: string[]): Record<string, unknown> | undefined {
+  let current: any = results
+  for (const segment of path) {
+    current = current?.[segment]
+    if (current == null) return undefined
+  }
+  return current
+}
+
+function getRowPathLabel(row: Record<string, unknown>): string {
+  return String(readValue(row, ['path', 'Path', 'row_name', 'row', 'relationship', 'Relationship']) ?? '')
+    .trim()
+    .replace(/\s*(?:->|~>|=>)\s*/g, ' → ')
+}
+
+function formatGroupStat(row: Record<string, unknown>, candidates: string[]): string {
+  return formatCell(readValue(row, candidates))
+}
+
+function buildMgaGroupSpecificPathSection(results: Record<string, unknown> | undefined): TarkReportSection | null {
+  const groupAResults = getArrayEntryByMode(results, ['groupSpecific', 'groupA', 'final_results', 'path_coefficients'])
+  const groupBResults = getArrayEntryByMode(results, ['groupSpecific', 'groupB', 'final_results', 'path_coefficients'])
+  const groupARows = toRows(groupAResults)
+  const groupBRows = toRows(groupBResults)
+  if (!groupARows.length && !groupBRows.length) return null
+
+  const rowMap = new Map<string, { groupA?: Record<string, unknown>; groupB?: Record<string, unknown> }>()
+  const addRow = (row: Record<string, unknown>, key: 'groupA' | 'groupB') => {
+    const label = getRowPathLabel(row)
+    if (!label) return
+    const current = rowMap.get(normalizeMetricKey(label)) ?? {}
+    current[key] = row
+    rowMap.set(normalizeMetricKey(label), current)
+  }
+  groupARows.forEach((row) => addRow(row, 'groupA'))
+  groupBRows.forEach((row) => addRow(row, 'groupB'))
+
+  const { groupA, groupB } = readGroupValues(results)
+  return {
+    title: 'Group-specific structural path results',
+    headers: ['Path', 'Group A β', 'Group A t-value', 'Group A p-value', 'Group B β', 'Group B t-value', 'Group B p-value'],
+    rows: Array.from(rowMap.values()).map((entry) => {
+      const sourceRow = entry.groupA ?? entry.groupB ?? {}
+      const path = getRowPathLabel(sourceRow)
+      const tValA = readValue(entry.groupA ?? {}, ['T Stat.', 'T.Stat.', 'T Statistic', 't_value', 't statistic'])
+      const pValA = readPValue(entry.groupA ?? {}) ?? approximateTwoTailedPValueFromT(tValA)
+      const tValB = readValue(entry.groupB ?? {}, ['T Stat.', 'T.Stat.', 'T Statistic', 't_value', 't statistic'])
+      const pValB = readPValue(entry.groupB ?? {}) ?? approximateTwoTailedPValueFromT(tValB)
+      return [
+        path,
+        formatGroupStat(entry.groupA ?? {}, ['Original Est.', 'Original.Est.', 'Original Estimate', 'coefficient', 'estimate']),
+        formatGroupStat(entry.groupA ?? {}, ['T Stat.', 'T.Stat.', 'T Statistic', 't_value', 't statistic']),
+        formatPValueCell(pValA),
+        formatGroupStat(entry.groupB ?? {}, ['Original Est.', 'Original.Est.', 'Original Estimate', 'coefficient', 'estimate']),
+        formatGroupStat(entry.groupB ?? {}, ['T Stat.', 'T.Stat.', 'T Statistic', 't_value', 't statistic']),
+        formatPValueCell(pValB),
+      ]
+    }),
+    note: `Note. Group A = ${groupA}; Group B = ${groupB}.`,
+  }
+}
+
+function buildMgaComparisonSection(
+  results: Record<string, unknown> | undefined,
+  sourceKey: 'pathCoefficients' | 'outerLoadings' | 'outerWeights',
+): TarkReportSection | null {
+  const family = (results as any)?.bootstrapMGA?.[sourceKey]
+  if (!family) return null
+  const labels = readGroupValues(results)
+  const biasCorrected = toRows(family.biasCorrectedConfidenceIntervals)
+  const henseler = toRows(family.henselerPlsMga)
+  const parametric = toRows(family.parametricTest)
+  const sourceRows = [...biasCorrected, ...henseler, ...parametric]
+  if (!sourceRows.length) return null
+
+  const rowMap = new Map<string, Record<string, unknown>>()
+  sourceRows.forEach((row) => {
+    const key = sourceKey === 'pathCoefficients'
+      ? normalizeMetricKey(getRowPathLabel(row))
+      : normalizeMetricKey(`${String(readValue(row, ['construct', 'Construct']) ?? '').trim()}::${String(readValue(row, ['indicator', 'Indicator']) ?? '').trim()}`)
+    if (!key.trim()) return
+    rowMap.set(key, { ...(rowMap.get(key) ?? {}), ...row })
+  })
+
+  const sectionTitle = sourceKey === 'pathCoefficients'
+    ? 'Multi-group comparison of path coefficients'
+    : sourceKey === 'outerLoadings'
+      ? 'Multi-group comparison of outer loadings'
+      : 'Multi-group comparison of outer weights'
+
+  const metricLabel = sourceKey === 'pathCoefficients' ? 'β' : sourceKey === 'outerLoadings' ? 'loading' : 'weight'
+  const valueKey = sourceKey === 'pathCoefficients' ? ['groupA_beta', 'group1_beta'] : sourceKey === 'outerLoadings' ? ['groupA_loading', 'group1_loading'] : ['groupA_weight', 'group1_weight']
+  const groupBValueKey = sourceKey === 'pathCoefficients' ? ['groupB_beta', 'group2_beta'] : sourceKey === 'outerLoadings' ? ['groupB_loading', 'group2_loading'] : ['groupB_weight', 'group2_weight']
+
+  return {
+    title: sectionTitle,
+    headers: sourceKey === 'pathCoefficients'
+      ? ['Path', 'Group A β', 'Group B β', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision']
+      : ['Construct', 'Indicator', `Group A ${metricLabel}`, `Group B ${metricLabel}`, 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision'],
+    rows: Array.from(rowMap.values()).map((row) => {
+      const path = getRowPathLabel(row)
+      let ciLower = readValue(row, ['difference_ci_lower', 'diff_ci_lower', 'ci_lower', 'lower'])
+      let ciUpper = readValue(row, ['difference_ci_upper', 'diff_ci_upper', 'ci_upper', 'upper'])
+      if (ciLower == null && ciUpper == null) {
+        const aLower = toNumber(readValue(row, ['groupA_ci_lower', 'ci25_a']))
+        const aUpper = toNumber(readValue(row, ['groupA_ci_upper', 'ci975_a']))
+        const bLower = toNumber(readValue(row, ['groupB_ci_lower', 'ci25_b']))
+        const bUpper = toNumber(readValue(row, ['groupB_ci_upper', 'ci975_b']))
+        if (aLower != null && aUpper != null && bLower != null && bUpper != null) {
+          ciLower = aLower - bUpper
+          ciUpper = aUpper - bLower
+        } else if (aLower != null && aUpper != null) {
+          ciLower = aLower
+          ciUpper = aUpper
+        }
+      }
+
+      const henselerP = readValue(row, ['pls_mga_p', 'p_value_henseler', 'henseler_p']) ?? readValue(row, ['pls_mga_p', 'p_value'])
+      const parametricP = readValue(row, ['parametric_p_value', 'parametric_p', 'p_value_parametric']) ?? readValue(row, ['p_value'])
+      const decision = normalizeDecisionLabel(readValue(row, ['result', 'decision', 'status']), 'Significant difference', 'No significant difference')
+      
+      if (sourceKey === 'pathCoefficients') {
+        return [
+          path,
+          formatCell(readValue(row, valueKey)),
+          formatCell(readValue(row, groupBValueKey)),
+          formatCell(readValue(row, ['diff', 'difference'])),
+          formatInterval(ciLower, ciUpper),
+          formatPValueCell(henselerP),
+          formatPValueCell(parametricP),
+          decision,
+        ]
+      }
+
+      const rowConstruct = String(readValue(row, ['construct', 'Construct']) ?? '').trim() || '—'
+      const indicator = String(readValue(row, ['indicator', 'Indicator']) ?? '').trim() || '—'
+      return [
+        rowConstruct,
+        indicator,
+        formatCell(readValue(row, valueKey)),
+        formatCell(readValue(row, groupBValueKey)),
+        formatCell(readValue(row, ['diff', 'difference'])),
+        formatInterval(ciLower, ciUpper),
+        formatPValueCell(henselerP),
+        formatPValueCell(parametricP),
+        decision,
+      ]
+    }),
+    note: `Note. Group A = ${labels.groupA}; Group B = ${labels.groupB}.`,
+  }
+}
+
+function buildMgaModerationSection(results: Record<string, unknown> | undefined): TarkReportSection | null {
+  const rows = toRows((results as any)?.bootstrapMGA?.pathCoefficients?.biasCorrectedConfidenceIntervals)
+  if (!rows.length) return null
+  const labels = readGroupValues(results)
+  const outputRows = rows.filter((row) => String(readValue(row, ['interaction_path', 'interaction']) ?? '').trim())
+  if (!outputRows.length) return null
+
+  return {
+    title: 'Multi-group comparison of moderation effects',
+    headers: ['Independent variable', 'Moderator', 'Outcome', 'Interaction path', 'Group A β', 'Group B β', 'Difference', 'PLS-MGA p-value', 'Decision'],
+    rows: outputRows.map((row) => [
+      String(readValue(row, ['iv', 'independent_variable', 'independent variable']) ?? '—'),
+      String(readValue(row, ['moderator']) ?? '—'),
+      String(readValue(row, ['dv', 'outcome', 'dependent_variable']) ?? '—'),
+      String(readValue(row, ['interaction_path', 'interaction', 'path']) ?? '—'),
+      formatCell(readValue(row, ['groupA_beta', 'group1_beta'])),
+      formatCell(readValue(row, ['groupB_beta', 'group2_beta'])),
+      formatCell(readValue(row, ['diff', 'difference'])),
+      formatPValueCell(readValue(row, ['pls_mga_p', 'p_value', 'pvalue'])),
+      normalizeDecisionLabel(readValue(row, ['result', 'decision', 'status']), 'Significant difference', 'No significant difference'),
+    ]),
+    note: `Note. Group A = ${labels.groupA}; Group B = ${labels.groupB}.`,
+  }
+}
+
+function buildMgaHocContextSection(results: Record<string, unknown> | undefined, savedModel?: TarkSavedModelLike | null): TarkReportSection | null {
+  const rows = toRows((results as any)?.hocContext ?? (results as any)?.hoc_context ?? (results as any)?.final_results?.hoc_results)
+  if (!rows.length) return null
+  const groupValues = readGroupValues(results)
+  return {
+    title: 'Higher-order construct context in multi-group analysis',
+    headers: ['Higher-order construct', 'Dimensions', 'Role', 'Compared path', 'Group A estimate', 'Group B estimate', 'Difference', 'Decision'],
+    rows: rows.map((row, index) => {
+      const hoc = String(readValue(row, ['higher_order_construct', 'hoc_construct', 'construct', 'Higher-order construct']) ?? `HOC ${index + 1}`)
+      const dimensions = String(readValue(row, ['dimensions', 'Dimensions', 'dimension']) ?? '—')
+      const role = String(readValue(row, ['role', 'Role', 'structural_role', 'Structural role']) ?? '—')
+      const path = String(readValue(row, ['compared_path', 'comparedPath', 'path', 'Path']) ?? '—')
+      return [
+        hoc,
+        dimensions,
+        role,
+        path,
+        formatCell(readValue(row, ['groupA_estimate', 'group1_estimate', 'groupA_beta'])),
+        formatCell(readValue(row, ['groupB_estimate', 'group2_estimate', 'groupB_beta'])),
+        formatCell(readValue(row, ['difference', 'diff'])),
+        normalizeDecisionLabel(readValue(row, ['decision', 'result', 'status']), 'Established', 'Not established'),
+      ]
+    }),
+    note: `Note. Group A = ${groupValues.groupA}; Group B = ${groupValues.groupB}.`,
+  }
+}
+
+function buildNcaSections(results: Record<string, unknown> | undefined): TarkReportSection[] {
+  const sections: TarkReportSection[] = []
+
+  const sigRows = toRows((results as any)?.necessity_check ?? (results as any)?.final_results?.necessity_check)
+  if (sigRows.length) {
+    sections.push({
+      title: 'Necessity significance assessment',
+      headers: ['Condition', 'Ceiling method', 'Effect size', 'Permutation p-value', 'Decision'],
+      rows: sigRows.map((row) => [
+        String(readValue(row, ['condition', 'Condition', 'row_name', 'row']) ?? '—'),
+        String(readValue(row, ['ceiling_method', 'method', 'Ceiling method']) ?? '—'),
+        formatCell(readValue(row, ['effect_size', 'Effect size', 'd'])),
+        formatPValueCell(readValue(row, ['p_value', 'Permutation p-value', 'p'])),
+        normalizeDecisionLabel(readValue(row, ['decision', 'Decision', 'status']), 'Necessary and significant', 'Not significant'),
+      ]),
+      note: 'Note. Values are from the saved NCA result.',
+    })
+  }
+
+  const buildBottleneck = (method: 'CE-FDH' | 'CR-FDH') => {
+    const tableData = (results as any)?.bottleneck_table?.[method] ?? (results as any)?.final_results?.bottleneck_table?.[method]
+    if (!tableData) return null
+    const bRows = toRows(tableData)
+    if (!bRows.length) return null
+
+    const allKeys = Array.from(new Set(bRows.flatMap((r) => Object.keys(r))))
+    const conditionKeys = allKeys.filter((k) => {
+      const norm = normalizeMetricKey(k)
+      return !isOmittedKey(k) && norm !== 'level' && k !== 'Outcome' && k !== 'outcome' && k !== (results as any)?.outcome
+    })
+
+    if (!conditionKeys.length) return null
+
+    return {
+      title: `${method} bottleneck table`,
+      headers: ['Level (%)', ...conditionKeys],
+      rows: bRows.map((row) => {
+        const levelRaw = readValue(row, ['level', 'Level', 'Level (%)']) ?? readValue(row, ['row_name', 'row'])
+        const levelNumeric = toNumber(levelRaw)
+        const levelStr = levelNumeric != null ? String(levelNumeric) : String(levelRaw)
+
+        return [
+          levelStr,
+          ...conditionKeys.map((k) => {
+            const val = row[k]
+            if (val === 'NN') return 'NN'
+            if (val === '-' || val === '—' || val == null) return '—'
+            const num = toNumber(val)
+            return num != null ? num.toFixed(3) : String(val)
+          }),
+        ]
+      }),
+      note: 'Note. Values represent the minimum level of each condition required to achieve a given level of the outcome. NN means not necessary. Values are expressed as percentages of the observed range. The dash symbol indicates that no feasible bottleneck value was returned for that level.',
+    }
+  }
+
+  const ceFdh = buildBottleneck('CE-FDH')
+  if (ceFdh) sections.push(ceFdh)
+  const crFdh = buildBottleneck('CR-FDH')
+  if (crFdh) sections.push(crFdh)
+
+  return sections
+}
+
+function buildIpmaSections(results: Record<string, unknown> | undefined): TarkReportSection[] {
+  const sections: TarkReportSection[] = []
+
+  const cRows = toRows((results as any)?.construct_table ?? (results as any)?.final_results?.construct_table)
+  if (cRows.length) {
+    sections.push({
+      title: 'Construct importance and performance',
+      headers: ['Construct', 'Importance', 'Performance', 'Priority classification'],
+      rows: cRows.map((row) => [
+        String(readValue(row, ['construct', 'Construct', 'row_name', 'row']) ?? '—'),
+        formatCell(readValue(row, ['importance', 'Importance'])),
+        formatCell(readValue(row, ['performance', 'Performance'])),
+        String(readValue(row, ['priority_classification', 'Classification', 'priority']) ?? '—'),
+      ]),
+      note: 'Note. Values are from the saved IPMA result.',
+    })
+  }
+
+  const iRows = toRows((results as any)?.indicator_table ?? (results as any)?.final_results?.indicator_table)
+  if (iRows.length) {
+    sections.push({
+      title: 'Indicator importance and performance',
+      headers: ['Construct', 'Indicator', 'Importance', 'Performance', 'Priority classification'],
+      rows: iRows.map((row) => [
+        String(readValue(row, ['construct', 'Construct']) ?? '—'),
+        String(readValue(row, ['indicator', 'Indicator', 'row_name', 'row']) ?? '—'),
+        formatCell(readValue(row, ['importance', 'Importance'])),
+        formatCell(readValue(row, ['performance', 'Performance'])),
+        String(readValue(row, ['priority_classification', 'Classification', 'priority']) ?? '—'),
+      ]),
+      note: 'Note. Values are from the saved IPMA result.',
+    })
+  }
+
+  if (sections.length) {
+    sections.unshift({
+      title: 'Importance-performance map analysis',
+      headers: [],
+      rows: [],
+    })
+  }
+
+  return sections
+}
+
+function formatCipmaBoolean(val: unknown): string {
+  const text = String(readScalar(val) ?? val ?? '').trim().toLowerCase()
+  if (text === 'true' || text === 'yes' || text === '1') return 'Yes'
+  if (text === 'false' || text === 'no' || text === '0') return 'No'
+  return String(readScalar(val) ?? val)
+}
+
+function buildCipmaSections(results: Record<string, unknown> | undefined): TarkReportSection[] {
+  const sections: TarkReportSection[] = []
+
+  const pRows = toRows((results as any)?.cipma_priorities ?? (results as any)?.priority_map ?? (results as any)?.final_results?.priority_map)
+  if (pRows.length) {
+    sections.push({
+      title: 'Combined priority assessment',
+      headers: ['Condition', 'Importance', 'Performance', 'Necessity', 'Combined priority'],
+      rows: pRows.map((row) => [
+        String(readValue(row, ['condition', 'Condition', 'row_name', 'row']) ?? '—'),
+        formatCell(readValue(row, ['importance', 'Importance'])),
+        formatCell(readValue(row, ['performance', 'Performance'])),
+        formatCell(readValue(row, ['necessity', 'Necessity', 'effect_size'])),
+        String(readValue(row, ['combined_priority', 'Priority', 'combined priority', 'combinedPriority']) ?? '—'),
+      ]),
+      note: 'Note. Values are from the saved cIPMA result.',
+    })
+  }
+
+  const dRows = toRows((results as any)?.cipma_decisions ?? (results as any)?.decision_table ?? (results as any)?.final_results?.decision_table)
+  if (dRows.length) {
+    sections.push({
+      title: 'cIPMA decision classification',
+      headers: ['Condition', 'Important driver', 'Performance gap', 'Necessary condition', 'Priority classification'],
+      rows: dRows.map((row) => [
+        String(readValue(row, ['condition', 'Condition', 'row_name', 'row']) ?? '—'),
+        formatCipmaBoolean(readValue(row, ['important_driver', 'Important driver', 'importantDriver'])),
+        formatCipmaBoolean(readValue(row, ['performance_gap', 'Performance gap', 'performanceGap'])),
+        formatCipmaBoolean(readValue(row, ['necessary_condition', 'Necessary condition', 'necessaryCondition'])),
+        String(readValue(row, ['priority_classification', 'Classification', 'priority', 'priorityClassification']) ?? '—'),
+      ]),
+      note: 'Note. Values are from the saved cIPMA result.',
+    })
+  }
+
+  if (sections.length) {
+    sections.unshift({
+      title: 'Combined importance-performance and necessity analysis',
+      headers: [],
+      rows: [],
+    })
+  }
+
+  return sections
+}
+
+function humanizeAdvancedKey(key: string): string {
+  return String(key ?? '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+}
+
+function tableFromUnknown(value: unknown): { headers: string[]; rows: string[][] } | null {
+  if (!value || typeof value !== 'object') return null
+  if (Array.isArray(value)) {
+    const rows = value.slice(0, 40).map((entry, index) => {
+      if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        return [String(index + 1), ...(Object.entries(entry as Record<string, unknown>).slice(0, 2).flatMap(([key, child]) => [humanizeAdvancedKey(key), formatCell(child)]))]
+      }
+      return [String(index + 1), formatCell(entry)]
+    })
+    if (!rows.length) return null
+    const maxColumns = Math.max(...rows.map((row) => row.length))
+    const headers = maxColumns > 2 ? ['Row', 'Metric', 'Value'] : ['Row', 'Value']
+    return { headers, rows }
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>)
+  if (!entries.length) return null
+  if (entries.every(([, entry]) => !entry || typeof entry !== 'object')) {
+    return {
+      headers: ['Metric', 'Value'],
+      rows: entries.slice(0, 40).map(([key, entry]) => [humanizeAdvancedKey(key), formatCell(entry)]),
+    }
+  }
+
+  return null
+}
+
+function extractAdvancedSections(
+  analysisLabel: string,
+  value: unknown,
+  path: string[] = [],
+  sections: TarkReportSection[] = [],
+): TarkReportSection[] {
+  if (sections.length >= 3) return sections
+  const table = tableFromUnknown(value)
+  if (table && table.rows.length) {
+    const suffix = path.length ? humanizeAdvancedKey(path[path.length - 1]) : 'summary'
+    sections.push({
+      title: `${analysisLabel} ${suffix}`,
+      headers: table.headers,
+      rows: table.rows,
+      note: `Note. Values are from the saved ${analysisLabel} result.`,
+    })
+    return sections
+  }
+
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    Object.entries(value as Record<string, unknown>).some(([key, child]) => {
+      extractAdvancedSections(analysisLabel, child, [...path, key], sections)
+      return sections.length >= 3
+    })
+  }
+  return sections
+}
+
+function buildGenericAdvancedSections(
+  selected: TarkAdvancedAnalysisStateLike[],
+  savedAnalyses: Map<string, TarkSavedAnalysis>,
+  savedModel?: TarkSavedModelLike | null,
+): TarkReportSection[] {
+  const sections: TarkReportSection[] = []
+  selected.forEach((option) => {
+    if (!option.saved) return
+    const result = savedAnalyses.get(option.id)?.results
+    if (!result) return
+    sections.push(...extractAdvancedSections(option.label, result))
+  })
+  return sections
+}
+
+export function buildTarkAdvancedAnalysisSections(
+  selected: TarkAdvancedAnalysisStateLike[],
+  savedAnalyses: Map<string, TarkSavedAnalysis>,
+  savedModel?: TarkSavedModelLike | null,
+): TarkReportSection[] {
+  const sections: TarkReportSection[] = []
+  const selectedById = new Map(selected.filter((option) => option.saved).map((option) => [option.id, option]))
+
+  if (selectedById.has('nca')) {
+    const ncaResults = savedAnalyses.get('nca')?.results
+    if (ncaResults) {
+      sections.push(...buildNcaSections(ncaResults))
+    }
+  }
+
+  if (selectedById.has('ipma')) {
+    const ipmaResults = savedAnalyses.get('ipma')?.results
+    if (ipmaResults) {
+      sections.push(...buildIpmaSections(ipmaResults))
+    }
+  }
+
+  if (selectedById.has('cipma')) {
+    const cipmaResults = savedAnalyses.get('cipma')?.results
+    if (cipmaResults) {
+      sections.push(...buildCipmaSections(cipmaResults))
+    }
+  }
+
+  if (selectedById.has('micom')) {
+    const micomResults = savedAnalyses.get('permutation')?.results
+    if (micomResults) {
+      sections.push(...buildMicomSections(micomResults))
+    }
+  }
+
+  if (selectedById.has('mga')) {
+    const mgaResults = savedAnalyses.get('mga')?.results
+    if (mgaResults) {
+      const mgaSections = [
+        {
+          title: 'Multi-group analysis',
+          headers: [],
+          rows: [],
+        },
+        buildMgaGroupSpecificPathSection(mgaResults),
+        buildMgaComparisonSection(mgaResults, 'pathCoefficients'),
+        buildMgaComparisonSection(mgaResults, 'outerLoadings'),
+        buildMgaComparisonSection(mgaResults, 'outerWeights'),
+        buildMgaModerationSection(mgaResults),
+        buildMgaHocContextSection(mgaResults, savedModel),
+      ].filter((section): section is TarkReportSection => Boolean(section && (section.rows.length || section.headers.length === 0)))
+      if (mgaSections.length > 1) {
+        sections.push(...mgaSections)
+      }
+    }
+  }
+
+  const genericSelected = selected.filter((option) => option.saved && !['nca', 'ipma', 'cipma', 'micom', 'mga'].includes(option.id))
+  if (genericSelected.length) {
+    sections.push(...buildGenericAdvancedSections(genericSelected, savedAnalyses, savedModel))
+  }
+
+  return sections
 }
 
 export function buildTarkReportSections(
@@ -977,10 +1717,8 @@ export function buildTarkReportSections(
     buildModelFitSection(pls),
   ].filter((section): section is TarkReportSection => Boolean(section && section.rows.length))
 
-  if (request.includeAdvancedAnalysis) {
-    const predictSection = buildPlsPredictSection(plspredict)
-    if (predictSection?.rows.length) sections.push(predictSection)
-  }
+  const predictSection = buildPlsPredictSection(plspredict)
+  if (predictSection?.rows.length) sections.push(predictSection)
 
   return sections
 }
@@ -1072,7 +1810,7 @@ export function buildTarkDiagramResults(
   applyPathEffectRows(toRows((pls as any)?.final_results?.total_effects), 'totalEffect')
   applyPathEffectRows(toRows((pls as any)?.final_results?.total_indirect_effects), 'indirectEffect')
 
-  buildFSquareLookup(pls, savedModel).forEach((fSquare, key) => {
+  buildFSquareLookup(pls, undefined, savedModel).forEach((fSquare, key) => {
     const [fromKey, toKey] = key.split('\u0000')
     const path = toRows((pls as any)?.quality_criteria?.f_square)
       .flatMap((row) => {

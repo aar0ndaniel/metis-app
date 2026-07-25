@@ -17,6 +17,7 @@ import { APP_BRAND_NAME } from '../config/appBranding'
 
 type Phase = 'options' | 'installing' | 'complete'
 type SetupTheme = 'Dark' | 'Light'
+type SetupLanguage = 'English' | 'Español' | 'Português' | 'Français'
 
 type InstallStage =
   | 'workspace'
@@ -28,9 +29,12 @@ type InstallStage =
 
 const REQUIRED_PKGS = ['seminr', 'seminrExtras', 'plumber', 'semPower', 'readxl', 'jsonlite', 'Matrix'] as const
 const THEME_OPTIONS = ['Light', 'Dark'] as const
+const LANGUAGE_OPTIONS = ['English', 'Español', 'Português', 'Français'] as const
 const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
 const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
+const METIS_PREF_LANGUAGE_KEY = 'metis:prefs:language'
+const LEGACY_PREF_LANGUAGE_KEY = 'pls:prefs:language'
 const R_PROGRESS_STOP = 44
 const PACKAGE_PROGRESS_START = 58
 
@@ -100,17 +104,67 @@ const NO_DRAG_STYLE: CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' } = 
   WebkitAppRegion: 'no-drag',
 }
 
+function getSystemSetupTheme(): SetupTheme {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'Dark'
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'Light' : 'Dark'
+}
+
 function getInitialSetupTheme(): SetupTheme {
-  return 'Light'
+  try {
+    const savedTheme = localStorage.getItem(INSTALLER_PREF_THEME_KEY)
+    if (savedTheme === 'Light' || savedTheme === 'Dark') return savedTheme
+  } catch {}
+  return getSystemSetupTheme()
+}
+
+function normalizeSetupLanguage(value: unknown): SetupLanguage | null {
+  const language = String(value ?? '').trim().toLowerCase()
+  if (language === 'english' || language.startsWith('en')) return 'English'
+  if (language === 'español' || language === 'spanish' || language.startsWith('es')) return 'Español'
+  if (language === 'português' || language === 'portuguese' || language.startsWith('pt')) return 'Português'
+  if (language === 'français' || language === 'french' || language.startsWith('fr')) return 'Français'
+  return null
+}
+
+function getSystemSetupLanguage(): SetupLanguage {
+  if (typeof navigator === 'undefined') return 'English'
+  const candidates = [
+    ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    navigator.language,
+  ]
+  for (const candidate of candidates) {
+    const language = normalizeSetupLanguage(candidate)
+    if (language) return language
+  }
+  return 'English'
+}
+
+function getInitialSetupLanguage(): SetupLanguage {
+  try {
+    const savedLanguage = localStorage.getItem(METIS_PREF_LANGUAGE_KEY) ?? localStorage.getItem(LEGACY_PREF_LANGUAGE_KEY)
+    const language = normalizeSetupLanguage(savedLanguage)
+    if (language) return language
+  } catch {}
+  return getSystemSetupLanguage()
+}
+
+function previewSetupTheme(theme: SetupTheme) {
+  document.documentElement.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
+  document.body.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
+  void (window as any).electronAPI?.setThemePreference?.(theme.toLowerCase())
 }
 
 function applySetupTheme(theme: SetupTheme) {
   localStorage.setItem(INSTALLER_PREF_THEME_KEY, theme)
   localStorage.setItem(METIS_PREF_THEME_KEY, theme)
   localStorage.setItem(LEGACY_PREF_THEME_KEY, theme)
-  document.documentElement.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
-  document.body.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
-  void (window as any).electronAPI?.setThemePreference?.(theme.toLowerCase())
+  previewSetupTheme(theme)
+  window.dispatchEvent(new CustomEvent('pls:preferences-updated'))
+}
+
+function applySetupLanguage(language: SetupLanguage) {
+  localStorage.setItem(METIS_PREF_LANGUAGE_KEY, language)
+  localStorage.setItem(LEGACY_PREF_LANGUAGE_KEY, language)
   window.dispatchEvent(new CustomEvent('pls:preferences-updated'))
 }
 
@@ -306,6 +360,67 @@ function AppearanceChoice({ theme, onThemeChange }: { theme: SetupTheme; onTheme
   )
 }
 
+function LanguageChoice({
+  selectedLanguage,
+  setSelectedLanguage,
+}: {
+  selectedLanguage: SetupLanguage
+  setSelectedLanguage: (language: SetupLanguage) => void
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+        Language
+      </span>
+      <div
+        style={{
+          ...NO_DRAG_STYLE,
+          width: 'fit-content',
+          maxWidth: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
+          background: 'var(--color-elevated)',
+          border: `1px solid ${BORDER_SOFT}`,
+        }}
+      >
+        {LANGUAGE_OPTIONS.map((option) => {
+          const active = selectedLanguage === option
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setSelectedLanguage(option)}
+              aria-pressed={active}
+              style={{
+                height: 28,
+                minWidth: 78,
+                borderRadius: 7,
+                border: `1px solid ${active ? BORDER_SOFT : 'transparent'}`,
+                background: active ? 'var(--color-input)' : 'transparent',
+                color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
+                fontFamily: FF,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: active ? '0 2px 6px rgb(15 18 25 / 0.06)' : 'none',
+              }}
+            >
+              {option}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function ProgressStep({ label, done, active }: { label: string; done: boolean; active: boolean }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -356,8 +471,14 @@ export default function SetupWizard() {
   const [, setRuntimeLibPaths] = useState<string[]>([])
   const [copied, setCopied] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState<SetupTheme>(() => getInitialSetupTheme())
+  const [selectedLanguage, setSelectedLanguage] = useState<SetupLanguage>(() => getInitialSetupLanguage())
   const logoSrc = selectedTheme === 'Light' ? logoBlack : logoWhite
   const brand = displayBrandName()
+
+  const handleThemeChange = (theme: SetupTheme) => {
+    setSelectedTheme(theme)
+    applySetupTheme(theme)
+  }
 
   useEffect(() => {
     api?.getInstallDefaultPaths?.().then((res: any) => {
@@ -366,8 +487,12 @@ export default function SetupWizard() {
   }, [])
 
   useEffect(() => {
-    applySetupTheme(selectedTheme)
+    previewSetupTheme(selectedTheme)
   }, [selectedTheme])
+
+  useEffect(() => {
+    applySetupLanguage(selectedLanguage)
+  }, [selectedLanguage])
 
   const displayPath = rootPath.trim()
     ? `${rootPath.trim().replace(/[\\/]+$/, '')}${PATH_SEPARATOR}metis`
@@ -512,7 +637,7 @@ export default function SetupWizard() {
   }
 
   const handleInstall = async () => {
-    applySetupTheme(selectedTheme)
+    applySetupLanguage(selectedLanguage)
     if (!rootPath.trim()) {
       setInstallError('Please choose an install location.')
       return
@@ -701,7 +826,8 @@ export default function SetupWizard() {
         )}
       </div>
 
-      <AppearanceChoice theme={selectedTheme} onThemeChange={setSelectedTheme} />
+      <AppearanceChoice theme={selectedTheme} onThemeChange={handleThemeChange} />
+      <LanguageChoice selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} />
     </div>
   )
 
@@ -927,6 +1053,25 @@ export default function SetupWizard() {
     </div>
   )
 
+  const [telemetryConsent, setTelemetryConsent] = useState<'pending' | 'accepted' | 'declined'>('pending')
+
+  useEffect(() => {
+    if (phase !== 'complete' || telemetryConsent !== 'pending') return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        handleTelemetryChoice(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [phase, telemetryConsent])
+
+  const handleTelemetryChoice = (consent: boolean) => {
+    setTelemetryConsent(consent ? 'accepted' : 'declined')
+    void (window as any).electronAPI?.setTelemetryConsent?.(consent)
+  }
+
   const renderComplete = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
       <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -944,6 +1089,61 @@ export default function SetupWizard() {
         <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, lineHeight: 1.45, wordBreak: 'break-all' }}>
           {displayPath}
         </span>
+      </div>
+
+      <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+          Anonymous Installation Telemetry (Optional)
+        </span>
+        <p style={{ margin: 0, color: TEXT_SECONDARY, fontFamily: FF, fontSize: 11.5, lineHeight: 1.45 }}>
+          Send a single non-identifying ping (OS, App Version, CPU Arch) to help report adoption metrics to research grant funders. No research data or personal info leaves your computer.
+        </p>
+        {telemetryConsent === 'pending' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
+            <button
+              type="button"
+              onClick={() => handleTelemetryChoice(false)}
+              style={{
+                ...NO_DRAG_STYLE,
+                flex: 1,
+                height: 32,
+                borderRadius: 8,
+                background: 'var(--color-input)',
+                border: `1px solid ${BORDER_STRONG}`,
+                color: TEXT_PRIMARY,
+                fontFamily: FF,
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              No Thanks (Esc)
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTelemetryChoice(true)}
+              style={{
+                ...NO_DRAG_STYLE,
+                flex: 1,
+                height: 32,
+                borderRadius: 8,
+                background: 'var(--color-input)',
+                border: `1px solid rgb(${ACCENT_RGB} / 0.35)`,
+                color: ACCENT_HEX,
+                fontFamily: FF,
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Send Anonymous Ping
+            </button>
+          </div>
+        ) : (
+          <span style={{ color: ACCENT_HEX, fontFamily: FF, fontSize: 11.5, fontWeight: 600 }}>
+            ✓ Preference recorded ({telemetryConsent === 'accepted' ? 'Ping sent' : 'Ping declined'}).
+          </span>
+        )}
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
