@@ -3,7 +3,7 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC_SVG = REPO_ROOT / "src" / "assets" / "logo-white.svg"
+SRC_SVG = REPO_ROOT / "src" / "assets" / "logo-icon.svg"
 DEST_RESOURCES = REPO_ROOT / "resources" / "icon.ico"
 DEST_BUILD = REPO_ROOT / "build" / "icon.ico"
 DEST_RESOURCES_PNG = REPO_ROOT / "resources" / "icon.png"
@@ -31,7 +31,7 @@ def all_icons_exist() -> bool:
 
 def render_svg_to_png(svg_path: Path, png_path: Path) -> None:
     from PyQt5.QtCore import Qt
-    from PyQt5.QtGui import QGuiApplication, QImage, QPainter, QColor, QPen, QBrush
+    from PyQt5.QtGui import QGuiApplication, QImage, QPainter
     from PyQt5.QtSvg import QSvgRenderer
     from PyQt5.QtCore import QRectF
 
@@ -48,19 +48,9 @@ def render_svg_to_png(svg_path: Path, png_path: Path) -> None:
     painter = QPainter(image)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    # Draw solid black background
-    rect = QRectF(0, 0, ICON_SIZE, ICON_SIZE)
-
-    # Rounded corners for the icon background
-    radius = 90
-
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QBrush(QColor("#000000")))
-    painter.drawRoundedRect(rect, radius, radius)
-
-    # Render white logo in the center
-    # Scale and center the logo
-    logo_padding = 80
+    # Render the green logo over the transparent canvas so the platform can
+    # provide its own app-icon surface and corner treatment.
+    logo_padding = 44
     logo_rect = QRectF(logo_padding, logo_padding, ICON_SIZE - 2*logo_padding, ICON_SIZE - 2*logo_padding)
     renderer.render(painter, logo_rect)
 
@@ -96,14 +86,9 @@ def png_to_icns(png_path: Path, icns_path: Path) -> None:
 
 
 def main() -> int:
-    # Skip regeneration if all icon files already exist
-    if all_icons_exist():
-        print("All icon files already exist, skipping generation.")
-        for p in ALL_OUTPUTS:
-            print(f"  ✓ {p}")
-        return 0
-
-    # Only import PyQt5 when we actually need to regenerate
+    # Prefer regenerating on every build so a changed source logo is reflected
+    # in every packaged icon. If PyQt5 is unavailable, retain existing outputs
+    # so environments that only package prebuilt assets can still build.
     try:
         render_svg_to_png(SRC_SVG, OUTPUT_PNG)
     except ImportError as e:

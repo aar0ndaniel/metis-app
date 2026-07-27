@@ -2,7 +2,7 @@
  * modelCanvasLatentShapePicker.test.mjs
  *
  * Static test for Latent Tool shape picker (Circle, Oval, Rectangle) drop-up menu,
- * construct creation shape behavior, model persistence, and What's New modal integration.
+ * construct creation shape behavior and model persistence.
  */
 
 import assert from 'node:assert/strict'
@@ -56,11 +56,11 @@ assert.match(
   'Model snapshot/persistence must save preferredLatentShape into model state.',
 )
 
-// 6. WhatsNewModal documents construct shape options (Circle, Oval, Rectangle)
+// 6. WhatsNewModal includes the new title-bar/menu-bar capture in the release set
 assert.match(
   whatsNewSource,
-  /Circle, Oval, and Rectangle|construct shape|latent tool shape/i,
-  'WhatsNewModal must include update info for Latent shape options (Circle, Oval, Rectangle).',
+  /analysis-titlebar\.png/,
+  'WhatsNewModal must include the new title-bar/menu-bar capture.',
 )
 
 // 7. Shape picker button styling and height

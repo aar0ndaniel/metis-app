@@ -6,7 +6,7 @@ import pngToIco from 'png-to-ico'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
-const srcSvg = path.resolve(repoRoot, 'src/assets/logo-primary.svg')
+const srcSvg = path.resolve(repoRoot, 'src/assets/logo-icon.svg')
 const destResources = path.resolve(repoRoot, 'resources/icon.ico')
 const destBuild = path.resolve(repoRoot, 'build/icon.ico')
 const tempDir = path.resolve(repoRoot, 'build/.icon-tmp')

@@ -12,23 +12,31 @@ const [modal, app] = await Promise.all([
 ])
 
 assert.match(modal, /What's new in Metis 0\.3\.0/)
-assert.match(modal, /width:\s*520/)
-assert.match(modal, /height:\s*410/)
+assert.match(modal, /width:\s*680/)
+assert.match(modal, /height:\s*420/)
 assert.match(modal, /role="dialog"/)
 assert.match(modal, /aria-modal="true"/)
 assert.match(modal, /aria-live="polite"/)
 assert.match(modal, /ArrowLeft|CaretLeft/)
 assert.match(modal, /ArrowRight|CaretRight/)
 assert.match(modal, /prefers-reduced-motion/)
+assert.match(modal, /flexDirection:\s*'row'/)
+assert.doesNotMatch(modal, /borderBottom:\s*'1px solid var\(--color-border\)'/)
+assert.doesNotMatch(modal, /borderTop:\s*'1px solid var\(--color-border\)'/)
+assert.match(modal, /Hello · Hola · Olá · Bonjour/)
 
-for (const label of [
-  'Analysis menu',
-  'Four interface languages',
+const expectedSlideOrder = [
+  'Multilingual support (Spanish, Portuguese & French)',
   'Permutation Analysis (MICOM)',
-  'Multi Group Analysis (MGA)',
   'Tark reports',
-]) {
-  assert.match(modal, new RegExp(label.replace(/[()]/g, '\\$&')))
+  'Multi Group Analysis (MGA)',
+  'Analysis menu',
+]
+let previousIndex = -1
+for (const label of expectedSlideOrder) {
+  const index = modal.indexOf(label)
+  assert.ok(index > previousIndex, `Expected slide ${label} to appear in order.`)
+  previousIndex = index
 }
 
 for (const url of [
@@ -40,11 +48,11 @@ for (const url of [
 }
 
 const captures = [
-  'analysis-titlebar.png',
   'languages.png',
   'micom.png',
   'mga.png',
   'tark-report.png',
+  'analysis-titlebar.png',
 ]
 for (const capture of captures) {
   assert.match(modal, new RegExp(capture.replace('.', '\\.')))

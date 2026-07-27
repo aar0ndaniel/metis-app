@@ -65,7 +65,12 @@ interface Window {
     onInstallProgress: (cb: (data: { step: string; detail: string }) => void) => () => void
     findRscript: () => Promise<any>
     checkPackages: (rscriptPath: string) => Promise<any>
-    saveLiteConfig: (data: { rootPath: string; rscriptPath: string }) => Promise<any>
+    getTelemetryStatus?: () => Promise<{ consent: boolean; installationId: string }>
+    setTelemetryConsent?: (consent: boolean) => Promise<{ success: boolean }>
+    getFeedbackStatus?: () => Promise<{ showModal: boolean; installationId: string; submitted: boolean; declined: boolean }>
+    markSuccessfulLaunch?: () => Promise<{ success: boolean; installationId: string }>
+    submitFeedback?: (payload: { rating: number; feeling: string; comment?: string }) => Promise<{ success: boolean }>
+    declineFeedback?: () => Promise<{ success: boolean }>
     onOpenFile: (cb: (filePath: string) => void) => () => void
     platform: string
   }

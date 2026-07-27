@@ -152,7 +152,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkPackages:  (rscriptPath: string) => ipcRenderer.invoke('r:checkPackages', rscriptPath),
   saveLiteConfig: (data: { rootPath: string; rscriptPath: string }) => ipcRenderer.invoke('r:saveLiteConfig', data),
 
-  // Telemetry IPC
+  // Telemetry & Feedback IPC
   getTelemetryStatus: () => ipcRenderer.invoke('telemetry:get-status'),
   setTelemetryConsent: (consent: boolean) => ipcRenderer.invoke('telemetry:set-consent', consent),
+  getFeedbackStatus: () => ipcRenderer.invoke('feedback:get-status'),
+  markSuccessfulLaunch: () => ipcRenderer.invoke('feedback:mark-launch-success'),
+  submitFeedback: (payload: { rating: number; feeling: string; comment?: string }) => ipcRenderer.invoke('feedback:submit', payload),
+  declineFeedback: () => ipcRenderer.invoke('feedback:decline'),
 })

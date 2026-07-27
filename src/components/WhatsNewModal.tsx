@@ -23,15 +23,8 @@ interface UpdateSlide {
 
 const slides: UpdateSlide[] = [
   {
-    title: 'Analysis menu',
-    description: 'Metis 0.3.0 brings every analysis into one title-bar menu: PLS-SEM, Bootstrap, PLS Predict, NCA and IPMA, MICOM, and MGA.',
-    image: analysisTitlebarCapture,
-    imageAlt: 'Metis Analysis menu open in the title bar with all analysis commands visible.',
-    links: [{ label: 'Metis documentation', href: 'https://metis.emend.it.com/docs.html' }],
-  },
-  {
-    title: 'Four interface languages',
-    description: 'Choose English, Español, Português, or Français from Preferences. The selected language is remembered across launches.',
+    title: 'Multilingual support (Spanish, Portuguese & French)',
+    description: 'Hello · Hola · Olá · Bonjour — welcome to Metis. Work in your preferred language! Metis now includes Spanish (Español), Portuguese (Português), and French (Français) interface options alongside English.',
     image: languagesCapture,
     imageAlt: 'Metis Preferences showing the open language selector with English, Spanish, Portuguese, and French.',
   },
@@ -46,13 +39,6 @@ const slides: UpdateSlide[] = [
     ],
   },
   {
-    title: 'Multi Group Analysis (MGA)',
-    description: 'Compare structural paths across groups with bootstrap subsamples, alpha controls, reproducible seeds, and dedicated results.',
-    image: mgaCapture,
-    imageAlt: 'The Metis Multi Group Analysis modal.',
-    links: [{ label: 'Metis documentation', href: 'https://metis.emend.it.com/docs.html' }],
-  },
-  {
     title: 'Tark reports',
     description: 'Turn saved PLS-SEM, Bootstrap, and PLS Predict results into a guided Word-report workflow with a path-diagram preview.',
     image: tarkReportCapture,
@@ -60,10 +46,18 @@ const slides: UpdateSlide[] = [
     links: [{ label: 'Tark report guide', href: 'https://metis.emend.it.com/tark-report.html' }],
   },
   {
-    title: 'Latent construct shapes',
-    description: 'Select your preferred construct shape (Circle, Oval, and Rectangle) from the drop-up menu on the canvas toolbar. Your choice is remembered per model.',
+    title: 'Multi Group Analysis (MGA)',
+    description: 'Compare structural paths across groups with bootstrap subsamples, alpha controls, reproducible seeds, and dedicated results.',
+    image: mgaCapture,
+    imageAlt: 'The Metis Multi Group Analysis modal.',
+    links: [{ label: 'Metis documentation', href: 'https://metis.emend.it.com/docs.html' }],
+  },
+  {
+    title: 'Analysis menu',
+    description: 'Metis 0.3.0 brings every analysis into one title-bar menu: PLS-SEM, Bootstrap, PLS Predict, NCA and IPMA, MICOM, and MGA.',
     image: analysisTitlebarCapture,
-    imageAlt: 'Latent tool shape picker menu open on the canvas toolbar with Circle, Oval, and Rectangle options.',
+    imageAlt: 'Metis Analysis menu open in the title bar with all analysis commands visible.',
+    links: [{ label: 'Metis documentation', href: 'https://metis.emend.it.com/docs.html' }],
   },
 ]
 
@@ -113,18 +107,19 @@ export default function WhatsNewModal({ theme, onComplete, onDismiss }: WhatsNew
     >
       <div
         ref={dialogRef}
+        className="metis-whats-new-dialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="metis-whats-new-title"
         style={{
-          width: 520,
-          height: 410,
+          width: 680,
+          height: 420,
           maxWidth: 'calc(100vw - 32px)',
           maxHeight: 'calc(100vh - 32px)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          borderRadius: 14,
+          borderRadius: 16,
           background: 'var(--color-surface)',
           border: '1px solid var(--color-floating-border-soft)',
           boxShadow: 'var(--shadow-modal)',
@@ -132,72 +127,79 @@ export default function WhatsNewModal({ theme, onComplete, onDismiss }: WhatsNew
           fontFamily: 'DM Sans, sans-serif',
         }}
       >
-        <header style={{ height: 52, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 14px 0 16px', borderBottom: '1px solid var(--color-border)' }}>
+        <header style={{ height: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', padding: '30px 54px 0 20px' }}>
           <div style={{ minWidth: 0 }}>
-            <h1 id="metis-whats-new-title" style={{ margin: 0, fontSize: 15, lineHeight: 1.2, fontWeight: 750 }}>What's new in Metis 0.3.0</h1>
-            <p style={{ margin: '2px 0 0', color: 'var(--color-text-muted)', fontSize: 10 }}>Welcome — review each update, then build your first model.</p>
+            <h1 id="metis-whats-new-title" style={{ margin: 0, fontSize: 20, lineHeight: 1.2, fontWeight: 400 }}>What's new in Metis 0.3.0</h1>
+            <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted)', fontSize: 13 }}>Welcome — review each update, then build your first model.</p>
           </div>
           <button
             ref={closeRef}
             type="button"
             aria-label="Close 0.3.0 updates"
             onClick={onDismiss}
-            style={{ marginLeft: 'auto', width: 28, height: 28, border: 0, borderRadius: 8, background: 'transparent', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
+            style={{ marginLeft: 'auto', width: 32, height: 32, border: '1px solid var(--color-floating-border-soft)', borderRadius: 10, background: 'var(--color-floating-icon-bg)', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
           >
             <X size={14} />
           </button>
         </header>
 
-        <div aria-live="polite" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: '12px 14px 10px', gap: 9 }}>
-          <figure style={{ margin: 0, height: 184, flexShrink: 0, overflow: 'hidden', borderRadius: 10, border: '1px solid var(--color-border)', background: 'var(--color-page)' }}>
+        <div className="metis-whats-new-deck" aria-live="polite" style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
+          <div
+            className="metis-whats-new-body-row"
+            style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 22, padding: '16px 20px', height: '100%', width: '100%', boxSizing: 'border-box' }}
+          >
+          <figure className="metis-whats-new-figure" style={{ margin: 0, width: '52%', height: '100%', maxHeight: 240, flexShrink: 0, overflow: 'hidden', borderRadius: 12, border: '1px solid var(--color-border)', background: 'var(--color-page)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <img
               key={slide.image}
               src={slide.image}
               alt={slide.imageAlt}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: slide.title === 'Analysis menu' ? 'top left' : 'center', display: 'block', animation: reduceMotion ? 'none' : 'metis-whats-new-in 180ms ease-out' }}
+              style={{ width: '100%', height: '100%', objectFit: slide.image === languagesCapture ? 'contain' : 'cover', objectPosition: 'top left', display: 'block', padding: slide.image === languagesCapture ? 8 : 0, background: slide.image === languagesCapture ? '#111418' : 'transparent', transform: slide.image === languagesCapture ? 'none' : 'scale(1.3) translate(-60px, -30px)', transformOrigin: 'top left', animation: reduceMotion ? 'none' : 'metis-whats-new-in 180ms ease-out' }}
             />
           </figure>
-          <section style={{ minHeight: 72 }}>
-            <h2 style={{ margin: 0, fontSize: 14, lineHeight: 1.25, fontWeight: 750 }}>{slide.title}</h2>
-            <p style={{ margin: '5px 0 0', color: 'var(--color-text-secondary)', fontSize: 10.5, lineHeight: 1.45 }}>{slide.description}</p>
+          <section className="metis-whats-new-info" style={{ width: '48%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8 }}>
+            <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.3, fontWeight: 400 }}>{slide.title}</h2>
+            <p style={{ margin: 0, color: 'var(--color-text-secondary)', fontSize: 12, lineHeight: 1.5 }}>{slide.description}</p>
             {slide.links && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 5, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 4, flexWrap: 'wrap' }}>
                 {slide.links.map(link => (
-                  <a key={link.href} href={link.href} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--color-accent)', fontSize: 10, fontWeight: 700, textDecoration: 'none' }}>
+                  <a key={link.href} href={link.href} target="_blank" rel="noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--color-accent)', fontSize: 11, fontWeight: 400, textDecoration: 'none' }}>
                     {link.label}<ArrowSquareOut size={10} weight="bold" />
                   </a>
                 ))}
               </div>
             )}
           </section>
+          </div>
         </div>
 
-        <footer style={{ height: 58, flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', borderTop: '1px solid var(--color-border)', background: 'rgb(var(--color-elevated-rgb) / 0.42)' }}>
+        <footer style={{ height: 58, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px' }}>
           <button
             type="button"
             aria-label="Previous update"
             disabled={currentSlide === 0}
             onClick={() => setCurrentSlide(index => Math.max(0, index - 1))}
-            style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-floating-icon-bg)', color: 'var(--color-text-secondary)', cursor: currentSlide === 0 ? 'default' : 'pointer', opacity: currentSlide === 0 ? 0.38 : 1, display: 'grid', placeItems: 'center' }}
+            style={{ width: 34, height: 34, borderRadius: 10, border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-secondary)', cursor: currentSlide === 0 ? 'default' : 'pointer', opacity: currentSlide === 0 ? 0.38 : 1, display: 'grid', placeItems: 'center' }}
           >
             <ArrowLeft size={13} weight="bold" />
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} aria-label={`Update ${currentSlide + 1} of ${slides.length}`}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }} aria-label={`Update ${currentSlide + 1} of ${slides.length}`}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {slides.map((item, index) => (
-              <button key={item.title} type="button" aria-label={`View ${item.title}`} onClick={() => setCurrentSlide(index)} style={{ width: index === currentSlide ? 18 : 6, height: 6, padding: 0, border: 0, borderRadius: 999, background: index === currentSlide ? 'var(--color-accent)' : 'rgb(var(--color-text-secondary-rgb) / 0.22)', cursor: 'pointer', transition: reduceMotion ? 'none' : 'width 180ms ease, background 180ms ease' }} />
+              <button key={item.title} type="button" aria-label={`View ${item.title}`} onClick={() => setCurrentSlide(index)} style={{ width: index === currentSlide ? 22 : 7, height: 7, padding: 0, border: 0, borderRadius: 999, background: index === currentSlide ? 'var(--color-accent)' : 'rgb(var(--color-text-secondary-rgb) / 0.22)', cursor: 'pointer', transition: reduceMotion ? 'none' : 'width 180ms ease, background 180ms ease' }} />
             ))}
+            </div>
+            <span style={{ color: 'var(--color-text-muted)', fontSize: 11, fontVariantNumeric: 'tabular-nums' }}>{currentSlide + 1} / {slides.length}</span>
           </div>
-          <span style={{ color: 'var(--color-text-muted)', fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>{currentSlide + 1} / {slides.length}</span>
           <button
             type="button"
             onClick={() => isLastSlide ? onComplete() : setCurrentSlide(index => index + 1)}
-            style={{ marginLeft: 'auto', height: 34, padding: '0 14px', borderRadius: 9, border: '1px solid rgb(var(--color-accent-rgb) / 0.42)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 11, fontWeight: 750 }}
+            style={{ height: 36, padding: '0 16px', borderRadius: 999, border: '1px solid rgb(var(--color-accent-rgb) / 0.42)', background: 'var(--color-accent)', color: 'var(--color-on-accent)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11.5, fontWeight: 400 }}
           >
             {isLastSlide ? 'Start walkthrough' : 'Next update'}
             <ArrowRight size={12} weight="bold" />
           </button>
         </footer>
-        <style>{`@media (prefers-reduced-motion: no-preference) { @keyframes metis-whats-new-in { from { opacity: .65; transform: translateX(5px); } to { opacity: 1; transform: translateX(0); } } }`}</style>
+        <style>{`@media (prefers-reduced-motion: no-preference) { @keyframes metis-whats-new-in { from { opacity: .65; transform: translateX(5px); } to { opacity: 1; transform: translateX(0); } } } @media (max-width: 640px) { .metis-whats-new-dialog { width: calc(100vw - 24px) !important; height: auto !important; max-height: calc(100vh - 24px) !important; } .metis-whats-new-body-row { flex-direction: column !important; padding: 14px 16px !important; gap: 14px !important; } .metis-whats-new-figure, .metis-whats-new-info { width: 100% !important; } .metis-whats-new-figure { height: 150px !important; } }`}</style>
       </div>
     </div>
   )

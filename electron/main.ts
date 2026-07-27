@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu, type MenuItemConstructorOptions, type Rectangle } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu, net, type MenuItemConstructorOptions, type Rectangle } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -4809,3 +4809,156 @@ ipcMain.handle('r:saveLiteConfig', async (_, { rootPath, rscriptPath }: { rootPa
     return { success: false, error: err.message }
   }
 })
+
+// ─── Telemetry & Feedback Offline Outbox System ─────────────────────────────
+
+const METIS_TELEMETRY_ENDPOINT = process.env.METIS_TELEMETRY_ENDPOINT || 'https://metis-app.com/api/telemetry/collect'
+
+interface TelemetryEventItem {
+  installation_id: string
+  event_type: 'installation' | 'feedback'
+  payload: Record<string, any>
+  created_at: string
+}
+
+interface TelemetryStoreState {
+  installationId: string
+  optInInstallationSent: boolean
+  firstLaunchMarked: boolean
+  feedbackSubmitted: boolean
+  feedbackDeclined: boolean
+  outbox: TelemetryEventItem[]
+}
+
+function getTelemetryStorePath(): string {
+  return path.join(app.getPath('userData'), 'telemetry-outbox.json')
+}
+
+function loadTelemetryStore(): TelemetryStoreState {
+  try {
+    const filePath = getTelemetryStorePath()
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, 'utf8')
+      const data = JSON.parse(raw)
+      return {
+        installationId: data.installationId || randomBytes(16).toString('hex'),
+        optInInstallationSent: !!data.optInInstallationSent,
+        firstLaunchMarked: !!data.firstLaunchMarked,
+        feedbackSubmitted: !!data.feedbackSubmitted,
+        feedbackDeclined: !!data.feedbackDeclined,
+        outbox: Array.isArray(data.outbox) ? data.outbox : [],
+      }
+    }
+  } catch (e) {
+    console.warn('[telemetry] Error reading telemetry store:', e)
+  }
+  return {
+    installationId: randomBytes(16).toString('hex'),
+    optInInstallationSent: false,
+    firstLaunchMarked: false,
+    feedbackSubmitted: false,
+    feedbackDeclined: false,
+    outbox: [],
+  }
+}
+
+function saveTelemetryStore(state: TelemetryStoreState): void {
+  try {
+    const filePath = getTelemetryStorePath()
+    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    fs.writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf8')
+  } catch (e) {
+    console.warn('[telemetry] Error saving telemetry store:', e)
+  }
+}
+
+async function flushTelemetryOutbox(): Promise<void> {
+  const state = loadTelemetryStore()
+  if (!net.isOnline() || state.outbox.length === 0) return
+
+  const remaining: TelemetryEventItem[] = []
+  for (const item of state.outbox) {
+    try {
+      const response = await net.fetch(METIS_TELEMETRY_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(item),
+      })
+      if (response.ok) {
+        if (item.event_type === 'installation') state.optInInstallationSent = true
+      } else {
+        remaining.push(item)
+      }
+    } catch (e) {
+      remaining.push(item)
+    }
+  }
+  state.outbox = remaining
+  saveTelemetryStore(state)
+}
+
+ipcMain.handle('telemetry:get-status', async () => {
+  const state = loadTelemetryStore()
+  return { consent: state.optInInstallationSent, installationId: state.installationId }
+})
+
+ipcMain.handle('telemetry:set-consent', async (_, consent: boolean) => {
+  const state = loadTelemetryStore()
+  if (consent && !state.optInInstallationSent) {
+    const exists = state.outbox.some((item) => item.event_type === 'installation')
+    if (!exists) {
+      state.outbox.push({
+        installation_id: state.installationId,
+        event_type: 'installation',
+        payload: { platform: process.platform, arch: process.arch, timestamp: new Date().toISOString() },
+        created_at: new Date().toISOString(),
+      })
+      saveTelemetryStore(state)
+    }
+    void flushTelemetryOutbox()
+  }
+  return { success: true }
+})
+
+ipcMain.handle('feedback:get-status', async () => {
+  const state = loadTelemetryStore()
+  const showModal = state.firstLaunchMarked && !state.feedbackSubmitted && !state.feedbackDeclined
+  return { showModal, installationId: state.installationId, submitted: state.feedbackSubmitted, declined: state.feedbackDeclined }
+})
+
+ipcMain.handle('feedback:mark-launch-success', async () => {
+  const state = loadTelemetryStore()
+  state.firstLaunchMarked = true
+  saveTelemetryStore(state)
+  return { success: true, installationId: state.installationId }
+})
+
+ipcMain.handle('feedback:submit', async (_, payload: { rating: number; feeling: string; comment?: string }) => {
+  const state = loadTelemetryStore()
+  state.feedbackSubmitted = true
+  const exists = state.outbox.some((item) => item.event_type === 'feedback')
+  if (!exists) {
+    state.outbox.push({
+      installation_id: state.installationId,
+      event_type: 'feedback',
+      payload: {
+        rating: payload.rating,
+        feeling: payload.feeling,
+        comment: payload.comment || '',
+        timestamp: new Date().toISOString(),
+      },
+      created_at: new Date().toISOString(),
+    })
+  }
+  saveTelemetryStore(state)
+  void flushTelemetryOutbox()
+  return { success: true }
+})
+
+ipcMain.handle('feedback:decline', async () => {
+  const state = loadTelemetryStore()
+  state.feedbackDeclined = true
+  saveTelemetryStore(state)
+  return { success: true }
+})
+

@@ -60,6 +60,7 @@ export interface CanvasPath {
   to: string
   kind?: 'direct' | 'moderation'
   targetPathId?: string
+  anchorRatio?: number
   style?: 'straight' | 'curved' | 'rightangle'
   curvature?: number
   joints?: { x: number; y: number }[]
@@ -701,6 +702,24 @@ export default function PathDiagram({
     )
   }
 
+  const computePathDiagramModerationAnchorRatio = (path: CanvasPath): number => {
+    if (!path.targetPathId) return Math.max(0.15, Math.min(0.85, path.anchorRatio ?? 0.5))
+    const siblings = ps.filter((candidate) => candidate.kind === 'moderation' && candidate.targetPathId === path.targetPathId)
+    if (siblings.length <= 1) {
+      return Math.max(0.15, Math.min(0.85, path.anchorRatio ?? 0.5))
+    }
+    const hasExplicitRatios = siblings.every((s) => typeof s.anchorRatio === 'number')
+    if (hasExplicitRatios) {
+      const roundedSet = new Set(siblings.map((s) => Math.round((s.anchorRatio ?? 0.5) * 20)))
+      if (roundedSet.size === siblings.length && typeof path.anchorRatio === 'number') {
+        return Math.max(0.15, Math.min(0.85, path.anchorRatio))
+      }
+    }
+    const index = siblings.findIndex((s) => s.id === path.id)
+    const idx = index >= 0 ? index : 0
+    return 0.25 + ((idx + 0.5) / siblings.length) * 0.50
+  }
+
   const getModerationAnchor = (path: CanvasPath): { x: number; y: number; iv: CanvasConstruct; moderator: CanvasConstruct; dv: CanvasConstruct } | null => {
     if (!path.targetPathId) return null
     const targetPath = pathById[path.targetPathId]
@@ -711,7 +730,14 @@ export default function PathDiagram({
     const dv = byId[targetPath.to]
     if (!iv || !moderator || !dv) return null
 
-    return { x: (iv.x + dv.x) / 2, y: (iv.y + dv.y) / 2, iv, moderator, dv }
+    const ratio = computePathDiagramModerationAnchorRatio(path)
+    return {
+      x: iv.x + (dv.x - iv.x) * ratio,
+      y: iv.y + (dv.y - iv.y) * ratio,
+      iv,
+      moderator,
+      dv,
+    }
   }
 
   const lookupModerationPathResult = (path: CanvasPath): PathResult | undefined => {

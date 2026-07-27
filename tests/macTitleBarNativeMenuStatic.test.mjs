@@ -18,7 +18,7 @@ const nativeMenuSource = electronMain.slice(
 
 assert.match(
   electronMain,
-  /Menu,\s*type MenuItemConstructorOptions/,
+  /Menu,[\s\S]*?type MenuItemConstructorOptions/,
   'Electron main should import native Menu support for macOS.'
 )
 

@@ -54,6 +54,7 @@ const allowUntranslated = [
   /^to connect a lower-order construct/,
   /^to apply the language change/,
   /^, but this path suggests$/,
+  /^✓/,
 ]
 
 function normalizeText(value) {

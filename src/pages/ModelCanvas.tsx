@@ -142,6 +142,7 @@ interface Path {
   to: string
   kind?: 'direct' | 'moderation'
   targetPathId?: string
+  anchorRatio?: number
   hocRole?: HocPathRole
   style?: 'straight' | 'curved' | 'rightangle'
   curvature?: number
@@ -1374,7 +1375,7 @@ export default function ModelCanvas({
   } | null>(null)
   const panStartRef = useRef<{ x: number, y: number, px: number, py: number } | null>(null)
   const dragPathRef = useRef<{ id: string, sx: number, sy: number, targetX: number, targetY: number } | null>(null)
-  const dragHandleRef = useRef<{ id: string, type: 'curvature' | 'joint', index?: number, sx: number, sy: number, startVal: any } | null>(null)
+  const dragHandleRef = useRef<{ id: string, type: 'curvature' | 'joint' | 'moderation-anchor', index?: number, sx: number, sy: number, startVal: any } | null>(null)
   const [activeHandleDrag, setActiveHandleDrag] = useState<{ id: string, type: 'curvature' | 'joint', index?: number, x: number, y: number } | null>(null)
   const lastVarClicked = useRef<string | null>(null)
 
@@ -1749,7 +1750,7 @@ export default function ModelCanvas({
             ...(existingState.analysisSettings || {}),
             ...(analysisSettings || {}),
           },
-          ...(analysisState ? { analysis: analysisState } : {}),
+          ...(analysisState ? { analysis: { ...analysisState, modelSnapshot: snapshot } } : {}),
           basePlsAnalysis: analysisState?.mode === 'pls-sem'
             ? {
                 results: analysisState.results,
@@ -3211,7 +3212,7 @@ export default function ModelCanvas({
         case 'run-bootstrap': if (!isAnyCalculationRunning) setShowBootstrapModal(true); break
         case 'run-pls-predict': if (!isAnyCalculationRunning) setShowPlsPredictModal(true); break
         case 'run-advanced-analysis':
-          if (canRunAdvancedAnalysis && !isAnyCalculationRunning) setShowAdvancedAnalysisModal(true)
+          if (!isAnyCalculationRunning) setShowAdvancedAnalysisModal(true)
           break
         case 'run-permutation-analysis':
           if (!isAnyCalculationRunning) setShowPermutationAnalysisModal(true)
@@ -4192,6 +4193,28 @@ export default function ModelCanvas({
           nextJoints[index] = { x: nextX, y: nextY }
           return { ...p, joints: nextJoints }
         }))
+      } else if (type === 'moderation-anchor') {
+        const modPath = paths.find(p => p.id === id)
+        if (modPath && modPath.targetPathId) {
+          const targetPath = paths.find(p => p.id === modPath.targetPathId)
+          if (targetPath) {
+            const fromConstruct = constructs.find(c => c.id === targetPath.from)
+            const toConstruct = constructs.find(c => c.id === targetPath.to)
+            if (fromConstruct && toConstruct && canvasRef.current) {
+              const segDx = toConstruct.x - fromConstruct.x
+              const segDy = toConstruct.y - fromConstruct.y
+              const lenSq = segDx * segDx + segDy * segDy
+              if (lenSq > 0) {
+                const rect = canvasRef.current.getBoundingClientRect()
+                const mouseX = (e.clientX - rect.left - panX) / (zoom / 100)
+                const mouseY = (e.clientY - rect.top - panY) / (zoom / 100)
+                const proj = ((mouseX - fromConstruct.x) * segDx + (mouseY - fromConstruct.y) * segDy) / lenSq
+                const nextRatio = Math.max(0.15, Math.min(0.85, Math.round(proj * 1000) / 1000))
+                setPaths(prev => prev.map(p => p.id === id ? { ...p, anchorRatio: nextRatio } : p))
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -4256,6 +4279,18 @@ export default function ModelCanvas({
             (p) => p.kind === 'moderation' && p.from === connectStart && p.targetPathId === targetPath.id,
           )
           if (!moderationExists) {
+            const fromConstruct = constructs.find((c) => c.id === targetPath.from)
+            const toConstruct = constructs.find((c) => c.id === targetPath.to)
+            let anchorRatio = 0.5
+            if (fromConstruct && toConstruct) {
+              const dx = toConstruct.x - fromConstruct.x
+              const dy = toConstruct.y - fromConstruct.y
+              const lenSq = dx * dx + dy * dy
+              if (lenSq > 0) {
+                const proj = ((connectEnd.x - fromConstruct.x) * dx + (connectEnd.y - fromConstruct.y) * dy) / lenSq
+                anchorRatio = Math.max(0.15, Math.min(0.85, Math.round(proj * 1000) / 1000))
+              }
+            }
             const id = `p-${Date.now()}`
             const moderationPath: Path = {
               id,
@@ -4263,6 +4298,7 @@ export default function ModelCanvas({
               to: targetPath.to,
               kind: 'moderation',
               targetPathId: targetPath.id,
+              anchorRatio,
             }
             const newP = [...paths, moderationPath]
             setPaths(newP)
@@ -4399,6 +4435,14 @@ export default function ModelCanvas({
     dragHandleRef.current = { id, type: 'joint', index, sx: e.clientX, sy: e.clientY, startVal: { ...p.joints[index] } }
   }
 
+  const onAnchorHandleMouseDown = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    const p = paths.find(x => x.id === id)
+    if (!p || p.kind !== 'moderation' || !p.targetPathId) return
+    const currentRatio = computeModerationAnchorRatio(p, paths)
+    dragHandleRef.current = { id, type: 'moderation-anchor', sx: e.clientX, sy: e.clientY, startVal: currentRatio }
+  }
+
   const findDirectPathAtPoint = useCallback((x: number, y: number, excludeFromId?: string): Path | null => {
     const HIT_THRESHOLD = 10
     let closestPath: Path | null = null
@@ -4423,6 +4467,29 @@ export default function ModelCanvas({
     return closestPath
   }, [paths, constructs])
 
+function computeModerationAnchorRatio(
+  path: Path,
+  allPaths: Path[],
+): number {
+  if (!path.targetPathId) return Math.max(0.15, Math.min(0.85, path.anchorRatio ?? 0.5))
+  const siblings = allPaths.filter(
+    (candidate) => candidate.kind === 'moderation' && candidate.targetPathId === path.targetPathId,
+  )
+  if (siblings.length <= 1) {
+    return Math.max(0.15, Math.min(0.85, path.anchorRatio ?? 0.5))
+  }
+  const hasExplicitRatios = siblings.every((s) => typeof s.anchorRatio === 'number')
+  if (hasExplicitRatios) {
+    const roundedSet = new Set(siblings.map((s) => Math.round((s.anchorRatio ?? 0.5) * 20)))
+    if (roundedSet.size === siblings.length && typeof path.anchorRatio === 'number') {
+      return Math.max(0.15, Math.min(0.85, path.anchorRatio))
+    }
+  }
+  const index = siblings.findIndex((s) => s.id === path.id)
+  const idx = index >= 0 ? index : 0
+  return 0.25 + ((idx + 0.5) / siblings.length) * 0.50
+}
+
   const getModerationAnchor = useCallback((path: Path): { x: number; y: number } | null => {
     const targetId = path.targetPathId
     if (targetId) {
@@ -4431,9 +4498,10 @@ export default function ModelCanvas({
         const fromConstruct = constructs.find((construct) => construct.id === targetPath.from)
         const toConstruct = constructs.find((construct) => construct.id === targetPath.to)
         if (fromConstruct && toConstruct) {
+          const ratio = computeModerationAnchorRatio(path, paths)
           return {
-            x: (fromConstruct.x + toConstruct.x) / 2,
-            y: (fromConstruct.y + toConstruct.y) / 2,
+            x: fromConstruct.x + (toConstruct.x - fromConstruct.x) * ratio,
+            y: fromConstruct.y + (toConstruct.y - fromConstruct.y) * ratio,
           }
         }
       }
@@ -4968,7 +5036,16 @@ export default function ModelCanvas({
                   />
 
                   {isModeration && anchor && (
-                    <circle cx={anchor.x} cy={anchor.y} r={4} fill={isPathSel ? C.secondary : 'var(--color-text-muted)'} style={{ pointerEvents: 'none' }} />
+                    <circle
+                      cx={anchor.x}
+                      cy={anchor.y}
+                      r={isPathSel ? 6 : 4}
+                      fill={isPathSel ? C.secondary : 'var(--color-text-muted)'}
+                      stroke={isPathSel ? '#111827' : undefined}
+                      strokeWidth={isPathSel ? 1.5 : undefined}
+                      onMouseDown={isPathSel ? (e) => onAnchorHandleMouseDown(e, p.id) : undefined}
+                      style={{ cursor: isPathSel ? 'move' : 'pointer' }}
+                    />
                   )}
 
                   {/* Reconfiguration handle */}

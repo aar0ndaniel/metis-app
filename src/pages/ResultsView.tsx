@@ -2076,7 +2076,23 @@ function buildPathDiagramSvg(
       const dv = targetPath ? byId[targetPath.to] : null
       if (!targetPath || targetPath.kind === 'moderation' || !moderator || !iv || !dv) return ''
 
-      const targetMid = { x: (iv.x + dv.x) / 2, y: (iv.y + dv.y) / 2 }
+      const computeExportModerationRatio = (modPath: CanvasPath): number => {
+        if (!modPath.targetPathId) return Math.max(0.15, Math.min(0.85, modPath.anchorRatio ?? 0.5))
+        const siblings = paths.filter((candidate) => candidate.kind === 'moderation' && candidate.targetPathId === modPath.targetPathId)
+        if (siblings.length <= 1) return Math.max(0.15, Math.min(0.85, modPath.anchorRatio ?? 0.5))
+        const hasExplicitRatios = siblings.every((s) => typeof s.anchorRatio === 'number')
+        if (hasExplicitRatios) {
+          const roundedSet = new Set(siblings.map((s) => Math.round((s.anchorRatio ?? 0.5) * 20)))
+          if (roundedSet.size === siblings.length && typeof modPath.anchorRatio === 'number') {
+            return Math.max(0.15, Math.min(0.85, modPath.anchorRatio))
+          }
+        }
+        const index = siblings.findIndex((s) => s.id === modPath.id)
+        const idx = index >= 0 ? index : 0
+        return 0.25 + ((idx + 0.5) / siblings.length) * 0.50
+      }
+      const modRatio = computeExportModerationRatio(p)
+      const targetMid = { x: iv.x + (dv.x - iv.x) * modRatio, y: iv.y + (dv.y - iv.y) * modRatio }
       const start = constructEdgePoint(moderator, targetMid.x, targetMid.y)
       const split = splitLineAtT(start.x, start.y, targetMid.x, targetMid.y, p.labelT)
       // Moderation labels use the IV*Moderator interaction coefficient returned by seminr.
@@ -2402,7 +2418,7 @@ interface CanvasConstruct {
   folded?: boolean
   isHigherOrder?: boolean
 }
-interface CanvasPath { id: string; from: string; to: string; kind?: 'direct' | 'moderation'; targetPathId?: string; hocRole?: HocPathRole; labelT?: number }
+interface CanvasPath { id: string; from: string; to: string; kind?: 'direct' | 'moderation'; targetPathId?: string; anchorRatio?: number; hocRole?: HocPathRole; labelT?: number }
 
 const METIS_STORAGE_PREFIX = 'metis:'
 const LEGACY_STORAGE_PREFIX = 'pls:'

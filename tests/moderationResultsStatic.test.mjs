@@ -35,7 +35,7 @@ assert.match(
 
 assert.match(
   resultsViewSource,
-  /selectedPanel === 'r-square'[\s\S]*moderationR2Rows/,
+  /effectiveSelectedPanel === 'r-square'[\s\S]*moderationR2Rows/,
   'R-square panel should receive moderation R2 change rows when interactions exist.'
 )
 

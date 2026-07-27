@@ -40,8 +40,17 @@ const IS_WINDOWS = PLATFORM === 'win32'
 const PATH_SEPARATOR = IS_WINDOWS ? '\\' : '/'
 const SETUP_VERB = IS_WINDOWS ? 'Install' : 'Set up'
 
+function getSystemSetupTheme(): SetupTheme {
+  if (typeof window === 'undefined' || !window.matchMedia) return 'Dark'
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'Light' : 'Dark'
+}
+
 function getInitialSetupTheme(): SetupTheme {
-  return 'Light'
+  try {
+    const savedTheme = localStorage.getItem(INSTALLER_PREF_THEME_KEY)
+    if (savedTheme === 'Light' || savedTheme === 'Dark') return savedTheme
+  } catch {}
+  return getSystemSetupTheme()
 }
 
 function applySetupTheme(theme: SetupTheme) {

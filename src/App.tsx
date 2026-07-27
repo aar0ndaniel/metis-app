@@ -13,6 +13,7 @@ import SetupWizard from './pages/SetupWizard'
 import TarkPreview from './pages/TarkPreview'
 import OnboardingTour from './components/OnboardingTour'
 import WhatsNewModal from './components/WhatsNewModal'
+import RateMetisModal, { type RateMetisSubmission } from './components/RateMetisModal'
 import PreferencesModal from './components/PreferencesModal'
 import LocalizationRuntime from './i18n/LocalizationRuntime'
 import TarkModal from './components/TarkModal'
@@ -306,12 +307,27 @@ function AppShell() {
   const [newWsOpen,      setNewWsOpen]      = useState(false)
   const [newModelOpen,   setNewModelOpen]   = useState(false)
   const [showWhatsNew,   setShowWhatsNew]   = useState(false)
+  const [showRateMetis,  setShowRateMetis]  = useState(false)
+  const [rateMetisSubmitting, setRateMetisSubmitting] = useState(false)
   const [showTour,       setShowTour]       = useState(false)
   const [tourStepId, setTourStepId] = useState<WalkthroughStepId>(() => readWalkthroughStep(localStorage))
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false)
   const [welcomeContext, setWelcomeContext] = useState<WelcomeContext | null>(null)
   const { toasts, toast: _toast } = useToast()  // global toast listener
   const [, setVisualPreferenceRevision] = useState(0)
+
+  useEffect(() => {
+    if (isInstallerPreview) return
+    const api = (window as any).electronAPI
+    if (!api?.markSuccessfulLaunch) return
+    api.markSuccessfulLaunch().then(() => {
+      if (api?.getFeedbackStatus) {
+        api.getFeedbackStatus().then((status: any) => {
+          if (status?.showModal) setShowRateMetis(true)
+        })
+      }
+    }).catch((err: any) => console.warn('[App] Feedback launch check error:', err))
+  }, [isInstallerPreview])
 
   // ── Workspace state — starts empty, loaded from disk on mount ───────────────
   const [workspaces,       setWorkspaces]       = useState<Workspace[]>([])
@@ -1497,6 +1513,26 @@ function AppShell() {
             </div>
           </div>
         </div>
+      )}
+
+      {showRateMetis && (
+        <RateMetisModal
+          theme={theme}
+          submitting={rateMetisSubmitting}
+          onCancel={async () => {
+            await (window as any).electronAPI?.declineFeedback?.()
+            setShowRateMetis(false)
+          }}
+          onSubmit={async (submission: RateMetisSubmission) => {
+            setRateMetisSubmitting(true)
+            try {
+              await (window as any).electronAPI?.submitFeedback?.(submission)
+            } finally {
+              setRateMetisSubmitting(false)
+              setShowRateMetis(false)
+            }
+          }}
+        />
       )}
 
       {newWsOpen && (

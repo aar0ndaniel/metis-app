@@ -97,3 +97,12 @@ export const Menu = {
   },
   setApplicationMenu() {}
 }
+
+export const net = {
+  isOnline() {
+    return true
+  },
+  async fetch(url, options) {
+    return { ok: true, status: 200, json: async () => ({ success: true }) }
+  }
+}
