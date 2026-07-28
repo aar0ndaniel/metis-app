@@ -170,6 +170,37 @@ await runTest('derived moderation rows expose interaction summaries, simple slop
       effect_size: 'Small',
     },
   ])
+
+  const isolatedAnalysisResults = {
+    ...analysisResults,
+    quality_criteria: {
+      ...analysisResults.quality_criteria,
+      r_square_change_isolated: [
+        {
+          iv: 'IV',
+          moderator: 'MOD',
+          outcome: 'DV',
+          interaction: 'IV*MOD',
+          r2_with: 0.57,
+          r2_without: 0.52,
+          delta_r2: 0.05,
+          f2: 0.11628,
+          effect_size: 'Small',
+        },
+      ],
+    },
+  }
+  assert.deepEqual(deriveModerationR2ChangeRows(savedModel, isolatedAnalysisResults), [
+    {
+      DV: 'DV',
+      Interaction: 'IV*MOD',
+      r2_with_interaction: 0.57,
+      r2_without_interaction: 0.52,
+      delta_r2: 0.05,
+      f2_interaction: 0.11628,
+      effect_size: 'Small',
+    },
+  ])
   assert.match(buildModerationSlopeChartSvg(savedModel, analysisResults), /<svg[\s\S]*Low \(-1 SD\)[\s\S]*Mean \(0\)[\s\S]*High \(\+1 SD\)/)
 
   const metadataLightModel = {
@@ -184,6 +215,61 @@ await runTest('derived moderation rows expose interaction summaries, simple slop
     { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Mean (0)', simple_slope: 0.467, interpretation: '0.467' },
     { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'High (+1 SD)', simple_slope: 0.396, interpretation: '0.467 + (-0.071)' },
   ])
+})
+
+await runTest('derived moderation rows match interaction terms with Interaction suffix from seminr', async () => {
+  const bundled = await bundleModule('src/results/panelDerivedData.ts', 'resultsModerationSuffix.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/results/panelDerivedData.ts to compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const { buildModerationSlopeChartSvg, deriveModerationSlopeRows, deriveModerationSummaryRows } = bundled.module ?? {}
+
+  const savedModel = {
+    constructs: [
+      { id: 'c-amot', name: 'Amotivation', indicators: [{ name: 'AMOT1' }] },
+      { id: 'c-ase', name: 'Academic Self-Efficacy', indicators: [{ name: 'ASE1' }] },
+      { id: 'c-ce', name: 'Cognitive Engagement', indicators: [{ name: 'CE1' }] },
+    ],
+    paths: [
+      { id: 'p-amot-ce', from: 'c-amot', to: 'c-ce', kind: 'direct' },
+      { id: 'p-ase-ce', from: 'c-ase', to: 'c-ce', kind: 'direct' },
+      { id: 'p-mod-amot-ase', from: 'c-ase', to: 'c-ce', kind: 'moderation', targetPathId: 'p-amot-ce' },
+    ],
+  }
+
+  // Real seminr output uses "Amotivation*Academic Self-EfficacyInteraction" in path_coefficients
+  const seminrResults = {
+    final_results: {
+      path_coefficients: [
+        { row_name: 'Amotivation -> Cognitive Engagement', coefficient: -0.25 },
+        { row_name: 'Academic Self-Efficacy -> Cognitive Engagement', coefficient: 0.35 },
+        { row_name: 'Amotivation*Academic Self-EfficacyInteraction -> Cognitive Engagement', coefficient: -0.145, 'T Stat.': 3.12, 'P Value': 0.002 },
+      ],
+    },
+    quality_criteria: {
+      f_square: [
+        { row_name: 'Amotivation*Academic Self-EfficacyInteraction', 'Cognitive Engagement': 0.045 },
+      ],
+    },
+  }
+
+  const summary = deriveModerationSummaryRows(savedModel, seminrResults)
+  assert.equal(summary.length, 1)
+  assert.equal(summary[0].beta_interaction, -0.145)
+  assert.equal(summary[0].t_stat, 3.12)
+  assert.equal(summary[0].p_value, 0.002)
+  assert.equal(summary[0].f2, 0.045)
+  assert.equal(summary[0].direction, 'Weakens Amotivation -> Cognitive Engagement as Academic Self-Efficacy increases')
+  assert.equal(summary[0].decision, 'Significant')
+
+  const slopeRows = deriveModerationSlopeRows(savedModel, seminrResults)
+  assert.equal(slopeRows.length, 3)
+  assert.equal(slopeRows[0].simple_slope, -0.105) // -0.25 - (-0.145) = -0.105
+  assert.equal(slopeRows[1].simple_slope, -0.25)
+  assert.equal(slopeRows[2].simple_slope, -0.395) // -0.25 + (-0.145) = -0.395
+
+  const svg = buildModerationSlopeChartSvg(savedModel, seminrResults)
+  assert.ok(svg.includes('<svg'), 'Expected SVG chart output')
+  assert.ok(svg.includes('Low (-1 SD)'), 'Expected Low SD label in chart')
 })
 
 await runTest('derived moderation bootstrap rows filter the interaction significance test', async () => {
@@ -374,6 +460,46 @@ await runTest('derived moderation slopes keep standard levels for multi-indicato
     { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'Mean (0)', simple_slope: 0.4, interpretation: '0.4' },
     { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'High (+1 SD)', simple_slope: 0.5, interpretation: '0.4 + (0.1)' },
   ])
+})
+
+await runTest('getPanelDataFromResults resolves derived data for moderation panels', async () => {
+  const bundled = await bundleModule('src/results/panelData.ts', 'panelDataModeration.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/results/panelData.ts to compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const { getPanelDataFromResults } = bundled.module ?? {}
+  const savedModel = {
+    constructs: [
+      { id: 'iv', name: 'Amotivation' },
+      { id: 'mod', name: 'Academic Self-Efficacy' },
+      { id: 'dv', name: 'Cognitive Engagement' },
+    ],
+    paths: [
+      { id: 'iv-dv', from: 'iv', to: 'dv', kind: 'direct' },
+      { id: 'mod-dv', from: 'mod', to: 'dv', kind: 'direct' },
+      { id: 'mod-moderates-iv-dv', from: 'mod', to: 'dv', kind: 'moderation', targetPathId: 'iv-dv' },
+    ],
+  }
+  const analysisResults = {
+    final_results: {
+      path_coefficients: [
+        { from: 'Amotivation', to: 'Cognitive Engagement', coefficient: -0.25 },
+        { from: 'Academic Self-Efficacy', to: 'Cognitive Engagement', coefficient: 0.35 },
+        { from: 'Amotivation*Academic Self-EfficacyInteraction', to: 'Cognitive Engagement', coefficient: -0.145 },
+      ],
+    },
+  }
+
+  const slopeRows = getPanelDataFromResults('pls-sem', 'moderation-slopes', analysisResults, { savedModel })
+  assert.ok(Array.isArray(slopeRows), 'Expected slopeRows to be an array')
+  assert.equal(slopeRows.length, 3, 'Expected 3 slope rows')
+
+  const chartRows = getPanelDataFromResults('pls-sem', 'moderation-slope-chart', analysisResults, { savedModel })
+  assert.ok(Array.isArray(chartRows), 'Expected chartRows to be an array for slope chart panel')
+  assert.equal(chartRows.length, 3, 'Expected 3 chart rows')
+
+  const summaryRows = getPanelDataFromResults('pls-sem', 'moderation-summary', analysisResults, { savedModel })
+  assert.ok(Array.isArray(summaryRows), 'Expected summaryRows to be an array')
+  assert.equal(summaryRows.length, 1, 'Expected 1 summary row')
 })
 
 if (process.exitCode && process.exitCode !== 0) {

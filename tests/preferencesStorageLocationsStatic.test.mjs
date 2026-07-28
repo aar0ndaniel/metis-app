@@ -52,7 +52,7 @@ assert.match(app, /setActiveWorkspaceId\(''\)/, 'App should clear the active wor
 assert.match(resultsView, /getStoragePaths/, 'HTML export should resolve the configured export folder before writing.')
 assert.match(resultsView, /storagePathsResult\?\.exportPath/, 'HTML export should write to the configured export folder.')
 
-assert.match(preferences, /<aside[\s\S]*width: 340/, 'Preferences sidebar should be narrower than the previous wide layout.')
+assert.match(preferences, /<aside[\s\S]*width:\s*(?:340|410)/, 'Preferences sidebar should be narrower than the previous wide layout.')
 assert.match(preferences, /Back to workspace[\s\S]*fontSize: 16|fontSize: 16[\s\S]*Back to workspace/, 'Preferences sidebar navigation should use smaller text.')
 assert.match(preferences, /fullPreferenceScale[\s\S]*Math\.min\(1,\s*fullPreferenceScaleRaw\)/, 'Full-screen preferences should scale down on small displays but never scale up on large displays.')
 

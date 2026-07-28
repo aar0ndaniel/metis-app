@@ -202,15 +202,26 @@ function buildPathStatsLookup(analysisResults: any): Map<string, PathStats> {
   return lookup
 }
 
+function cleanInteractionTerm(term: string): string {
+  return term
+    .replace(/[._\s]?interaction$/i, '')
+    .trim()
+}
+
 function parseInteractionSource(source: string): { iv: string; moderator: string } | null {
-  const text = String(source ?? '').trim()
+  let text = String(source ?? '').trim()
   if (!text) return null
+
+  text = text.replace(/[._\s]?interaction$/i, '').trim()
 
   const splitters = [/\*/, /×/, /\s+x\s+/i, /\s+by\s+/i, /:/]
   for (const splitter of splitters) {
     const parts = text.split(splitter).map((part) => part.trim()).filter(Boolean)
     if (parts.length === 2) {
-      return { iv: parts[0], moderator: parts[1] }
+      return {
+        iv: cleanInteractionTerm(parts[0]),
+        moderator: cleanInteractionTerm(parts[1]),
+      }
     }
   }
 
@@ -220,15 +231,22 @@ function parseInteractionSource(source: string): { iv: string; moderator: string
 function interactionSourceMatches(source: string, iv: string, moderator: string): boolean {
   const parsed = parseInteractionSource(source)
   if (parsed) {
-    return normalizedMetricMatches(parsed.iv, iv) && normalizedMetricMatches(parsed.moderator, moderator)
+    const directMatch = normalizedMetricMatches(parsed.iv, iv) && normalizedMetricMatches(parsed.moderator, moderator)
+    const swappedMatch = normalizedMetricMatches(parsed.iv, moderator) && normalizedMetricMatches(parsed.moderator, iv)
+    return directMatch || swappedMatch
   }
 
-  const normalizedSource = normalizeMetricKey(source)
+  const normalizedSource = normalizeMetricKey(source).replace(/interaction$/i, '')
   const normalizedIv = normalizeMetricKey(iv)
   const normalizedModerator = normalizeMetricKey(moderator)
   return normalizedSource === `${normalizedIv}${normalizedModerator}`
+    || normalizedSource === `${normalizedModerator}${normalizedIv}`
     || normalizedSource === `${normalizedIv}x${normalizedModerator}`
+    || normalizedSource === `${normalizedModerator}x${normalizedIv}`
     || normalizedSource === `${normalizedIv}by${normalizedModerator}`
+    || normalizedSource === `${normalizedModerator}by${normalizedIv}`
+    || normalizedSource === `${normalizedIv}_${normalizedModerator}`
+    || normalizedSource === `${normalizedModerator}_${normalizedIv}`
 }
 
 function interactionLabelMatches(candidate: string, interaction: string): boolean {
@@ -614,7 +632,7 @@ export function deriveModerationSlopeRows(savedModel: any, analysisResults: any)
   return rows
 }
 
-export function deriveModerationR2ChangeRows(savedModel: any, analysisResults: any): Array<Record<string, unknown>> {
+export function deriveModerationR2ChangeRowsJoint(savedModel: any, analysisResults: any): Array<Record<string, unknown>> {
   return getModerationInteractions(savedModel, analysisResults)
     .map((interaction) => {
       const r2With = readR2(analysisResults, interaction.dv)
@@ -633,6 +651,23 @@ export function deriveModerationR2ChangeRows(savedModel: any, analysisResults: a
       }
     })
     .filter((row) => row !== null) as Array<Record<string, unknown>>
+}
+
+export function deriveModerationR2ChangeRows(savedModel: any, analysisResults: any): Array<Record<string, unknown>> {
+  const isolatedRows = analysisResults?.quality_criteria?.r_square_change_isolated
+  if (Array.isArray(isolatedRows) && isolatedRows.length > 0) {
+    return isolatedRows.map((row: any) => ({
+      DV: row.outcome ?? row.dv ?? '',
+      Interaction: row.interaction ?? '',
+      r2_with_interaction: row.r2_with == null ? null : roundMetric(Number(row.r2_with)),
+      r2_without_interaction: row.r2_without == null ? null : roundMetric(Number(row.r2_without)),
+      delta_r2: row.delta_r2 == null ? null : roundMetric(Number(row.delta_r2)),
+      f2_interaction: row.f2 == null ? null : roundMetric(Number(row.f2)),
+      effect_size: row.effect_size ?? effectSizeLabel(row.f2 == null ? null : Number(row.f2)),
+    }))
+  }
+
+  return deriveModerationR2ChangeRowsJoint(savedModel, analysisResults)
 }
 
 export function deriveModerationBootstrapRows(savedModel: any, analysisResults: any): Array<Record<string, unknown>> {

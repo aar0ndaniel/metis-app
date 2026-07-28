@@ -1,4 +1,11 @@
 import { type AnalysisMode } from './panelCatalog'
+import {
+  buildModerationSlopeChartSvg,
+  deriveModerationBootstrapRows,
+  deriveModerationR2ChangeRows,
+  deriveModerationSlopeRows,
+  deriveModerationSummaryRows,
+} from './panelDerivedData'
 
 const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
   'pls-sem': {
@@ -1008,6 +1015,16 @@ export function getPanelDataFromResults(
   options: PanelDataOptions = {},
 ): any {
   const results = unwrapAnalysisResults(analysisResults)
+
+  if (mode === 'pls-sem') {
+    if (panelId === 'moderation-summary') return deriveModerationSummaryRows(options.savedModel, results)
+    if (panelId === 'moderation-slopes' || panelId === 'moderation-slope-chart') return deriveModerationSlopeRows(options.savedModel, results)
+    if (panelId === 'moderation-r2-change') return deriveModerationR2ChangeRows(options.savedModel, results)
+  }
+
+  if (mode === 'bootstrap') {
+    if (panelId === 'moderation-bootstrap') return deriveModerationBootstrapRows(options.savedModel, results)
+  }
 
   if (mode === 'permutation') {
     if (panelId === 'overview') return getPermutationOverview(results)

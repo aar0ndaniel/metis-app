@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // R/Plumber service
   plumberHealth: () => ipcRenderer.invoke('plumber:health'),
   runPls: (payload: any) => ipcRenderer.invoke('plumber:runPls', payload),
+  runIsolatedModerationR2: (payload: any) => ipcRenderer.invoke('plumber:runIsolatedModerationR2', payload),
   runBootstrap: (payload: any) => ipcRenderer.invoke('plumber:runBootstrap', payload),
   runPlsPredict: (payload: any) => ipcRenderer.invoke('plumber:runPlsPredict', payload),
   runAdvancedAnalysis: (payload: any) => ipcRenderer.invoke('plumber:runAdvancedAnalysis', payload),
@@ -95,52 +96,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   launchApp:      () => ipcRenderer.send('install:launch'),
   closeInstaller: () => ipcRenderer.send('install:close'),
 
-  // Workspace persistence
-  listWorkspaces:  ()       => ipcRenderer.invoke('workspace:list'),
-  openWorkspaceFile: (filePath: string) => ipcRenderer.invoke('workspace:openFile', filePath),
-  createWorkspace: (data: any) => ipcRenderer.invoke('workspace:create', data),
-  saveWorkspace:   (data: any) => ipcRenderer.invoke('workspace:save', data),
-  deleteWorkspace: (data: any) => ipcRenderer.invoke('workspace:delete', data),
-  deleteWorkspaceChild: (data: any) => ipcRenderer.invoke('workspace:deleteChild', data),
-
-  // R/Plumber service
-  plumberHealth: () => ipcRenderer.invoke('plumber:health'),
-  runPls: (payload: any) => ipcRenderer.invoke('plumber:runPls', payload),
-  runBootstrap: (payload: any) => ipcRenderer.invoke('plumber:runBootstrap', payload),
-  runPlsPredict: (payload: any) => ipcRenderer.invoke('plumber:runPlsPredict', payload),
-  runAdvancedAnalysis: (payload: any) => ipcRenderer.invoke('plumber:runAdvancedAnalysis', payload),
-  runPermutationAnalysis: (payload: any) => ipcRenderer.invoke('plumber:runPermutationAnalysis', payload),
-  runPermutationConfiguralPrecheck: (payload: any) => ipcRenderer.invoke('plumber:runPermutationConfiguralPrecheck', payload),
-  runMultiGroupAnalysis: (payload: any) => ipcRenderer.invoke('plumber:runMultiGroupAnalysis', payload),
-  onConfirmQuitDuringCalc: (cb: () => void) => {
-    const handler = () => cb()
-    ipcRenderer.on('confirm-quit-during-calc', handler)
-    return () => ipcRenderer.removeListener('confirm-quit-during-calc', handler)
-  },
-  quitConfirmed: () => ipcRenderer.invoke('quit-confirmed'),
-  quitCancelled: () => ipcRenderer.invoke('quit-cancelled'),
-
-  // Workspace: extract embedded dataset to a temp file for the R backend
-  extractDataset: (payload: string | { adaFilePath: string; datasetId?: string }) => ipcRenderer.invoke('workspace:extractDataset', payload),
-
-  // Workspace: listen for a workspace file opened via OS file association
-  onOpenFile: (cb: (filePath: string) => void) => {
-    const handler = (_: unknown, filePath: string) => cb(filePath)
-    ipcRenderer.on('workspace:openedViaFile', handler)
-    return () => ipcRenderer.removeListener('workspace:openedViaFile', handler)
-  },
-
-  // Diagnostics / crash feedback
-  reportRendererError: (payload: any) => ipcRenderer.invoke('app:reportRendererError', payload),
-
-  // Installer flow
-  getInstallDefaultPaths: () => ipcRenderer.invoke('install:getDefaultPaths'),
-  getExistingAppInstall: () => ipcRenderer.invoke('install:getExistingAppInstall'),
-  selectInstallDirectory: () => ipcRenderer.invoke('install:selectDirectory'),
-  runInstall: (rootPath: string, opts?: { createShortcut?: boolean }) =>
-    ipcRenderer.invoke('install:run', { rootPath, ...opts }),
-  launchApp:      () => ipcRenderer.send('install:launch'),
-  closeInstaller: () => ipcRenderer.send('install:close'),
   onInstallProgress: (cb: (data: { step: string; detail: string }) => void) => {
     const handler = (_: unknown, data: { step: string; detail: string }) => cb(data)
     ipcRenderer.on('install:progress', handler)

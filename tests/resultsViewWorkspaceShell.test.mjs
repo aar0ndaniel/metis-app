@@ -16,7 +16,7 @@ assert.doesNotMatch(resultsSource, /Generate AI Report/, 'Results toolbar should
 
 assert.match(
   resultsSource,
-  /<div className="metis-results-view h-full w-full flex flex-col overflow-hidden select-none"\s+style=\{\{ backgroundColor: 'var\(--color-sidebar-bg\)' \}\}/,
+  /<div (?:id="[^"]+"\s+)?className="metis-results-view h-full w-full flex flex-col overflow-hidden select-none"\s+style=\{\{ backgroundColor: 'var\(--color-sidebar-bg\)' \}\}/,
   'Results view shell should use the left sidebar background token.'
 )
 

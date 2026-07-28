@@ -15,11 +15,15 @@ const INSTALL_STEPS = [
 
 type InstallerPhase = 'options' | 'installing' | 'complete'
 type SetupTheme = 'Dark' | 'Light'
+type SetupLanguage = 'English' | 'Español' | 'Português' | 'Français'
 
 const THEME_OPTIONS = ['Light', 'Dark'] as const
+const LANGUAGE_OPTIONS = ['English', 'Español', 'Português', 'Français'] as const
 const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
 const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
+const METIS_PREF_LANGUAGE_KEY = 'metis:prefs:language'
+const LEGACY_PREF_LANGUAGE_KEY = 'pls:prefs:language'
 const FF = 'Matter, sans-serif'
 const DEFAULT_ROOT_PATH = ''
 const ACCENT_HEX = 'var(--color-accent)'
@@ -53,13 +57,54 @@ function getInitialSetupTheme(): SetupTheme {
   return getSystemSetupTheme()
 }
 
+function normalizeSetupLanguage(value: unknown): SetupLanguage | null {
+  const language = String(value ?? '').trim().toLowerCase()
+  if (language === 'english' || language.startsWith('en')) return 'English'
+  if (language === 'español' || language === 'spanish' || language.startsWith('es')) return 'Español'
+  if (language === 'português' || language === 'portuguese' || language.startsWith('pt')) return 'Português'
+  if (language === 'français' || language === 'french' || language.startsWith('fr')) return 'Français'
+  return null
+}
+
+function getSystemSetupLanguage(): SetupLanguage {
+  if (typeof navigator === 'undefined') return 'English'
+  const candidates = [
+    ...(Array.isArray(navigator.languages) ? navigator.languages : []),
+    navigator.language,
+  ]
+  for (const candidate of candidates) {
+    const language = normalizeSetupLanguage(candidate)
+    if (language) return language
+  }
+  return 'English'
+}
+
+function getInitialSetupLanguage(): SetupLanguage {
+  try {
+    const savedLanguage = localStorage.getItem(METIS_PREF_LANGUAGE_KEY) ?? localStorage.getItem(LEGACY_PREF_LANGUAGE_KEY)
+    const language = normalizeSetupLanguage(savedLanguage)
+    if (language) return language
+  } catch {}
+  return getSystemSetupLanguage()
+}
+
+function previewSetupTheme(theme: SetupTheme) {
+  document.documentElement.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
+  document.body.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
+  void (window as any).electronAPI?.setThemePreference?.(theme.toLowerCase())
+}
+
 function applySetupTheme(theme: SetupTheme) {
   localStorage.setItem(INSTALLER_PREF_THEME_KEY, theme)
   localStorage.setItem(METIS_PREF_THEME_KEY, theme)
   localStorage.setItem(LEGACY_PREF_THEME_KEY, theme)
-  document.documentElement.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
-  document.body.setAttribute('data-theme', theme === 'Light' ? 'light' : 'dark')
-  void (window as any).electronAPI?.setThemePreference?.(theme.toLowerCase())
+  previewSetupTheme(theme)
+  window.dispatchEvent(new CustomEvent('pls:preferences-updated'))
+}
+
+function applySetupLanguage(language: SetupLanguage) {
+  localStorage.setItem(METIS_PREF_LANGUAGE_KEY, language)
+  localStorage.setItem(LEGACY_PREF_LANGUAGE_KEY, language)
   window.dispatchEvent(new CustomEvent('pls:preferences-updated'))
 }
 
@@ -212,6 +257,68 @@ function AppearanceChoice({ theme, onThemeChange }: { theme: SetupTheme; onTheme
   )
 }
 
+function LanguageChoice({
+  selectedLanguage,
+  setSelectedLanguage,
+}: {
+  selectedLanguage: SetupLanguage
+  setSelectedLanguage: (language: SetupLanguage) => void
+}) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+        Language
+      </span>
+      <div
+        style={{
+          ...NO_DRAG_STYLE,
+          width: 'fit-content',
+          maxWidth: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 4,
+          padding: 4,
+          borderRadius: 10,
+          background: 'var(--color-elevated)',
+          border: `1px solid ${BORDER_SOFT}`,
+        }}
+      >
+        {LANGUAGE_OPTIONS.map((option) => {
+          const active = selectedLanguage === option
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setSelectedLanguage(option)}
+              aria-pressed={active}
+              style={{
+                height: 28,
+                minWidth: 78,
+                borderRadius: 7,
+                border: `1px solid ${active ? BORDER_SOFT : 'transparent'}`,
+                background: active ? 'var(--color-input)' : 'transparent',
+                color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
+                fontFamily: FF,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 7,
+                boxShadow: active ? '0 2px 6px rgb(15 18 25 / 0.06)' : 'none',
+              }}
+            >
+              {option}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function InstallerPreview() {
   const navigate = useNavigate()
   const api = (window as any).electronAPI
@@ -227,9 +334,14 @@ export default function InstallerPreview() {
   const [installError, setInstallError] = useState('')
   const [isBrowsing, setIsBrowsing] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState<SetupTheme>(() => getInitialSetupTheme())
+  const [selectedLanguage, setSelectedLanguage] = useState<SetupLanguage>(() => getInitialSetupLanguage())
   const [mockTelemetryConsent, setMockTelemetryConsent] = useState<'pending' | 'accepted' | 'declined'>('pending')
   const logoSrc = selectedTheme === 'Light' ? logoBlack : logoWhite
   const brand = displayBrandName()
+
+  useEffect(() => {
+    applySetupLanguage(selectedLanguage)
+  }, [selectedLanguage])
 
   const displayPath = rootPath.trim()
     ? `${rootPath.trim().replace(/[\\/]+$/, '')}${PATH_SEPARATOR}metis`
@@ -241,8 +353,13 @@ export default function InstallerPreview() {
     }).catch(() => {})
   }, [])
 
+  const handleThemeChange = (theme: SetupTheme) => {
+    setSelectedTheme(theme)
+    applySetupTheme(theme)
+  }
+
   useEffect(() => {
-    applySetupTheme(selectedTheme)
+    previewSetupTheme(selectedTheme)
   }, [selectedTheme])
 
   useEffect(() => {
@@ -298,7 +415,6 @@ export default function InstallerPreview() {
   }
 
   const handleInstall = async () => {
-    applySetupTheme(selectedTheme)
     setInstallError('')
     if (!rootPath.trim()) {
       setInstallError('Choose an install location.')
@@ -547,7 +663,8 @@ export default function InstallerPreview() {
         </label>
         )}
 
-        <AppearanceChoice theme={selectedTheme} onThemeChange={setSelectedTheme} />
+        <AppearanceChoice theme={selectedTheme} onThemeChange={handleThemeChange} />
+        <LanguageChoice selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} />
       </div>
     )
   }

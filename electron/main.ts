@@ -4307,6 +4307,14 @@ ipcMain.handle('plumber:runPls', async (_, payload: any) => {
   }
 })
 
+ipcMain.handle('plumber:runIsolatedModerationR2', async (_, payload: any) => {
+  try {
+    return await postToPlumber('/run-isolated-moderation-r2', payload)
+  } catch (err: any) {
+    return plumberBridgeExceptionResponse(err, 'isolated moderation R2 change')
+  }
+})
+
 ipcMain.handle('plumber:runBootstrap', async (_, payload: any) => {
   try {
     return await postToPlumber('/run-bootstrap', payload)
@@ -4825,6 +4833,7 @@ interface TelemetryStoreState {
   installationId: string
   optInInstallationSent: boolean
   firstLaunchMarked: boolean
+  successfulLaunchCount: number
   feedbackSubmitted: boolean
   feedbackDeclined: boolean
   outbox: TelemetryEventItem[]
@@ -4844,6 +4853,7 @@ function loadTelemetryStore(): TelemetryStoreState {
         installationId: data.installationId || randomBytes(16).toString('hex'),
         optInInstallationSent: !!data.optInInstallationSent,
         firstLaunchMarked: !!data.firstLaunchMarked,
+        successfulLaunchCount: typeof data.successfulLaunchCount === 'number' ? data.successfulLaunchCount : (data.firstLaunchMarked ? 1 : 0),
         feedbackSubmitted: !!data.feedbackSubmitted,
         feedbackDeclined: !!data.feedbackDeclined,
         outbox: Array.isArray(data.outbox) ? data.outbox : [],
@@ -4856,6 +4866,7 @@ function loadTelemetryStore(): TelemetryStoreState {
     installationId: randomBytes(16).toString('hex'),
     optInInstallationSent: false,
     firstLaunchMarked: false,
+    successfulLaunchCount: 0,
     feedbackSubmitted: false,
     feedbackDeclined: false,
     outbox: [],
@@ -4922,15 +4933,23 @@ ipcMain.handle('telemetry:set-consent', async (_, consent: boolean) => {
 
 ipcMain.handle('feedback:get-status', async () => {
   const state = loadTelemetryStore()
-  const showModal = state.firstLaunchMarked && !state.feedbackSubmitted && !state.feedbackDeclined
-  return { showModal, installationId: state.installationId, submitted: state.feedbackSubmitted, declined: state.feedbackDeclined }
+  const launchCount = state.successfulLaunchCount || (state.firstLaunchMarked ? 1 : 0)
+  const showModal = launchCount >= 5 && !state.feedbackSubmitted && !state.feedbackDeclined
+  return {
+    showModal,
+    launchCount,
+    installationId: state.installationId,
+    submitted: state.feedbackSubmitted,
+    declined: state.feedbackDeclined,
+  }
 })
 
 ipcMain.handle('feedback:mark-launch-success', async () => {
   const state = loadTelemetryStore()
   state.firstLaunchMarked = true
+  state.successfulLaunchCount = (state.successfulLaunchCount || 0) + 1
   saveTelemetryStore(state)
-  return { success: true, installationId: state.installationId }
+  return { success: true, installationId: state.installationId, launchCount: state.successfulLaunchCount }
 })
 
 ipcMain.handle('feedback:submit', async (_, payload: { rating: number; feeling: string; comment?: string }) => {

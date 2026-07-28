@@ -4,6 +4,34 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-07-28 - Isolated per-moderator R² Change table & Moderation Slope Plot Fixes
+
+### User Request
+- Implement isolated per-moderator $R^2$ Change calculation to solve collinearity dilution when multiple interaction terms share the same DV.
+- Ensure Table 1 ("R² Change") shows true incremental $R^2$ and $f^2$ by comparing main-effects-only baseline against single-interaction models in isolation.
+- Fix missing interaction path statistics ($\beta$, simple slopes table, and simple slope plot SVG) caused by `seminr` adding `Interaction` suffixes to construct names.
+- Update project documentation, landing page / docs.
+
+### Implemented
+- **Backend (`r-api/plumber.R`)**:
+  - `strip_all_interactions(payload)`: Strips all interaction terms and structural interaction paths while preserving IV main effects and moderator direct paths.
+  - `isolate_single_interaction(payload, target_interaction)`: Isolates interaction $i$ and filters sibling interaction paths.
+  - `compute_isolated_moderation_r2(payload, data, timings)`: Fits 1 baseline model + 1 model per interaction term in isolation. Computes isolated $\Delta R^2_i = R^2_{\text{with}_i} - R^2_{\text{without}}$ and $f^2_i = \frac{\Delta R^2_i}{1 - R^2_{\text{with}_i}}$ with defensive `tryCatch` wrappers.
+  - Exposed `quality_criteria.r_square_change_isolated` in standard `/run-pls` model fits and created dedicated endpoint `POST /run-isolated-moderation-r2`.
+  - `extract_path_results`: Updated to extract both direct input paths AND any non-zero interaction path coefficients from `model$path_coef`, ensuring `final_results.path_coefficients` contains interaction paths so simple slope calculation and slope plot rendering execute properly without false stale-result empty states.
+- **Frontend API Bridge (`src/services/plsApi.ts`, `electron/preload.ts`, `electron/main.ts`)**:
+  - Added `runIsolatedModerationR2` API client function and wired Electron IPC handler `plumber:runIsolatedModerationR2`.
+- **Frontend Derived Data & Panel Routing Fix (`src/results/panelDerivedData.ts`, `src/results/panelData.ts`)**:
+  - Updated `getPanelDataFromResults` in `src/results/panelData.ts` to route derived panel IDs (`moderation-slopes`, `moderation-slope-chart`, `moderation-summary`, `moderation-r2-change`, `moderation-bootstrap`) directly to `panelDerivedData.ts` generators, ensuring `panelRows` is non-empty and `ModerationSlopeChartPanel` renders both the SVG chart and slope data table cleanly.
+  - Updated `deriveModerationR2ChangeRows` to read directly from `analysisResults.quality_criteria.r_square_change_isolated` while preserving `deriveModerationR2ChangeRowsJoint` as legacy fallback.
+  - Updated `parseInteractionSource` and `interactionSourceMatches` to clean and strip `[._\s]?interaction` suffixes from `seminr` construct names and support term order swapping (e.g. `IV*MOD` vs `MOD*IV`).
+  - Restored missing interaction $\beta$ path coefficients, direction text, simple slope table rows (`deriveModerationSlopeRows`), and SVG moderation slope chart rendering (`buildModerationSlopeChartSvg`).
+
+### Verification
+- Passed: `node tests/resultsDerivedData.test.mjs` (7/7 tests green).
+- Passed: `node tests/test_all_moderation.mjs`.
+- Passed: `npm run typecheck` (0 errors).
+
 ## 2026-07-22 - Tark native Word-report workflow
 
 ### User Request

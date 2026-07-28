@@ -261,6 +261,21 @@ export async function runPlsModel(payload: RunPlsRequest): Promise<RunPlsRespons
   return postToLocalPlumber('/run-pls', payload)
 }
 
+export async function runIsolatedModerationR2(payload: RunPlsRequest): Promise<GenericAnalysisResponse> {
+  const api = (window as any).electronAPI
+  if (api?.runIsolatedModerationR2) {
+    return api.runIsolatedModerationR2(payload)
+  }
+
+  const availableKeys = api ? Object.keys(api).join(', ') : 'none'
+  if (isElectronRuntime()) {
+    console.error('[plsApi] Isolated Moderation R2 bridge unavailable in Electron runtime. Available keys:', availableKeys)
+    return bridgeMissingResponse('runIsolatedModerationR2', availableKeys)
+  }
+
+  return postToLocalPlumber('/run-isolated-moderation-r2', payload)
+}
+
 export async function runBootstrapModel(payload: RunBootstrapRequest): Promise<GenericAnalysisResponse> {
   const api = (window as any).electronAPI
   if (api?.runBootstrap) {

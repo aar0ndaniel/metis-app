@@ -824,7 +824,7 @@ assert.match(
 )
 assert.match(
   modelCanvasSource,
-  /analysis:\s*analysisState\s*\?[\s\S]*\.\.\.analysisState[\s\S]*modelSnapshot:\s*snapshot/,
+  /(?:analysis:\s*analysisState\s*\?|analysisState\s*\?\s*\{\s*analysis:)[\s\S]*\.\.\.analysisState[\s\S]*modelSnapshot:\s*snapshot/,
   'ModelCanvas should persist the analysis-time model snapshot inside saved analysis state.',
 )
 

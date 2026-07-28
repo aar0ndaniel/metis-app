@@ -19,32 +19,32 @@ max_predict_repetitions <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PRE
 max_cvpat_bootstrap_samples <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_CVPAT_BOOTSTRAP_SAMPLES", "500")))
 max_analysis_cores <- suppressWarnings(as.integer(Sys.getenv("METIS_ANALYSIS_CORES", "")))
 max_cached_pls_cores <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PLS_CORE_CACHE_ENTRIES", "2")))
-
-read_timeout_seconds <- function(env_name, default_value) {
-  value <- suppressWarnings(as.numeric(Sys.getenv(env_name, as.character(default_value))))
-  if (is.na(value) || value < 1) default_value else value
-}
-
-analysis_timeout_seconds <- read_timeout_seconds("METIS_ANALYSIS_TIMEOUT_SECONDS", 180)
-bootstrap_timeout_seconds <- read_timeout_seconds("METIS_BOOTSTRAP_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
-plspredict_timeout_seconds <- read_timeout_seconds("METIS_PLSPREDICT_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
-advanced_analysis_timeout_seconds <- read_timeout_seconds("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
-permutation_analysis_timeout_seconds <- read_timeout_seconds("METIS_PERMUTATION_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
-multi_group_analysis_timeout_seconds <- read_timeout_seconds("METIS_MULTI_GROUP_ANALYSIS_TIMEOUT_SECONDS", max(bootstrap_timeout_seconds, 900))
-
-if (is.na(max_dataset_bytes) || max_dataset_bytes <= 0) max_dataset_bytes <- 209715200
-if (is.na(max_dataset_rows) || max_dataset_rows < 1L) max_dataset_rows <- 100000L
-if (is.na(max_dataset_cols) || max_dataset_cols < 1L) max_dataset_cols <- 500L
-if (is.na(max_constructs) || max_constructs < 1L) max_constructs <- 200L
-if (is.na(max_paths) || max_paths < 1L) max_paths <- 1000L
-if (is.na(max_interactions) || max_interactions < 0L) max_interactions <- 200L
-if (is.na(max_indicators_per_construct) || max_indicators_per_construct < 1L) max_indicators_per_construct <- 200L
-if (!is.na(max_bootstrap_samples) && max_bootstrap_samples < 50L) max_bootstrap_samples <- NA_integer_
-if (!is.na(max_nca_run_depth) && max_nca_run_depth < 10L) max_nca_run_depth <- NA_integer_
-if (is.na(max_predict_folds) || max_predict_folds < 2L) max_predict_folds <- 20L
-if (is.na(max_predict_repetitions) || max_predict_repetitions < 1L) max_predict_repetitions <- 50L
-if (is.na(max_cvpat_bootstrap_samples) || max_cvpat_bootstrap_samples < 50L) max_cvpat_bootstrap_samples <- 500L
-if (is.na(max_cached_pls_cores) || max_cached_pls_cores < 0L) max_cached_pls_cores <- 8L
+ 
+ read_timeout_seconds <- function(env_name, default_value) {
+   value <- suppressWarnings(as.numeric(Sys.getenv(env_name, as.character(default_value))))
+   if (is.na(value) || value < 1) default_value else value
+ }
+ 
+ analysis_timeout_seconds <- read_timeout_seconds("METIS_ANALYSIS_TIMEOUT_SECONDS", 180)
+ bootstrap_timeout_seconds <- read_timeout_seconds("METIS_BOOTSTRAP_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
+ plspredict_timeout_seconds <- read_timeout_seconds("METIS_PLSPREDICT_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
+ advanced_analysis_timeout_seconds <- read_timeout_seconds("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
+ permutation_analysis_timeout_seconds <- read_timeout_seconds("METIS_PERMUTATION_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
+ multi_group_analysis_timeout_seconds <- read_timeout_seconds("METIS_MULTI_GROUP_ANALYSIS_TIMEOUT_SECONDS", max(bootstrap_timeout_seconds, 900))
+ 
+ if (is.na(max_dataset_bytes) || max_dataset_bytes <= 0) max_dataset_bytes <- 209715200
+ if (is.na(max_dataset_rows) || max_dataset_rows < 1L) max_dataset_rows <- 100000L
+ if (is.na(max_dataset_cols) || max_dataset_cols < 1L) max_dataset_cols <- 500L
+ if (is.na(max_constructs) || max_constructs < 1L) max_constructs <- 200L
+ if (is.na(max_paths) || max_paths < 1L) max_paths <- 1000L
+ if (is.na(max_interactions) || max_interactions < 0L) max_interactions <- 200L
+ if (is.na(max_indicators_per_construct) || max_indicators_per_construct < 1L) max_indicators_per_construct <- 200L
+ if (!is.na(max_bootstrap_samples) && max_bootstrap_samples < 50L) max_bootstrap_samples <- NA_integer_
+ if (!is.na(max_nca_run_depth) && max_nca_run_depth < 10L) max_nca_run_depth <- NA_integer_
+ if (is.na(max_predict_folds) || max_predict_folds < 2L) max_predict_folds <- 20L
+ if (is.na(max_predict_repetitions) || max_predict_repetitions < 1L) max_predict_repetitions <- 50L
+ if (is.na(max_cvpat_bootstrap_samples) || max_cvpat_bootstrap_samples < 50L) max_cvpat_bootstrap_samples <- 500L
+ if (is.na(max_cached_pls_cores) || max_cached_pls_cores < 0L) max_cached_pls_cores <- 16L
 
 # Redefine fSquared in the seminr namespace safely to avoid subscript out of bounds errors
 # during summary calculation for models with interaction terms when main effects are missing/removed.
@@ -1606,24 +1606,45 @@ build_structural <- function(paths_payload) {
 
 extract_path_results <- function(model, input_paths) {
   path_matrix <- model$path_coef
-  lapply(input_paths, function(p) {
-    from <- as.character(p$from)
-    to <- as.character(p$to)
+  results <- list()
+  already_covered <- character(0)
 
-    coef <- NA_real_
-    if (!is.null(path_matrix)) {
-      # seminr::estimate_pls stores path coefficients as rows = source, cols = target.
+  if (!is.null(path_matrix)) {
+    for (p in input_paths %||% list()) {
+      from <- as.character(p$from)
+      to <- as.character(p$to)
+      coef <- NA_real_
+
       if (from %in% rownames(path_matrix) && to %in% colnames(path_matrix)) {
         coef <- safe_num(path_matrix[from, to])
       }
       if ((is.null(coef) || is.na(coef)) && to %in% rownames(path_matrix) && from %in% colnames(path_matrix)) {
         coef <- safe_num(path_matrix[to, from])
       }
-    }
-    if (is.null(coef) || is.na(coef)) coef <- NULL
+      if (is.null(coef) || is.na(coef)) coef <- NULL
 
-    list(from = from, to = to, coefficient = coef)
-  })
+      results[[length(results) + 1L]] <- list(from = from, to = to, coefficient = coef)
+      already_covered <- c(already_covered, paste0(from, ":::", to))
+    }
+
+    row_names <- rownames(path_matrix) %||% character()
+    col_names <- colnames(path_matrix) %||% character()
+
+    for (r_name in row_names) {
+      for (c_name in col_names) {
+        val <- safe_num(path_matrix[r_name, c_name])
+        if (!is.null(val) && !is.na(val) && val != 0) {
+          key <- paste0(r_name, ":::", c_name)
+          if (!(key %in% already_covered)) {
+            already_covered <- c(already_covered, key)
+            results[[length(results) + 1L]] <- list(from = r_name, to = c_name, coefficient = val)
+          }
+        }
+      }
+    }
+  }
+
+  results
 }
 
 has_meaningful_vif_predictor_names <- function(rows) {
@@ -1888,6 +1909,150 @@ ensure_moderator_main_effects <- function(paths_payload, interactions_payload) {
   }
   c(paths_payload, extra)
 }
+
+# --- Isolated per-moderator R² Change helpers --------------------------------
+# These helpers produce per-interaction delta-R² and f² values by fitting
+# separate models: one baseline (main effects only) and one per interaction
+# (baseline + that single interaction term). This avoids the collinearity
+# dilution that occurs when multiple correlated interaction terms share the
+# same DV in a joint model.
+
+strip_all_interactions <- function(payload) {
+  interaction_path_froms <- character(0)
+  for (interaction in payload$interactions %||% list()) {
+    iv <- as.character(interaction$iv %||% "")
+    moderator <- as.character(interaction$moderator %||% "")
+    if (nzchar(iv) && nzchar(moderator)) {
+      interaction_path_froms <- c(interaction_path_froms, paste0(iv, "*", moderator))
+    }
+  }
+
+  filtered_paths <- Filter(function(p) {
+    from <- as.character(p$from %||% "")
+    !(from %in% interaction_path_froms)
+  }, payload$paths %||% list())
+
+  result <- payload
+  result$interactions <- list()
+  result$paths <- filtered_paths
+  result
+}
+
+isolate_single_interaction <- function(payload, target_interaction) {
+  target_iv <- as.character(target_interaction$iv %||% "")
+  target_mod <- as.character(target_interaction$moderator %||% "")
+  target_from <- paste0(target_iv, "*", target_mod)
+
+  other_interaction_froms <- character(0)
+  for (interaction in payload$interactions %||% list()) {
+    iv <- as.character(interaction$iv %||% "")
+    moderator <- as.character(interaction$moderator %||% "")
+    candidate_from <- paste0(iv, "*", moderator)
+    if (candidate_from != target_from && nzchar(iv) && nzchar(moderator)) {
+      other_interaction_froms <- c(other_interaction_froms, candidate_from)
+    }
+  }
+
+  filtered_paths <- Filter(function(p) {
+    from <- as.character(p$from %||% "")
+    !(from %in% other_interaction_froms)
+  }, payload$paths %||% list())
+
+  result <- payload
+  result$interactions <- list(target_interaction)
+  result$paths <- filtered_paths
+  result
+}
+
+effect_size_label <- function(f2) {
+  if (is.null(f2) || !is.finite(f2)) return("Not available")
+  if (f2 >= 0.35) return("Large")
+  if (f2 >= 0.15) return("Medium")
+  if (f2 >= 0.02) return("Small")
+  "Negligible"
+}
+
+compute_isolated_moderation_r2 <- function(payload, data, timings) {
+  interactions <- payload$interactions %||% list()
+  if (!length(interactions)) return(list())
+
+  # 1. Baseline fit (main effects only, zero interactions)
+  baseline_payload <- strip_all_interactions(payload)
+  baseline_core <- timed_or_direct(timings, "isolated baseline pls core", {
+    tryCatch(
+      get_cached_pls_core(baseline_payload, data),
+      error = function(e) NULL
+    )
+  })
+  if (is.null(baseline_core)) return(list())
+
+  baseline_r2_list <- extract_r2_results(
+    baseline_core$summary, payload$constructs, baseline_payload$paths, data
+  )
+  r2_baseline_by_dv <- list()
+  for (entry in baseline_r2_list) {
+    if (!is.null(entry$r2) && is.finite(entry$r2)) {
+      r2_baseline_by_dv[[entry$construct]] <- entry$r2
+    }
+  }
+
+  # 2. One fit per interaction
+  rows <- list()
+  for (interaction in interactions) {
+    iv <- as.character(interaction$iv %||% "")
+    moderator <- as.character(interaction$moderator %||% "")
+    outcome <- as.character(interaction$outcome %||% "")
+    if (!nzchar(iv) || !nzchar(moderator) || !nzchar(outcome)) next
+
+    interaction_label <- paste0(iv, "*", moderator)
+    phase_label <- paste0("isolated fit: ", interaction_label, " -> ", outcome)
+
+    iso_payload <- isolate_single_interaction(payload, interaction)
+    iso_core <- timed_or_direct(timings, phase_label, {
+      tryCatch({
+        get_cached_pls_core(iso_payload, data)
+      }, error = function(e) NULL)
+    })
+
+    r2_with <- NA_real_
+    if (!is.null(iso_core)) {
+      iso_r2_list <- extract_r2_results(
+        iso_core$summary, payload$constructs, iso_payload$paths, data
+      )
+      for (entry in iso_r2_list) {
+        if (identical(entry$construct, outcome) && !is.null(entry$r2) && is.finite(entry$r2)) {
+          r2_with <- entry$r2
+          break
+        }
+      }
+    }
+
+    r2_without <- r2_baseline_by_dv[[outcome]] %||% NA_real_
+
+    if (is.finite(r2_with) && is.finite(r2_without)) {
+      delta_r2 <- r2_with - r2_without
+      f2 <- if (r2_with < 1) delta_r2 / (1 - r2_with) else NA_real_
+    } else {
+      delta_r2 <- NA_real_
+      f2 <- NA_real_
+    }
+
+    rows[[length(rows) + 1L]] <- list(
+      iv = iv,
+      moderator = moderator,
+      outcome = outcome,
+      interaction = interaction_label,
+      r2_with = if (is.finite(r2_with)) r2_with else NULL,
+      r2_without = if (is.finite(r2_without)) r2_without else NULL,
+      delta_r2 = if (is.finite(delta_r2)) delta_r2 else NULL,
+      f2 = if (is.finite(f2)) f2 else NULL,
+      effect_size = effect_size_label(f2)
+    )
+  }
+
+  rows
+}
+# --- End isolated per-moderator R² Change helpers ----------------------------
 
 has_higher_order_construct <- function(payload) {
   constructs <- payload$constructs %||% list()
@@ -2638,8 +2803,11 @@ extract_quality_criteria <- function(payload, data, core) {
     error = function(e) list()
   )
 
+  isolated_r2 <- compute_isolated_moderation_r2(payload, data, NULL)
+
   list(
     r_square = extract_r2_results(summary_obj, payload$constructs, payload$paths, data),
+    r_square_change_isolated = isolated_r2,
     f_square = as_rows(summary_obj$fSquare),
     reliability = as_rows(summary_obj$reliability),
     discriminant_validity = extract_discriminant_validity(summary_obj),
@@ -5282,6 +5450,25 @@ pr$handle("POST", "/run-bootstrap", function(req, res) {
   }, error = function(err) {
     res$status <- 500
     analysis_error_response(err, "Bootstrap analysis", bootstrap_timeout_seconds)
+  })
+})
+
+pr$handle("POST", "/run-isolated-moderation-r2", function(req, res) {
+  res$setHeader("Content-Type", "application/json")
+
+  tryCatch({
+    with_analysis_timeout_for({
+      timings <- new_timing_collector("isolated_moderation_r2")
+      prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
+      payload <- prepared$payload
+      data <- prepared$data
+      rows <- time_phase(timings, "compute isolated moderation r2", compute_isolated_moderation_r2(payload, data, timings = timings))
+      response <- list(success = TRUE, results = list(r_square_change_isolated = rows))
+      attach_timing_metadata(response, timings)
+    }, analysis_timeout_seconds)
+  }, error = function(err) {
+    res$status <- 500
+    analysis_error_response(err, "Isolated moderation R2 change", analysis_timeout_seconds)
   })
 })
 
