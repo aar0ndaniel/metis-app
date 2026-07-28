@@ -1,8 +1,10 @@
 import {
   ArrowClockwise,
+  CaretDown,
   Check,
   Copy,
   FolderOpen,
+  Globe,
   Info,
   Moon,
   Package,
@@ -367,55 +369,120 @@ function LanguageChoice({
   selectedLanguage: SetupLanguage
   setSelectedLanguage: (language: SetupLanguage) => void
 }) {
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClickOutside)
+    return () => window.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
         Language
       </span>
-      <div
-        style={{
-          ...NO_DRAG_STYLE,
-          width: 'fit-content',
-          maxWidth: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 4,
-          padding: 4,
-          borderRadius: 10,
-          background: 'var(--color-elevated)',
-          border: `1px solid ${BORDER_SOFT}`,
-        }}
-      >
-        {LANGUAGE_OPTIONS.map((option) => {
-          const active = selectedLanguage === option
-          return (
-            <button
-              key={option}
-              type="button"
-              onClick={() => setSelectedLanguage(option)}
-              aria-pressed={active}
-              style={{
-                height: 28,
-                minWidth: 78,
-                borderRadius: 7,
-                border: `1px solid ${active ? BORDER_SOFT : 'transparent'}`,
-                background: active ? 'var(--color-input)' : 'transparent',
-                color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
-                fontFamily: FF,
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: active ? '0 2px 6px rgb(15 18 25 / 0.06)' : 'none',
-              }}
-            >
-              {option}
-            </button>
-          )
-        })}
+      <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          style={{
+            ...NO_DRAG_STYLE,
+            height: 36,
+            minWidth: 140,
+            padding: '0 12px',
+            borderRadius: 8,
+            background: 'var(--color-input)',
+            border: `1px solid ${BORDER_STRONG}`,
+            color: TEXT_PRIMARY,
+            fontFamily: FF,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Globe size={14} color={TEXT_SECONDARY} />
+            <span>{selectedLanguage}</span>
+          </div>
+          <CaretDown
+            size={12}
+            color={TEXT_SECONDARY}
+            style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 150ms' }}
+          />
+        </button>
+
+        {open && (
+          <div
+            role="listbox"
+            style={{
+              ...NO_DRAG_STYLE,
+              position: 'absolute',
+              top: '100%',
+              marginTop: 4,
+              left: 0,
+              width: '100%',
+              minWidth: 140,
+              borderRadius: 8,
+              background: 'var(--color-elevated)',
+              border: `1px solid ${BORDER_SOFT}`,
+              padding: 4,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              boxShadow: '0 8px 20px rgba(0,0,0,0.22)',
+              zIndex: 50,
+            }}
+          >
+            {LANGUAGE_OPTIONS.map((option) => {
+              const active = selectedLanguage === option
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => {
+                    setSelectedLanguage(option)
+                    setOpen(false)
+                  }}
+                  style={{
+                    height: 28,
+                    padding: '0 8px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: active ? 'var(--color-input)' : 'transparent',
+                    color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
+                    fontFamily: FF,
+                    fontSize: 12,
+                    fontWeight: active ? 700 : 500,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span>{option}</span>
+                  {active && <Check size={12} color={ACCENT_HEX} weight="bold" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -765,7 +832,7 @@ export default function SetupWizard() {
   const renderOptions = () => (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, flex: 1 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
           Workspace folder
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -826,8 +893,10 @@ export default function SetupWizard() {
         )}
       </div>
 
-      <AppearanceChoice theme={selectedTheme} onThemeChange={handleThemeChange} />
-      <LanguageChoice selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} />
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+        <AppearanceChoice theme={selectedTheme} onThemeChange={handleThemeChange} />
+        <LanguageChoice selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} />
+      </div>
     </div>
   )
 
@@ -1073,26 +1142,16 @@ export default function SetupWizard() {
   }
 
   const renderComplete = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, flex: 1 }}>
-      <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-          <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>R Runtime</span>
-          <Check size={15} color={ACCENT_HEX} weight="bold" />
-        </div>
-        <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, lineHeight: 1.45, wordBreak: 'break-all' }}>
-          {rPath || rPathRef.current}
-        </span>
-      </div>
-
-      <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>Workspace</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
+      <div style={{ background: 'transparent', border: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>Workspace</span>
         <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, lineHeight: 1.45, wordBreak: 'break-all' }}>
           {displayPath}
         </span>
       </div>
 
-      <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+      <div style={{ background: 'transparent', border: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
           Anonymous Installation Telemetry (Optional)
         </span>
         <p style={{ margin: 0, color: TEXT_SECONDARY, fontFamily: FF, fontSize: 11.5, lineHeight: 1.45 }}>
@@ -1230,7 +1289,7 @@ export default function SetupWizard() {
           {renderBody()}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: stage === 'r-paused' ? 'space-between' : 'flex-end', gap: 8, padding: '16px 28px', borderTop: `1px solid ${BORDER_SOFT}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: stage === 'r-paused' ? 'space-between' : 'flex-end', gap: 8, padding: '16px 28px', borderTop: 'none' }}>
           {renderActions()}
         </div>
       </div>

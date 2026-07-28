@@ -1,5 +1,5 @@
-import { Check, FolderOpen, Moon, RocketLaunch, Sun } from '@phosphor-icons/react'
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { CaretDown, Check, FolderOpen, Globe, Moon, RocketLaunch, Sun } from '@phosphor-icons/react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useNavigate } from 'react-router-dom'
 import logoBlack from '../assets/logo-black.svg'
 import logoWhite from '../assets/logo-white.svg'
@@ -264,56 +264,120 @@ function LanguageChoice({
   selectedLanguage: SetupLanguage
   setSelectedLanguage: (language: SetupLanguage) => void
 }) {
+  const [open, setOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    window.addEventListener('mousedown', handleClickOutside)
+    return () => window.removeEventListener('mousedown', handleClickOutside)
+  }, [open])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
         Language
       </span>
-      <div
-        style={{
-          ...NO_DRAG_STYLE,
-          width: 'fit-content',
-          maxWidth: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 4,
-          padding: 4,
-          borderRadius: 10,
-          background: 'var(--color-elevated)',
-          border: `1px solid ${BORDER_SOFT}`,
-        }}
-      >
-        {LANGUAGE_OPTIONS.map((option) => {
-          const active = selectedLanguage === option
-          return (
-            <button
-              key={option}
-              type="button"
-              onClick={() => setSelectedLanguage(option)}
-              aria-pressed={active}
-              style={{
-                height: 28,
-                minWidth: 78,
-                borderRadius: 7,
-                border: `1px solid ${active ? BORDER_SOFT : 'transparent'}`,
-                background: active ? 'var(--color-input)' : 'transparent',
-                color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
-                fontFamily: FF,
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 7,
-                boxShadow: active ? '0 2px 6px rgb(15 18 25 / 0.06)' : 'none',
-              }}
-            >
-              {option}
-            </button>
-          )
-        })}
+      <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+        <button
+          type="button"
+          onClick={() => setOpen((prev) => !prev)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          style={{
+            ...NO_DRAG_STYLE,
+            height: 36,
+            minWidth: 140,
+            padding: '0 12px',
+            borderRadius: 8,
+            background: 'var(--color-input)',
+            border: `1px solid ${BORDER_STRONG}`,
+            color: TEXT_PRIMARY,
+            fontFamily: FF,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Globe size={14} color={TEXT_SECONDARY} />
+            <span>{selectedLanguage}</span>
+          </div>
+          <CaretDown
+            size={12}
+            color={TEXT_SECONDARY}
+            style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 150ms' }}
+          />
+        </button>
+
+        {open && (
+          <div
+            role="listbox"
+            style={{
+              ...NO_DRAG_STYLE,
+              position: 'absolute',
+              top: '100%',
+              marginTop: 4,
+              left: 0,
+              width: '100%',
+              minWidth: 140,
+              borderRadius: 8,
+              background: 'var(--color-elevated)',
+              border: `1px solid ${BORDER_SOFT}`,
+              padding: 4,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 2,
+              boxShadow: '0 8px 20px rgba(0,0,0,0.22)',
+              zIndex: 50,
+            }}
+          >
+            {LANGUAGE_OPTIONS.map((option) => {
+              const active = selectedLanguage === option
+              return (
+                <button
+                  key={option}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => {
+                    setSelectedLanguage(option)
+                    setOpen(false)
+                  }}
+                  style={{
+                    height: 28,
+                    padding: '0 8px',
+                    borderRadius: 6,
+                    border: 'none',
+                    background: active ? 'var(--color-input)' : 'transparent',
+                    color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
+                    fontFamily: FF,
+                    fontSize: 12,
+                    fontWeight: active ? 700 : 500,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    textAlign: 'left',
+                  }}
+                >
+                  <span>{option}</span>
+                  {active && <Check size={12} color={ACCENT_HEX} weight="bold" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -335,7 +399,7 @@ export default function InstallerPreview() {
   const [isBrowsing, setIsBrowsing] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState<SetupTheme>(() => getInitialSetupTheme())
   const [selectedLanguage, setSelectedLanguage] = useState<SetupLanguage>(() => getInitialSetupLanguage())
-  const [mockTelemetryConsent, setMockTelemetryConsent] = useState<'pending' | 'accepted' | 'declined'>('pending')
+  const [telemetryConsent, setTelemetryConsent] = useState<'pending' | 'accepted' | 'declined'>('pending')
   const logoSrc = selectedTheme === 'Light' ? logoBlack : logoWhite
   const brand = displayBrandName()
 
@@ -351,7 +415,28 @@ export default function InstallerPreview() {
     api?.getInstallDefaultPaths?.().then((r: any) => {
       if (r?.success) setRootPath(r.current ?? r.downloads ?? DEFAULT_ROOT_PATH)
     }).catch(() => {})
+
+    api?.getTelemetryStatus?.().then((r: any) => {
+      if (r?.consentSet) setTelemetryConsent(r.consentGiven ? 'accepted' : 'declined')
+    }).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (phase !== 'complete' || telemetryConsent !== 'pending') return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        handleTelemetryChoice(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [phase, telemetryConsent])
+
+  const handleTelemetryChoice = (consent: boolean) => {
+    setTelemetryConsent(consent ? 'accepted' : 'declined')
+    void api?.setTelemetryConsent?.(consent)
+  }
 
   const handleThemeChange = (theme: SetupTheme) => {
     setSelectedTheme(theme)
@@ -385,14 +470,15 @@ export default function InstallerPreview() {
         const inc = cur < 18 ? 2 : cur < 40 ? 1 : isExtracting ? 0.04 : cur < 99 ? 0.15 : 0
         return Math.min(99, cur + inc)
       })
-    }, 160)
+    }, 120)
     return () => window.clearInterval(id)
   }, [phase, installDone, isExtracting])
 
   useEffect(() => {
-    if (phase !== 'installing' || progress < 100) return
-    const t = window.setTimeout(() => setPhase('complete'), 500)
-    return () => window.clearTimeout(t)
+    if (phase === 'installing' && progress >= 100) {
+      const t = window.setTimeout(() => setPhase('complete'), 500)
+      return () => window.clearTimeout(t)
+    }
   }, [phase, progress])
 
   const activeStep = useMemo(() => {
@@ -461,9 +547,9 @@ export default function InstallerPreview() {
           <div
             style={{
               borderRadius: 12,
-              background: 'var(--color-elevated)',
-              border: `1px solid ${BORDER_SOFT}`,
-              padding: '14px 16px',
+              background: 'transparent',
+              border: 'none',
+              padding: '14px 0',
               display: 'flex',
               flexDirection: 'column',
               gap: 10,
@@ -500,27 +586,27 @@ export default function InstallerPreview() {
     if (phase === 'complete') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
-          <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '14px 16px' }}>
-            <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+          <div style={{ background: 'transparent', border: 'none', padding: 0 }}>
+            <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
               Installed to
             </span>
-            <p style={{ margin: '6px 0 0', color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, lineHeight: 1.45, wordBreak: 'break-all' }}>
+            <p style={{ margin: '4px 0 0', color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, lineHeight: 1.45, wordBreak: 'break-all' }}>
               {resolvedInstallPath || displayPath}
             </p>
           </div>
 
-          <div style={{ borderRadius: 12, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
-              Anonymous Installation Telemetry (Optional Preview)
+          <div style={{ background: 'transparent', border: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
+              Anonymous Installation Telemetry (Optional)
             </span>
             <p style={{ margin: 0, color: TEXT_SECONDARY, fontFamily: FF, fontSize: 11.5, lineHeight: 1.45 }}>
               Send a single non-identifying ping (OS, App Version, CPU Arch) to help report adoption metrics. No research data leaves your computer.
             </p>
-            {mockTelemetryConsent === 'pending' ? (
+            {telemetryConsent === 'pending' ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
                 <button
                   type="button"
-                  onClick={() => setMockTelemetryConsent('declined')}
+                  onClick={() => handleTelemetryChoice(false)}
                   style={{
                     ...NO_DRAG_STYLE,
                     flex: 1,
@@ -539,7 +625,7 @@ export default function InstallerPreview() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setMockTelemetryConsent('accepted')}
+                  onClick={() => handleTelemetryChoice(true)}
                   style={{
                     ...NO_DRAG_STYLE,
                     flex: 1,
@@ -559,12 +645,12 @@ export default function InstallerPreview() {
               </div>
             ) : (
               <span style={{ color: ACCENT_HEX, fontFamily: FF, fontSize: 11.5, fontWeight: 600 }}>
-                ✓ [Mock Preview] Preference recorded ({mockTelemetryConsent === 'accepted' ? 'Ping sent' : 'Ping declined'}).
+                ✓ Preference recorded ({telemetryConsent === 'accepted' ? 'Ping sent' : 'Ping declined'}).
               </span>
             )}
           </div>
 
-          <div style={{ borderRadius: 10, background: `rgb(${ACCENT_RGB} / 0.08)`, border: `1px solid rgb(${ACCENT_RGB} / 0.18)`, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ background: 'transparent', border: 'none', padding: '4px 0', display: 'flex', alignItems: 'center', gap: 10 }}>
             <Check size={16} weight="bold" color={ACCENT_HEX} />
             <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12 }}>
               Installation complete.
@@ -577,7 +663,7 @@ export default function InstallerPreview() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 18, flex: 1 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
+          <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
             Workspace folder
           </span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -663,8 +749,10 @@ export default function InstallerPreview() {
         </label>
         )}
 
-        <AppearanceChoice theme={selectedTheme} onThemeChange={handleThemeChange} />
-        <LanguageChoice selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} />
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
+          <AppearanceChoice theme={selectedTheme} onThemeChange={handleThemeChange} />
+          <LanguageChoice selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} />
+        </div>
       </div>
     )
   }
@@ -691,7 +779,7 @@ export default function InstallerPreview() {
           {renderContent()}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '16px 28px', borderTop: `1px solid ${BORDER_SOFT}` }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, padding: '16px 28px', borderTop: 'none' }}>
           {phase === 'options' && (
             <>
               <ActionButton onClick={handleCancel}>Cancel</ActionButton>

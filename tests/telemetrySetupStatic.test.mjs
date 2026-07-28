@@ -13,12 +13,12 @@ test('SetupWizard contains telemetry consent state and Esc keyboard handler', ()
   assert.ok(content.includes("e.key === 'Escape'"), 'SetupWizard should support Esc shortcut to decline telemetry')
 })
 
-test('InstallerPreview contains mocked telemetry consent state', () => {
+test('InstallerPreview contains real telemetry consent state', () => {
   const previewPath = path.join(process.cwd(), 'src', 'pages', 'InstallerPreview.tsx')
   const content = fs.readFileSync(previewPath, 'utf-8')
 
-  assert.ok(content.includes('mockTelemetryConsent'), 'InstallerPreview should use mocked telemetry consent state')
-  assert.ok(content.includes('Mock Preview'), 'InstallerPreview should indicate mocked preview status')
+  assert.ok(content.includes('telemetryConsent'), 'InstallerPreview should manage real telemetry consent state')
+  assert.ok(content.includes('setTelemetryConsent'), 'InstallerPreview should call electronAPI.setTelemetryConsent')
 })
 
 console.log('✔ telemetrySetupStatic.test.mjs passed!')
