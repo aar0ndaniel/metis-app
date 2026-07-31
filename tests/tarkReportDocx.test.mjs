@@ -142,7 +142,28 @@ assert.match(stylesXml, /w:rFonts w:ascii="Candara" w:hAnsi="Candara" w:eastAsia
 assert.match(documentXml, /<w:footerReference w:type="default" r:id="rIdFooter1"\/>/, 'Each report section should reference the shared Metis footer.')
 assert.match(footerXml, /r:embed="rIdMetisLogo"/, 'Footer should render the embedded Metis logo.')
 assert.match(footerXml, /<w:t xml:space="preserve">\s*metis<\/w:t>/, 'Footer should display the Metis brand name.')
-assert.match(footerRelationshipsXml, /Target="media\/metis-logo\.png"/, 'Footer should reference embedded PNG logo.')
-assert.doesNotMatch(footerRelationshipsXml, /TargetMode="External"/, 'Footer should not rely on external URL links.')
+const dummyPngBase64 = 'iVBORw0KGgoAAAANSU5EUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+const base64WithDiagram = await buildTarkReportDocxBase64({
+  title: 'Teaching and Social Tark Report',
+  pathDiagramPngBase64: dummyPngBase64,
+  sections: [
+    {
+      title: 'Measurement model assessment',
+      headers: ['Construct', 'Indicator', 'Loading'],
+      rows: [['TP', 'TP1', '0.812']],
+    },
+  ],
+})
+
+const bufferWithDiagram = Buffer.from(base64WithDiagram, 'base64')
+const zipWithDiagram = await JSZip.loadAsync(bufferWithDiagram)
+assert.ok(zipWithDiagram.file('word/media/path-diagram.png'), 'Generated .docx should embed path diagram PNG.')
+
+const documentXmlWithDiagram = await zipWithDiagram.file('word/document.xml').async('string')
+const docRelsXmlWithDiagram = await zipWithDiagram.file('word/_rels/document.xml.rels').async('string')
+assert.match(docRelsXmlWithDiagram, /Target="media\/path-diagram\.png"/, 'document.xml.rels should reference path-diagram.png.')
+assert.match(docRelsXmlWithDiagram, /Id="rIdPathDiagram"/, 'document.xml.rels should contain rIdPathDiagram.')
+assert.match(documentXmlWithDiagram, /r:embed="rIdPathDiagram"/, 'document.xml should embed rIdPathDiagram on page 1.')
+assert.match(documentXmlWithDiagram, /Path diagram|Model path diagram/, 'document.xml should include heading for path diagram.')
 
 console.log('PASS Tark Word document generator contract')

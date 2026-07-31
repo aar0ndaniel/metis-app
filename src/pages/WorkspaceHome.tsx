@@ -483,7 +483,7 @@ function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; ac
           </defs>
           <rect x="0" y="0" width={viewWidth} height={viewHeight} fill="var(--color-elevated)" rx="8" />
 
-          {visiblePaths.map((path) => {
+          {visiblePaths.map((path, index) => {
             const from = constructById.get(path.from)
             const to = constructById.get(path.to)
             if (!from || !to) return null
@@ -513,7 +513,7 @@ function ModelDiagramPreview({ model, accentColor }: { model: WorkspaceChild; ac
 
             return (
               <line
-                key={`${path.from}-${path.to}`}
+                key={`${path.from}-${path.to}-${index}`}
                 x1={sx}
                 y1={sy}
                 x2={ex}

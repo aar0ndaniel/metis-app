@@ -89,14 +89,18 @@ export function buildPlsModelPayloadParts(
   const seenStructuralPaths = new Set(mappedDirectPaths.map((path) => `${path.from}|${path.to}`))
 
   paths
-    .filter((path) => path.kind === 'moderation' && path.targetPathId)
+    .filter((path) => path.kind === 'moderation')
     .forEach((moderationPath) => {
-      const targetPath = structuralDirectPaths.find((path) => path.id === moderationPath.targetPathId)
+      const targetPath =
+        (moderationPath.targetPathId != null
+          ? structuralDirectPaths.find((path) => String(path.id) === String(moderationPath.targetPathId))
+          : undefined) ??
+        structuralDirectPaths.find((path) => path.to === moderationPath.to && path.from !== moderationPath.from)
       if (!targetPath) return
 
       const iv = constructNameById.get(targetPath.from) || targetPath.from
       const moderator = constructNameById.get(moderationPath.from) || moderationPath.from
-      const outcome = constructNameById.get(targetPath.to) || targetPath.to
+      const outcome = constructNameById.get(targetPath.to) || targetPath.to || constructNameById.get(moderationPath.to) || moderationPath.to
       if (!iv || !moderator || !outcome) return
       if (iv === moderator || iv === outcome || moderator === outcome) return
 

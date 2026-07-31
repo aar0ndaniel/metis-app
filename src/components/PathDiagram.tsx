@@ -72,6 +72,7 @@ export interface CanvasPath {
 interface ConstructScores {
   r2?:       number
   r2Adj?:    number
+  q2?:       number
   ave?:      number
   rhoA?:     number
   rhoC?:     number
@@ -80,6 +81,7 @@ interface ConstructScores {
 
 interface PathResult {
   coef?:           number
+  tStat?:          number
   pValue?:         number
   totalEffect?:    number
   fSquare?:        number
@@ -500,6 +502,8 @@ function getConstructScore(scores: ConstructScores, mode: string): number | unde
   switch (mode) {
     case 'R-square':                         return scores.r2
     case 'R-square adjusted':                return scores.r2Adj
+    case 'Adjusted R-square':                return scores.r2Adj
+    case 'Q-square':                         return scores.q2
     case 'Average variance extracted (AVE)': return scores.ave
     case 'Composite reliability (rhoa)':     return scores.rhoA
     case 'Composite reliability (rhoc)':     return scores.rhoC
@@ -510,13 +514,16 @@ function getConstructScore(scores: ConstructScores, mode: string): number | unde
 
 function getPathValue(result: PathResult, mode: string): number | undefined {
   switch (mode) {
-    case 'Path coefficients': return result.coef
-    case 'Total effects':     return result.totalEffect
-    case 'f-square':          return result.fSquare
-    case 'Indirect effects':  return result.indirectEffect
-    case 'Correlations':      return result.correlation
-    case 'Covariances':       return result.covariance
-    default:                  return undefined
+    case 'Path coefficients':
+    case 'Path coefficient':           return result.coef
+    case 'Path coefficient t-values': return result.tStat
+    case 'Path coefficient p-values': return result.pValue
+    case 'Total effects':              return result.totalEffect
+    case 'f-square':                   return result.fSquare
+    case 'Indirect effects':           return result.indirectEffect
+    case 'Correlations':               return result.correlation
+    case 'Covariances':                return result.covariance
+    default:                           return undefined
   }
 }
 

@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu, net, type Men
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHmac } from 'crypto'
 import { fileURLToPath } from 'url'
 import { spawn, spawnSync, exec, execSync, type ChildProcess } from 'child_process'
 import { createServer } from 'net'
@@ -19,7 +19,7 @@ process.env.VITE_PUBLIC = process.env.VITE_DEV_SERVER_URL
   ? path.join(__dirname, '../public')
   : process.env.DIST
 
-const isDev = !!process.env.VITE_DEV_SERVER_URL
+const isDev = !app.isPackaged || !!process.env.VITE_DEV_SERVER_URL || process.env.NODE_ENV === 'development'
 const DEFAULT_PLUMBER_HOST = '127.0.0.1'
 const DEFAULT_PLUMBER_PORT = Number(process.env.METIS_PLUMBER_PORT || '8765')
 
@@ -202,6 +202,7 @@ function installApplicationMenu() {
         nativeMenuAction('Documentation', 'open-docs'),
         nativeMenuAction('Getting Started', 'open-tour'),
         { type: 'separator' },
+        nativeMenuAction('Rate Metis', 'open-rate-metis'),
         nativeMenuAction('Feedback', 'open-feedback'),
         nativeMenuAction('Report a Bug', 'open-report-bug'),
         nativeMenuAction('Cite Metis', 'open-cite-metis'),
@@ -313,10 +314,14 @@ function isDevToolsShortcut(input: {
   const code = (input.code || '').toLowerCase()
   const hasPrimaryModifier = !!input.control || !!input.meta
   const targetsInspectorKey = key === 'i' || key === 'j' || key === 'c' || code === 'keyi' || code === 'keyj' || code === 'keyc'
+  const isRefreshKey = key === 'r' || code === 'keyr'
 
   return (
     key === 'f12' ||
     code === 'f12' ||
+    key === 'f5' ||
+    code === 'f5' ||
+    (hasPrimaryModifier && isRefreshKey) ||
     (hasPrimaryModifier && (!!input.shift || !!input.alt) && targetsInspectorKey)
   )
 }
@@ -327,6 +332,9 @@ function hardenWindow(win: BrowserWindow) {
     if (isDevToolsShortcut(input)) {
       event.preventDefault()
     }
+  })
+  win.webContents.on('context-menu', (event) => {
+    event.preventDefault()
   })
   win.webContents.on('devtools-opened', () => {
     win.webContents.closeDevTools()
@@ -2654,8 +2662,8 @@ function createWindow() {
   const preloadPath = resolvePreloadPath()
   const startupRoute = getStartupRoute()
   const isSetup = !isSetupNeeded()
-  const installerPreviewWidth = 400
-  const installerPreviewHeight = 500
+  const installerPreviewWidth = 450
+  const installerPreviewHeight = 237
 
   const win = new BrowserWindow({
     width:    isSetup ? 1400 : installerPreviewWidth,
@@ -4198,6 +4206,7 @@ async function postToPlumber(pathname: string, payload: any) {
         method: 'POST',
         headers: buildPlumberHeaders(true),
         body: JSON.stringify(payload ?? {}),
+        signal: AbortSignal.timeout(1800000),
       })
     } catch (err: any) {
       const elapsedSeconds = (Date.now() - requestStarted) / 1000
@@ -4820,7 +4829,38 @@ ipcMain.handle('r:saveLiteConfig', async (_, { rootPath, rscriptPath }: { rootPa
 
 // ─── Telemetry & Feedback Offline Outbox System ─────────────────────────────
 
-const METIS_TELEMETRY_ENDPOINT = process.env.METIS_TELEMETRY_ENDPOINT || 'https://metis-app.com/api/telemetry/collect'
+const METIS_TELEMETRY_ENDPOINTS = [
+  process.env.METIS_TELEMETRY_ENDPOINT || 'https://yookoso.emend.it.com/api/telemetry/collect',
+  process.env.METIS_TELEMETRY_BACKUP_ENDPOINT || 'https://yookoso.up.railway.app/api/telemetry/collect',
+]
+
+const METIS_TELEMETRY_SECRET = process.env.METIS_TELEMETRY_SECRET || 'metis-telemetry-sec-v1-9f8a7b6c5d'
+
+async function sendTelemetryItem(item: TelemetryEventItem): Promise<boolean> {
+  const timestamp = Date.now().toString()
+  const bodyStr = JSON.stringify(item)
+  const signature = createHmac('sha256', METIS_TELEMETRY_SECRET).update(`${timestamp}.${bodyStr}`).digest('hex')
+
+  for (const endpoint of METIS_TELEMETRY_ENDPOINTS) {
+    try {
+      const response = await net.fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Metis-Timestamp': timestamp,
+          'X-Metis-Signature': signature,
+        },
+        body: bodyStr,
+      })
+      if (response.ok) {
+        return true
+      }
+    } catch (e) {
+      console.warn(`[telemetry] Failed to post to ${endpoint}:`, e)
+    }
+  }
+  return false
+}
 
 interface TelemetryEventItem {
   installation_id: string
@@ -4889,18 +4929,10 @@ async function flushTelemetryOutbox(): Promise<void> {
 
   const remaining: TelemetryEventItem[] = []
   for (const item of state.outbox) {
-    try {
-      const response = await net.fetch(METIS_TELEMETRY_ENDPOINT, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(item),
-      })
-      if (response.ok) {
-        if (item.event_type === 'installation') state.optInInstallationSent = true
-      } else {
-        remaining.push(item)
-      }
-    } catch (e) {
+    const success = await sendTelemetryItem(item)
+    if (success) {
+      if (item.event_type === 'installation') state.optInInstallationSent = true
+    } else {
       remaining.push(item)
     }
   }
@@ -4934,7 +4966,8 @@ ipcMain.handle('telemetry:set-consent', async (_, consent: boolean) => {
 ipcMain.handle('feedback:get-status', async () => {
   const state = loadTelemetryStore()
   const launchCount = state.successfulLaunchCount || (state.firstLaunchMarked ? 1 : 0)
-  const showModal = launchCount >= 5 && !state.feedbackSubmitted && !state.feedbackDeclined
+  const isMilestoneLaunch = launchCount >= 5 && (launchCount - 5) % 15 === 0
+  const showModal = isMilestoneLaunch && !state.feedbackSubmitted && !state.feedbackDeclined
   return {
     showModal,
     launchCount,
@@ -4955,19 +4988,26 @@ ipcMain.handle('feedback:mark-launch-success', async () => {
 ipcMain.handle('feedback:submit', async (_, payload: { rating: number; feeling: string; comment?: string }) => {
   const state = loadTelemetryStore()
   state.feedbackSubmitted = true
-  const exists = state.outbox.some((item) => item.event_type === 'feedback')
-  if (!exists) {
-    state.outbox.push({
-      installation_id: state.installationId,
-      event_type: 'feedback',
-      payload: {
-        rating: payload.rating,
-        feeling: payload.feeling,
-        comment: payload.comment || '',
-        timestamp: new Date().toISOString(),
-      },
-      created_at: new Date().toISOString(),
-    })
+  const newItem: TelemetryEventItem = {
+    installation_id: state.installationId,
+    event_type: 'feedback',
+    payload: {
+      rating: payload.rating,
+      feeling: payload.feeling,
+      comment: payload.comment || '',
+      version: app.getVersion(),
+      build_variant: isLiteBuild() ? 'lite' : 'bundle',
+      platform: process.platform,
+      arch: process.arch,
+      timestamp: new Date().toISOString(),
+    },
+    created_at: new Date().toISOString(),
+  }
+  const existingIndex = state.outbox.findIndex((item) => item.event_type === 'feedback')
+  if (existingIndex >= 0) {
+    state.outbox[existingIndex] = newItem
+  } else {
+    state.outbox.push(newItem)
   }
   saveTelemetryStore(state)
   void flushTelemetryOutbox()

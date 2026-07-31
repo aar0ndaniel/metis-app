@@ -171,9 +171,8 @@ export default function TarkPreview() {
   const savedAnalyses = firstResultByMode(workspaceId, modelId)
   const savedModel = readSavedModelSnapshot(workspaceId, modelId)
   const tableSections = buildTarkReportSections(request, savedAnalyses, savedModel)
-  const plsResults = savedAnalyses.get('pls-sem')?.results
   const diagramResults = request.includePathDiagram && savedModel
-    ? buildTarkDiagramResults(plsResults, savedModel)
+    ? buildTarkDiagramResults(savedAnalyses, savedModel)
     : null
 
   return (

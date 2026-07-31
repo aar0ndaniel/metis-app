@@ -4,6 +4,7 @@ import type { TarkReportSection } from './tarkReportTables'
 export interface TarkReportDocxRequest {
   title: string
   sections: TarkReportSection[]
+  pathDiagramPngBase64?: string
 }
 
 const WORD_XMLNS = [
@@ -106,12 +107,45 @@ function needsLandscape(section: TarkReportSection): boolean {
   return section.headers.length >= 7
 }
 
+function pathDiagramDrawingXml(rId = 'rIdPathDiagram', cx = 5486400, cy = 3657600): string {
+  return [
+    '<w:p>',
+    '<w:pPr><w:jc w:val="center"/><w:spacing w:before="120" w:after="120"/></w:pPr>',
+    '<w:r>',
+    '<w:rPr><w:noProof/></w:rPr>',
+    '<w:drawing>',
+    '<wp:inline distT="0" distB="0" distL="0" distR="0">',
+    `<wp:extent cx="${cx}" cy="${cy}"/>`,
+    '<wp:effectExtent l="0" t="0" r="0" b="0"/>',
+    '<wp:docPr id="2" name="Path Diagram" descr="Path Diagram"/>',
+    '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>',
+    '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">',
+    '<pic:pic>',
+    '<pic:nvPicPr><pic:cNvPr id="0" name="path-diagram.png"/><pic:cNvPicPr/></pic:nvPicPr>',
+    `<pic:blipFill><a:blip r:embed="${rId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>`,
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>`,
+    '</pic:pic>',
+    '</a:graphicData></a:graphic>',
+    '</wp:inline>',
+    '</w:drawing>',
+    '</w:r>',
+    '</w:p>',
+  ].join('')
+}
+
 function documentXml(request: TarkReportDocxRequest): string {
   let tableNumber = 1
   const body: string[] = [
     paragraph(request.title.trim() || 'Tark report', 'Title'),
     paragraph(''),
   ]
+
+  if (request.pathDiagramPngBase64?.trim()) {
+    body.push(paragraph('Model path diagram', 'Heading1'))
+    body.push(pathDiagramDrawingXml())
+    body.push(paragraph('Figure 1. Model path diagram.', 'TarkTableNote', { italic: true }))
+    body.push(paragraph(''))
+  }
 
   request.sections.forEach((section) => {
     const headingOnly = section.headers.length === 0 && section.rows.length === 0
@@ -172,12 +206,15 @@ function packageRelationshipsXml(): string {
 </Relationships>`
 }
 
-function documentRelationshipsXml(): string {
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
-  <Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>
-</Relationships>`
+function documentRelationshipsXml(hasPathDiagram = false): string {
+  const rels = [
+    '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>',
+    '<Relationship Id="rIdFooter1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>',
+  ]
+  if (hasPathDiagram) {
+    rels.push('<Relationship Id="rIdPathDiagram" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/path-diagram.png"/>')
+  }
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">\n  ${rels.join('\n  ')}\n</Relationships>`
 }
 
 function footerRelationshipsXml(): string {
@@ -234,13 +271,20 @@ export function stripTarkDocxExtension(value: string): string {
 export async function buildTarkReportDocxBase64(request: TarkReportDocxRequest): Promise<string> {
   const zip = new JSZip()
   const logoData = metisLogoPngBytes()
+  const hasPathDiagram = Boolean(request.pathDiagramPngBase64?.trim())
+
   zip.file('[Content_Types].xml', contentTypesXml())
   zip.file('_rels/.rels', packageRelationshipsXml())
-  zip.file('word/_rels/document.xml.rels', documentRelationshipsXml())
+  zip.file('word/_rels/document.xml.rels', documentRelationshipsXml(hasPathDiagram))
   zip.file('word/_rels/footer1.xml.rels', footerRelationshipsXml())
   zip.file('word/styles.xml', stylesXml())
   zip.file('word/footer1.xml', footerXml())
   zip.file('word/media/metis-logo.png', logoData)
+
+  if (hasPathDiagram && request.pathDiagramPngBase64) {
+    zip.file('word/media/path-diagram.png', request.pathDiagramPngBase64, { base64: true })
+  }
+
   zip.file('word/document.xml', documentXml(request))
   return zip.generateAsync({ type: 'base64', compression: 'DEFLATE' })
 }

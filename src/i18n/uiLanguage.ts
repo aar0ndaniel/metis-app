@@ -277,6 +277,18 @@ const EXACT_TRANSLATIONS: Record<string, TranslationSet> = {
   'Anonymous Installation Telemetry (Optional)': { Español: 'Telemetría de instalación anónima (opcional)', Português: 'Telemetria de instalação anônima (opcional)', Français: 'Télémétrie d’installation anonyme (optionnelle)' },
   'Send a single non-identifying ping (OS, App Version, CPU Arch) to help report adoption metrics to research grant funders. No research data or personal info leaves your computer.': { Español: 'Envía un único ping no identificable (SO, versión de la app, arquitectura de CPU) para reportar métricas de adopción a los financiadores de investigación. Ningún dato de investigación o personal sale de tu equipo.', Português: 'Envia um único ping não identificável (SO, versión do app, arquitetura de CPU) para relatar métricas de adoção a financiadores de pesquisa. Nenhum dado de pesquisa ou informação pessoal sai do seu computador.', Français: 'Envoie un seul ping non identifiable (OS, version de l’app, architecture CPU) para signaler les métriques d’adoption aux financeurs de recherche. Aucune donnée de recherche ou info personnelle ne quitte votre ordinateur.' },
   'Walkthrough step': { Español: 'Paso del recorrido', Português: 'Etapa do guia', Français: 'Étape del guide' },
+  'Anonymous telemetry (optional)': { Español: 'Telemetría anónima (opcional)', Português: 'Telemetria anônima (opcional)', Français: 'Télémétrie anonyme (optionnelle)' },
+  'No thanks': { Español: 'No gracias', Português: 'Não obrigado', Français: 'Non merci' },
+  'Allow': { Español: 'Permitir', Português: 'Permitir', Français: 'Autoriser' },
+  'Browse directory': { Español: 'Examinar directorio', Português: 'Procurar diretório', Français: 'Parcourir le dossier' },
+  'Installing…': { Español: 'Instalando…', Português: 'Instalando…', Français: 'Installation…' },
+  'Slope Plot Visualization': { Español: 'Visualización de gráfico de pendientes', Português: 'Visualização do gráfico de inclinação', Français: 'Visualisation du graphique des pentes' },
+  'Copy SVG to clipboard': { Español: 'Copiar SVG al portapapeles', Português: 'Copiar SVG para a área de transferência', Français: 'Copier le SVG dans le presse-papiers' },
+  'Browse Rscript location': { Español: 'Examinar ubicación de Rscript', Português: 'Procurar local do Rscript', Français: 'Parcourir la ubicación de Rscript' },
+  'Need R 4.0+?': { Español: '¿Necesitas R 4.0+?', Português: 'Precisa do R 4.0+?', Français: 'Besoin de R 4.0+ ?' },
+  'Run script in R or RStudio': { Español: 'Ejecutar script en R o RStudio', Português: 'Executar script no R ou RStudio', Français: 'Exécuter le script dans R ou RStudio' },
+  'Copy package installation script': { Español: 'Copiar script de instalación de paquetes', Português: 'Copiar script de instalação de pacotes', Français: 'Copier le script d’installation de paquets' },
+  'Retry': { Español: 'Reintentar', Português: 'Tentar novamente', Français: 'Réessayer' },
 }
 
 const GLOSSARY_TRANSLATIONS: Record<TranslatedLanguage, Array<[string, string]>> = {

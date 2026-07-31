@@ -1756,13 +1756,17 @@ function setPathResult(
 }
 
 export function buildTarkDiagramResults(
-  pls: Record<string, unknown> | undefined,
+  source: Map<string, TarkSavedAnalysis> | Record<string, unknown> | undefined,
   savedModel?: TarkSavedModelLike | null,
 ): TarkDiagramResults {
   const { nameById, idByName } = modelNameMaps(savedModel)
   const constructScores: Record<string, Record<string, number>> = {}
   const pathResults: Record<string, Record<string, number>> = {}
-  const measurementResults: Record<string, { loading?: number; weight?: number }> = {}
+  const measurementResults: Record<string, { loading?: number; weight?: number; loadingT?: number; weightT?: number }> = {}
+
+  const pls = source instanceof Map ? source.get('pls-sem')?.results : (source as any)?.results ?? source
+  const bootstrap = source instanceof Map ? source.get('bootstrap')?.results : undefined
+  const plspredict = source instanceof Map ? source.get('plspredict')?.results : undefined
 
   toRows((pls as any)?.quality_criteria?.r_square).forEach((row) => {
     const construct = resolveConstructName(readLabel(row), savedModel)
@@ -1774,6 +1778,12 @@ export function buildTarkDiagramResults(
     setAliasedValue(constructScores, nameById, idByName, construct, partial)
   })
 
+  toRows((plspredict as any)?.final_results?.plspredict_lv_summary ?? (pls as any)?.quality_criteria?.q_square).forEach((row) => {
+    const construct = resolveConstructName(readLabel(row), savedModel)
+    const q2 = toNumber(readValue(row, ['Q2predict', 'Q²predict', 'Q2.predict', 'q2', 'q2predict', 'Q2', 'Q²']))
+    if (q2 != null) setAliasedValue(constructScores, nameById, idByName, construct, { q2 })
+  })
+
   forEachReliabilityValue(pls, savedModel, (construct, metric, value) => {
     const numeric = toNumber(value)
     if (numeric == null) return
@@ -1781,10 +1791,18 @@ export function buildTarkDiagramResults(
     setAliasedValue(constructScores, nameById, idByName, construct, { [partialKey]: numeric })
   })
 
-  toRows((pls as any)?.final_results?.path_coefficients).forEach((row, index) => {
+  const pathRows = toRows((bootstrap as any)?.final_results?.path_coefficients ?? (pls as any)?.final_results?.path_coefficients)
+  pathRows.forEach((row, index) => {
     const parts = getPathParts(row, savedModel, `Path ${index + 1}`)
     const coef = toNumber(readValue(row, ['Original Est.', 'Original.Est.', 'Original Estimate', 'Original sample', 'Original sample (O)', 'O', 'coefficient', 'estimate']))
-    if (coef != null) setPathResult(pathResults, nameById, idByName, parts.from, parts.to, { coef })
+    const tStat = toNumber(readValue(row, ['T Stat.', 'T.Stat.', 'T Statistic', 'T statistics', 'T statistics (|O/STDEV|)', 'T Value', 'T values', 't_value', 't']))
+    const pValRaw = readPValue(row) ?? approximateTwoTailedPValueFromT(tStat)
+    const pValue = parsePValue(pValRaw)
+    const partial: Record<string, number> = {}
+    if (coef != null) partial.coef = coef
+    if (tStat != null) partial.tStat = tStat
+    if (pValue != null) partial.pValue = pValue
+    if (Object.keys(partial).length) setPathResult(pathResults, nameById, idByName, parts.from, parts.to, partial)
   })
 
   const applyPathEffectRows = (rows: Array<Record<string, unknown>>, field: 'totalEffect' | 'indirectEffect') => {
@@ -1810,7 +1828,7 @@ export function buildTarkDiagramResults(
   applyPathEffectRows(toRows((pls as any)?.final_results?.total_effects), 'totalEffect')
   applyPathEffectRows(toRows((pls as any)?.final_results?.total_indirect_effects), 'indirectEffect')
 
-  buildFSquareLookup(pls, undefined, savedModel).forEach((fSquare, key) => {
+  buildFSquareLookup(pls, bootstrap, savedModel).forEach((fSquare, key) => {
     const [fromKey, toKey] = key.split('\u0000')
     const path = toRows((pls as any)?.quality_criteria?.f_square)
       .flatMap((row) => {
@@ -1823,23 +1841,31 @@ export function buildTarkDiagramResults(
     if (path) setPathResult(pathResults, nameById, idByName, path.from, path.to, { fSquare })
   })
 
-  parseOuterLoadings(pls, savedModel).forEach((row) => {
+  parseOuterLoadings(bootstrap ?? pls, savedModel).forEach((row) => {
     const constructId = idByName.get(row.construct)
     const nameKey = `${row.construct}::${row.indicator}`
-    measurementResults[nameKey] = { ...(measurementResults[nameKey] ?? {}), loading: row.loading }
+    const tStat = toNumber((row as any).tStatistic)
+    const partial: { loading?: number; loadingT?: number } = {}
+    if (row.loading != null) partial.loading = row.loading
+    if (tStat != null) partial.loadingT = tStat
+    measurementResults[nameKey] = { ...(measurementResults[nameKey] ?? {}), ...partial }
     if (constructId) {
       const idKey = `${constructId}::${row.indicator}`
-      measurementResults[idKey] = { ...(measurementResults[idKey] ?? {}), loading: row.loading }
+      measurementResults[idKey] = { ...(measurementResults[idKey] ?? {}), ...partial }
     }
   })
 
-  parseOuterWeights(pls, savedModel).forEach((row) => {
+  parseOuterWeights(bootstrap ?? pls, savedModel).forEach((row) => {
     const constructId = idByName.get(row.construct)
     const nameKey = `${row.construct}::${row.indicator}`
-    measurementResults[nameKey] = { ...(measurementResults[nameKey] ?? {}), weight: row.weight }
+    const tStat = toNumber((row as any).tStatistic)
+    const partial: { weight?: number; weightT?: number } = {}
+    if (row.weight != null) partial.weight = row.weight
+    if (tStat != null) partial.weightT = tStat
+    measurementResults[nameKey] = { ...(measurementResults[nameKey] ?? {}), ...partial }
     if (constructId) {
       const idKey = `${constructId}::${row.indicator}`
-      measurementResults[idKey] = { ...(measurementResults[idKey] ?? {}), weight: row.weight }
+      measurementResults[idKey] = { ...(measurementResults[idKey] ?? {}), ...partial }
     }
   })
 

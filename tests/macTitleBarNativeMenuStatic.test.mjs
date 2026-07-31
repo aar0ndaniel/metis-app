@@ -186,7 +186,7 @@ assert.match(
 
 assert.match(
   appShell,
-  /const activeTitleModelName = \(\(\) => \{[\s\S]*stripModelDisplayName\(model\.name \|\| modelId\)[\s\S]*<TitleBar currentScreen=\{currentScreen\} theme=\{theme\} activeModelName=\{activeTitleModelName\} \/>/,
+  /const activeTitleModelName = \(\(\) => \{[\s\S]*stripModelDisplayName\(model\.name \|\| modelId\)[\s\S]*<TitleBar currentScreen=\{currentScreen\} theme=\{theme\} activeModelName=\{activeTitleModelName\}[\s\S]*?\/>/,
   'AppShell should pass the resolved active model name into the titlebar.'
 )
 

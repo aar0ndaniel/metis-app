@@ -155,9 +155,9 @@ await runTest('derived moderation rows expose interaction summaries, simple slop
     },
   ])
   assert.deepEqual(deriveModerationSlopeRows(savedModel, analysisResults), [
-    { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Low (-1 SD)', simple_slope: 0.538, interpretation: '0.467 - (-0.071)' },
-    { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Mean (0)', simple_slope: 0.467, interpretation: '0.467' },
-    { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'High (+1 SD)', simple_slope: 0.396, interpretation: '0.467 + (-0.071)' },
+    { IV: 'IV', Moderator: 'MOD', Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Low MOD (-1 SD)', simple_slope: 0.538, interpretation: '0.467 - (-0.071)' },
+    { IV: 'IV', Moderator: 'MOD', Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Mean MOD (0)', simple_slope: 0.467, interpretation: '0.467' },
+    { IV: 'IV', Moderator: 'MOD', Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'High MOD (+1 SD)', simple_slope: 0.396, interpretation: '0.467 + (-0.071)' },
   ])
   assert.deepEqual(deriveModerationR2ChangeRows(savedModel, analysisResults), [
     {
@@ -201,7 +201,7 @@ await runTest('derived moderation rows expose interaction summaries, simple slop
       effect_size: 'Small',
     },
   ])
-  assert.match(buildModerationSlopeChartSvg(savedModel, analysisResults), /<svg[\s\S]*Low \(-1 SD\)[\s\S]*Mean \(0\)[\s\S]*High \(\+1 SD\)/)
+  assert.match(buildModerationSlopeChartSvg(savedModel, analysisResults), /<svg[\s\S]*Low MOD \(-1 SD\)[\s\S]*Mean MOD \(0\)[\s\S]*High MOD \(\+1 SD\)/)
 
   const metadataLightModel = {
     constructs: savedModel.constructs,
@@ -211,9 +211,9 @@ await runTest('derived moderation rows expose interaction summaries, simple slop
   }
   assert.equal(hasModerationInteractions(metadataLightModel, analysisResults), true)
   assert.deepEqual(deriveModerationSlopeRows(metadataLightModel, analysisResults), [
-    { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Low (-1 SD)', simple_slope: 0.538, interpretation: '0.467 - (-0.071)' },
-    { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Mean (0)', simple_slope: 0.467, interpretation: '0.467' },
-    { Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'High (+1 SD)', simple_slope: 0.396, interpretation: '0.467 + (-0.071)' },
+    { IV: 'IV', Moderator: 'MOD', Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Low MOD (-1 SD)', simple_slope: 0.538, interpretation: '0.467 - (-0.071)' },
+    { IV: 'IV', Moderator: 'MOD', Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'Mean MOD (0)', simple_slope: 0.467, interpretation: '0.467' },
+    { IV: 'IV', Moderator: 'MOD', Interaction: 'IV*MOD', DV: 'DV', Moderator_level: 'High MOD (+1 SD)', simple_slope: 0.396, interpretation: '0.467 + (-0.071)' },
   ])
 })
 
@@ -269,7 +269,7 @@ await runTest('derived moderation rows match interaction terms with Interaction 
 
   const svg = buildModerationSlopeChartSvg(savedModel, seminrResults)
   assert.ok(svg.includes('<svg'), 'Expected SVG chart output')
-  assert.ok(svg.includes('Low (-1 SD)'), 'Expected Low SD label in chart')
+  assert.ok(svg.includes('Low Academic Self-Efficacy (-1 SD)'), 'Expected Low SD label in chart')
 })
 
 await runTest('derived moderation bootstrap rows filter the interaction significance test', async () => {
@@ -456,9 +456,9 @@ await runTest('derived moderation slopes keep standard levels for multi-indicato
   }
 
   assert.deepEqual(deriveModerationSlopeRows(savedModel, analysisResults), [
-    { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'Low (-1 SD)', simple_slope: 0.3, interpretation: '0.4 - (0.1)' },
-    { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'Mean (0)', simple_slope: 0.4, interpretation: '0.4' },
-    { Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'High (+1 SD)', simple_slope: 0.5, interpretation: '0.4 + (0.1)' },
+    { IV: 'Attitude', Moderator: 'Age Category', Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'Low Age Category (-1 SD)', simple_slope: 0.3, interpretation: '0.4 - (0.1)' },
+    { IV: 'Attitude', Moderator: 'Age Category', Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'Mean Age Category (0)', simple_slope: 0.4, interpretation: '0.4' },
+    { IV: 'Attitude', Moderator: 'Age Category', Interaction: 'Attitude*Age Category', DV: 'Use', Moderator_level: 'High Age Category (+1 SD)', simple_slope: 0.5, interpretation: '0.4 + (0.1)' },
   ])
 })
 

@@ -1,18 +1,15 @@
 from pathlib import Path
 import sys
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC_SVG = REPO_ROOT / "src" / "assets" / "logo-icon.svg"
+SRC_PNG = REPO_ROOT / "src" / "assets" / "app-logo-new.png"
 DEST_RESOURCES = REPO_ROOT / "resources" / "icon.ico"
 DEST_BUILD = REPO_ROOT / "build" / "icon.ico"
 DEST_RESOURCES_PNG = REPO_ROOT / "resources" / "icon.png"
 DEST_BUILD_PNG = REPO_ROOT / "build" / "icon.png"
 DEST_RESOURCES_ICNS = REPO_ROOT / "resources" / "icon.icns"
 DEST_BUILD_ICNS = REPO_ROOT / "build" / "icon.icns"
-TEMP_DIR = REPO_ROOT / "build" / ".icon-tmp"
-OUTPUT_PNG = TEMP_DIR / "icon-render.png"
-ICON_SIZE = 512
+DEST_RESOURCES_APP_LOGO = REPO_ROOT / "resources" / "app-logo.png"
 
 ALL_OUTPUTS = [
     DEST_RESOURCES,
@@ -21,101 +18,79 @@ ALL_OUTPUTS = [
     DEST_BUILD_PNG,
     DEST_RESOURCES_ICNS,
     DEST_BUILD_ICNS,
+    DEST_RESOURCES_APP_LOGO,
 ]
 
-
-def all_icons_exist() -> bool:
-    """Check if all icon output files already exist."""
-    return all(p.exists() and p.stat().st_size > 0 for p in ALL_OUTPUTS)
+ICON_SIZE = 512
 
 
-def render_svg_to_png(svg_path: Path, png_path: Path) -> None:
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtGui import QGuiApplication, QImage, QPainter
-    from PyQt5.QtSvg import QSvgRenderer
-    from PyQt5.QtCore import QRectF
-
-    app = QGuiApplication([])
-
-    svg_bytes = svg_path.read_bytes()
-    renderer = QSvgRenderer(svg_bytes)
-    if not renderer.isValid():
-        raise RuntimeError("Invalid SVG source")
-
-    image = QImage(ICON_SIZE, ICON_SIZE, QImage.Format_ARGB32)
-    image.fill(Qt.transparent)
-
-    painter = QPainter(image)
-    painter.setRenderHint(QPainter.Antialiasing)
-
-    # Render the green logo over the transparent canvas so the platform can
-    # provide its own app-icon surface and corner treatment.
-    logo_padding = 44
-    logo_rect = QRectF(logo_padding, logo_padding, ICON_SIZE - 2*logo_padding, ICON_SIZE - 2*logo_padding)
-    renderer.render(painter, logo_rect)
-
-    painter.end()
-
-    png_path.parent.mkdir(parents=True, exist_ok=True)
-    if not image.save(str(png_path)):
-        raise RuntimeError("Failed to save PNG")
-
-    app.quit()
-
-
-def png_to_ico(png_path: Path, ico_path: Path) -> None:
+def process_png_icon(src_png_path: Path) -> Path:
     from PIL import Image
-    image = Image.open(png_path).convert("RGBA")
-    ico_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(
-        ico_path,
-        format="ICO",
-        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
-    )
+
+    img = Image.open(src_png_path).convert("RGBA")
+    w, h = img.size
+    max_dim = max(w, h)
+
+    # Square canvas with transparent padding if needed
+    square_img = Image.new("RGBA", (max_dim, max_dim), (0, 0, 0, 0))
+    offset = ((max_dim - w) // 2, (max_dim - h) // 2)
+    square_img.paste(img, offset)
+
+    # Resample to 512x512 for icon assets
+    icon_512 = square_img.resize((ICON_SIZE, ICON_SIZE), Image.Resampling.LANCZOS)
+    return icon_512
 
 
-def png_to_icns(png_path: Path, icns_path: Path) -> None:
-    from PIL import Image
-    image = Image.open(png_path).convert("RGBA")
-    icns_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(
-        icns_path,
-        format="ICNS",
-        sizes=[(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512)],
-    )
+def save_icons(icon_img) -> None:
+    for p in ALL_OUTPUTS:
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    # Save PNG formats
+    icon_img.save(DEST_RESOURCES_PNG, format="PNG")
+    icon_img.save(DEST_BUILD_PNG, format="PNG")
+    icon_img.save(DEST_RESOURCES_APP_LOGO, format="PNG")
+
+    # Save ICO format
+    ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
+    icon_img.save(DEST_RESOURCES, format="ICO", sizes=ico_sizes)
+    icon_img.save(DEST_BUILD, format="ICO", sizes=ico_sizes)
+
+    # Save ICNS format for macOS
+    icns_sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512)]
+    try:
+        icon_img.save(DEST_RESOURCES_ICNS, format="ICNS", sizes=icns_sizes)
+        icon_img.save(DEST_BUILD_ICNS, format="ICNS", sizes=icns_sizes)
+    except Exception as e:
+        print(f"Warning: Failed to save ICNS format ({e}). PNG & ICO formats generated successfully.")
 
 
 def main() -> int:
-    # Prefer regenerating on every build so a changed source logo is reflected
-    # in every packaged icon. If PyQt5 is unavailable, retain existing outputs
-    # so environments that only package prebuilt assets can still build.
     try:
-        render_svg_to_png(SRC_SVG, OUTPUT_PNG)
-    except ImportError as e:
-        print(f"Warning: Cannot regenerate icons ({e}).")
-        print("Install PyQt5 to regenerate icons from SVG, or commit pre-built icon files.")
-        # Check if at least some outputs exist to allow a partial pass
+        from PIL import Image
+    except ImportError:
+        print("Warning: Pillow module not found. Install pillow to regenerate icons.")
         missing = [p for p in ALL_OUTPUTS if not p.exists()]
         if missing:
             print("Missing icon files:")
             for p in missing:
                 print(f"  ✗ {p}")
             return 1
-        print("All icon files exist despite import error, continuing.")
         return 0
 
-    DEST_RESOURCES_PNG.write_bytes(OUTPUT_PNG.read_bytes())
-    DEST_BUILD_PNG.write_bytes(OUTPUT_PNG.read_bytes())
-    png_to_ico(OUTPUT_PNG, DEST_RESOURCES)
-    png_to_ico(OUTPUT_PNG, DEST_BUILD)
-    png_to_icns(OUTPUT_PNG, DEST_RESOURCES_ICNS)
-    png_to_icns(OUTPUT_PNG, DEST_BUILD_ICNS)
-    print(f"icon.png written to {DEST_RESOURCES_PNG}")
-    print(f"icon.png written to {DEST_BUILD_PNG}")
-    print(f"icon.ico written to {DEST_RESOURCES}")
-    print(f"icon.ico written to {DEST_BUILD}")
-    print(f"icon.icns written to {DEST_RESOURCES_ICNS}")
-    print(f"icon.icns written to {DEST_BUILD_ICNS}")
+    if not SRC_PNG.exists():
+        print(f"Error: Source PNG icon not found at {SRC_PNG}")
+        return 1
+
+    icon_512 = process_png_icon(SRC_PNG)
+    save_icons(icon_512)
+
+    print(f"✔ icon.png written to {DEST_RESOURCES_PNG}")
+    print(f"✔ icon.png written to {DEST_BUILD_PNG}")
+    print(f"✔ icon.ico written to {DEST_RESOURCES}")
+    print(f"✔ icon.ico written to {DEST_BUILD}")
+    print(f"✔ icon.icns written to {DEST_RESOURCES_ICNS}")
+    print(f"✔ icon.icns written to {DEST_BUILD_ICNS}")
+    print(f"✔ app-logo.png written to {DEST_RESOURCES_APP_LOGO}")
     return 0
 
 

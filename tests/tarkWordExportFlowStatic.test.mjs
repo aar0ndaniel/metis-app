@@ -70,4 +70,7 @@ assert.match(main, /ipcMain\.handle\('shell:showItemInFolder'/, 'Electron should
 assert.match(preload, /showItemInFolder:\s*\(targetPath: string\)\s*=>\s*ipcRenderer\.invoke\('shell:showItemInFolder', targetPath\)/, 'Preload should expose showItemInFolder.')
 assert.match(viteEnv, /showItemInFolder: \(targetPath: string\) => Promise<any>/, 'Renderer types should include showItemInFolder.')
 
+const preview = await read('src/pages/TarkPreview.tsx')
+assert.match(preview, /buildTarkDiagramResults\(savedAnalyses, savedModel\)/, 'TarkPreview should pass savedAnalyses map to buildTarkDiagramResults.')
+
 console.log('PASS Tark Word export flow static contract')

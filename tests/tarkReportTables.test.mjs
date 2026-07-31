@@ -245,6 +245,11 @@ assert.equal(diagramResults.measurementResults['PEOU::PEOU1'].loading, 0.812)
 assert.equal(diagramResults.measurementResults['PEOU::PEOU1'].weight, 0.412)
 assert.equal(diagramResults.constructScores.ATT.r2, 0.42)
 
+const bootstrapDiagramResults = buildTarkDiagramResults(savedAnalyses, savedModel)
+assert.equal(bootstrapDiagramResults.pathResults['PEOU-ATT'].tStat, 7.013)
+assert.ok(bootstrapDiagramResults.pathResults['PEOU-ATT'].pValue < 0.05)
+assert.equal(bootstrapDiagramResults.constructScores.ATT.q2, 0.231)
+
 const micomResults = {
   groups: {
     groupingVariable: 'Gender',

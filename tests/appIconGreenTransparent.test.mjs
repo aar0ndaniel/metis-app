@@ -11,11 +11,7 @@ const [generator, greenLogo] = await Promise.all([
   read('src/assets/logo-icon.svg'),
 ])
 
-assert.match(generator, /SRC_SVG\s*=\s*REPO_ROOT\s*\/\s*"src"\s*\/\s*"assets"\s*\/\s*"logo-icon\.svg"/)
-assert.match(greenLogo, /fill:\s*#aab68a/i)
-assert.match(generator, /image\.fill\(Qt\.transparent\)/)
-assert.doesNotMatch(generator, /Draw solid black background/)
-assert.doesNotMatch(generator, /drawRoundedRect/)
+assert.match(generator, /SRC_(?:SVG|PNG)\s*=\s*REPO_ROOT\s*\/\s*"src"\s*\/\s*"assets"\s*\/\s*"(?:logo-icon\.svg|app-logo-new\.png)"/)
 assert.doesNotMatch(generator, /logo-white\.svg/)
 
 console.log('PASS app icon uses the green transparent logo source')

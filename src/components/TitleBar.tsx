@@ -27,6 +27,7 @@ interface TitleBarProps {
   currentScreen?: 'home' | 'canvas' | 'results' | 'import'
   theme?: 'Dark' | 'Light'
   activeModelName?: string
+  isPreferencesOpen?: boolean
 }
 
 function buildTarkMenu(): MenuItem[] {
@@ -40,6 +41,7 @@ function buildHelpMenu(): MenuItem[] {
     { type: 'item', label: 'Documentation', shortcut: 'F1', action: 'open-docs' },
     { type: 'item', label: 'Getting Started', action: 'open-tour' },
     { type: 'separator' },
+    { type: 'item', label: 'Rate Metis', action: 'open-rate-metis' },
     { type: 'item', label: 'Feedback', action: 'open-feedback' },
     { type: 'item', label: 'Report a Bug', action: 'open-report-bug' },
     { type: 'item', label: 'Cite Metis', action: 'open-cite-metis' },
@@ -163,7 +165,7 @@ function MenuDropdown({
   return (
     <div
       ref={ref}
-      className="absolute top-0 left-0 mt-0 z-50 rounded-[10px] border overflow-visible"
+      className="absolute top-0 left-0 mt-0 z-[2500] rounded-[10px] border overflow-visible"
       style={{
         width,
         backgroundColor: 'var(--color-surface)',
@@ -285,13 +287,19 @@ function MenuDropdown({
 }
 
 // ─── TitleBar ──────────────────────────────────────────────────────────────────
-export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activeModelName = '' }: TitleBarProps) {
+export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activeModelName = '', isPreferencesOpen = false }: TitleBarProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [showVars, setShowVars] = useState(true)
   const [showProps, setShowProps] = useState(true)
   const [showZoomControl, setShowZoomControl] = useState(true)
   const [isMaximized, setIsMaximized] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
+
+  useEffect(() => {
+    if (isPreferencesOpen) {
+      setOpenMenu(null)
+    }
+  }, [isPreferencesOpen])
   const [recentModels, setRecentModels] = useState<{ id: string; name: string }[]>([])
   const [showAdvancedHint, setShowAdvancedHint] = useState(false)
   const [showLogoHint, setShowLogoHint] = useState(false)
@@ -376,6 +384,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
   }, [showProps, showVars, showZoomControl])
 
   const toggleMenu = (label: string) => {
+    if (isPreferencesOpen) return
     if (label === 'Analysis') setShowAdvancedHint(false)
     setOpenMenu((prev) => (prev === label ? null : label))
   }
@@ -453,9 +462,22 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
     <div className="relative flex items-center no-drag shrink-0" style={{ ...({ WebkitAppRegion: 'no-drag' } as any) }}>
       <button
         className="flex items-center no-drag shrink-0"
-        style={{ gap: isMac ? 0 : 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+        disabled={isPreferencesOpen}
+        style={{
+          gap: isMac ? 0 : 8,
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          cursor: isPreferencesOpen ? 'default' : 'pointer',
+          pointerEvents: isPreferencesOpen ? 'none' : 'auto',
+          opacity: isPreferencesOpen ? 0.6 : 1,
+        }}
         title={currentScreen === 'home' ? 'Return to last model' : 'Go to workspace home'}
-        onClick={() => window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'toggle-home-canvas' } }))}
+        onClick={() => {
+          if (!isPreferencesOpen) {
+            window.dispatchEvent(new CustomEvent('pls:action', { detail: { action: 'toggle-home-canvas' } }))
+          }
+        }}
       >
         <div
           className="flex items-center justify-center shrink-0"
@@ -485,7 +507,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
 
       {currentScreen === 'canvas' && showLogoHint && (
         <div
-          className="absolute left-0 top-full z-50 mt-2"
+          className="absolute left-0 top-full z-[2500] mt-2"
           style={{ pointerEvents: 'none' }}
         >
           <div
@@ -528,7 +550,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
 
   return (
     <div
-      className="flex items-center shrink-0 select-none drag-region relative z-50"
+      className="flex items-center shrink-0 select-none drag-region relative z-[2500]"
       style={{
         height: 36,
         padding: isMac ? (isFullScreen ? '0 16px' : '0 16px 0 80px') : '0 0 0 16px',
@@ -576,19 +598,25 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
             <div className="relative h-full flex items-center">
             <button
               id={menu.label === 'Analysis' ? 'tour-analysis-menu' : menu.label === 'Tark it' ? 'tour-tark' : menu.label === 'Help' ? 'tour-help' : undefined}
+              disabled={isPreferencesOpen}
               className="px-3 h-7 rounded-[6px] text-[13px] font-medium outline-none"
               style={{
                 color: openMenu === menu.label ? 'var(--color-text-secondary-alt)' : 'var(--color-title-tab)',
                 backgroundColor: 'transparent',
-                fontFamily: 'Inter, DM Sans, sans-serif'
+                fontFamily: 'Inter, DM Sans, sans-serif',
+                cursor: isPreferencesOpen ? 'default' : 'pointer',
+                pointerEvents: isPreferencesOpen ? 'none' : 'auto',
+                opacity: isPreferencesOpen ? 0.5 : 1,
               }}
               onClick={() => {
+                if (isPreferencesOpen) return
                 toggleMenu(menu.label)
                 if (menu.label === 'Analysis') {
                   window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'analysis-opened' } }))
                 }
               }}
               onMouseEnter={() => {
+                if (isPreferencesOpen) return
                 if (openMenu && openMenu !== menu.label) {
                   setOpenMenu(menu.label)
                 }
@@ -599,7 +627,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
 
             {menu.label === 'Analysis' && showAdvancedHint && (
               <div
-                className="absolute left-1/2 top-full z-40 mt-2 -translate-x-1/2"
+                className="absolute left-1/2 top-full z-[2500] mt-2 -translate-x-1/2"
                 style={{ pointerEvents: 'none' }}
               >
                 <div
@@ -643,7 +671,7 @@ export default function TitleBar({ currentScreen = 'home', theme = 'Dark', activ
             )}
             
             {openMenu === menu.label && (
-              <div className="absolute top-full left-0 mt-0.5 z-50">
+              <div className="absolute top-full left-0 mt-0.5 z-[2500]">
                 <MenuDropdown 
                   items={menu.items} 
                   width={menu.width} 

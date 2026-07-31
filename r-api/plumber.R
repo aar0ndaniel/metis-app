@@ -25,12 +25,12 @@ max_cached_pls_cores <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PLS_CO
    if (is.na(value) || value < 1) default_value else value
  }
  
- analysis_timeout_seconds <- read_timeout_seconds("METIS_ANALYSIS_TIMEOUT_SECONDS", 180)
- bootstrap_timeout_seconds <- read_timeout_seconds("METIS_BOOTSTRAP_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
- plspredict_timeout_seconds <- read_timeout_seconds("METIS_PLSPREDICT_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
- advanced_analysis_timeout_seconds <- read_timeout_seconds("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 600))
- permutation_analysis_timeout_seconds <- read_timeout_seconds("METIS_PERMUTATION_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 900))
- multi_group_analysis_timeout_seconds <- read_timeout_seconds("METIS_MULTI_GROUP_ANALYSIS_TIMEOUT_SECONDS", max(bootstrap_timeout_seconds, 900))
+ analysis_timeout_seconds <- read_timeout_seconds("METIS_ANALYSIS_TIMEOUT_SECONDS", 300)
+ bootstrap_timeout_seconds <- read_timeout_seconds("METIS_BOOTSTRAP_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 1800))
+ plspredict_timeout_seconds <- read_timeout_seconds("METIS_PLSPREDICT_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 1200))
+ advanced_analysis_timeout_seconds <- read_timeout_seconds("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 1200))
+ permutation_analysis_timeout_seconds <- read_timeout_seconds("METIS_PERMUTATION_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 1800))
+ multi_group_analysis_timeout_seconds <- read_timeout_seconds("METIS_MULTI_GROUP_ANALYSIS_TIMEOUT_SECONDS", max(bootstrap_timeout_seconds, 1800))
  
  if (is.na(max_dataset_bytes) || max_dataset_bytes <= 0) max_dataset_bytes <- 209715200
  if (is.na(max_dataset_rows) || max_dataset_rows < 1L) max_dataset_rows <- 100000L

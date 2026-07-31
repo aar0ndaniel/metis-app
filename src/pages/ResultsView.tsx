@@ -465,15 +465,12 @@ function getDerivedModerationPanelData(
   savedModel: any,
   analysisResults: any,
 ): any | null {
-  if (mode === 'pls-sem') {
+  if (mode === 'pls-sem' || mode === 'bootstrap') {
     if (panelId === 'moderation-summary') return deriveModerationSummaryRows(savedModel, analysisResults)
     if (panelId === 'moderation-slopes') return deriveModerationSlopeRows(savedModel, analysisResults)
     if (panelId === 'moderation-slope-chart') return deriveModerationSlopeRows(savedModel, analysisResults)
     if (panelId === 'moderation-r2-change') return deriveModerationR2ChangeRows(savedModel, analysisResults)
-  }
-
-  if (mode === 'bootstrap' && panelId === 'moderation-bootstrap') {
-    return deriveModerationBootstrapRows(savedModel, analysisResults)
+    if (panelId === 'moderation-bootstrap') return deriveModerationBootstrapRows(savedModel, analysisResults)
   }
 
   return null
@@ -2583,8 +2580,6 @@ function readSavedModelSnapshot(modelId?: string): { constructs: CanvasConstruct
   const workspaceSnapshot = readModelSnapshotFromWorkspaceCache(modelId)
   if (workspaceSnapshot) return workspaceSnapshot
 
-  if (modelId) return null
-
   try {
     const raw = readSharedStorageValue('results-canvas-model') || readSharedStorageValue('canvas-model')
     return raw ? cloneResultsModelSnapshot(JSON.parse(raw) as { constructs: CanvasConstruct[]; paths: CanvasPath[] }) : null
@@ -4388,17 +4383,72 @@ function ModerationSlopeChartPanel({
   rows: Array<Record<string, unknown>>
   label?: string
 }) {
-  const chartSvg = buildModerationSlopeChartSvg(savedModel, analysisResults)
-  if (!chartSvg || !rows.length) return <EmptyTableState label={label} />
+  const chartSvg = useMemo(() => {
+    return buildModerationSlopeChartSvg(savedModel, analysisResults)
+  }, [savedModel, analysisResults])
+
+  const effectiveRows = useMemo(() => {
+    if (Array.isArray(rows) && rows.length > 0) return rows
+    return deriveModerationSlopeRows(savedModel, analysisResults)
+  }, [rows, savedModel, analysisResults])
+
+  if (!chartSvg || !effectiveRows.length) return <EmptyTableState label={label} />
+
+  const handleCopySvg = async () => {
+    try {
+      await navigator.clipboard.writeText(chartSvg)
+      dispatchToast('success', 'Chart SVG copied', 'Paste into your document or design tool.')
+    } catch (error: any) {
+      dispatchToast('error', 'Copy failed', error?.message || 'Could not copy chart SVG.')
+    }
+  }
+
+  const handleDownloadSvg = () => {
+    try {
+      const blob = new Blob([chartSvg], { type: 'image/svg+xml' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'moderation-slope-plot.svg'
+      a.click()
+      URL.revokeObjectURL(url)
+      dispatchToast('success', 'Chart SVG downloaded', 'moderation-slope-plot.svg')
+    } catch (error: any) {
+      dispatchToast('error', 'Download failed', error?.message || 'Could not download chart SVG.')
+    }
+  }
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between px-1">
+        <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+          Slope Plot Visualization
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCopySvg}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded border border-border/70 bg-card hover:bg-hover transition-colors text-text-secondary"
+            title="Copy SVG to clipboard"
+          >
+            <Copy size={13} />
+            <span>Copy SVG</span>
+          </button>
+          <button
+            onClick={handleDownloadSvg}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded border border-border/70 bg-card hover:bg-hover transition-colors text-text-secondary"
+            title="Download SVG file"
+          >
+            <Download size={13} />
+            <span>Download SVG</span>
+          </button>
+        </div>
+      </div>
       <div
-        className="overflow-hidden rounded-lg border border-border/50 bg-white p-3"
+        className="w-full overflow-x-auto rounded-lg border border-border/70 bg-surface text-text-primary p-4 flex flex-col items-center gap-6 shadow-sm min-h-[360px]"
         dangerouslySetInnerHTML={{ __html: chartSvg }}
       />
       <GenericDataTable
-        data={rows}
+        data={effectiveRows}
         selectedPanel="moderation-slopes"
         emptyLabel={label}
         savedModel={savedModel}
@@ -4550,7 +4600,7 @@ function TablePanel({
   // Derive real data from analysisResults
   const pathRows      = parsePathCoefficients(tableAnalysisResults)
   const rSquareRows   = parseRSquare(tableAnalysisResults)
-  const moderationR2Rows = analysisMode === 'pls-sem'
+  const moderationR2Rows = (analysisMode === 'pls-sem' || analysisMode === 'bootstrap')
     ? deriveModerationR2ChangeRows(savedModel, tableAnalysisResults)
     : []
   const reliRows      = parseReliability(tableAnalysisResults)
@@ -4592,6 +4642,29 @@ function TablePanel({
     : []
   const panelRows = rowsFromData(panelData)
   const modelHasInteractions = hasModerationInteractions(savedModel, analysisResults)
+
+  const modCoeffsAvailable = (selectedPanel === 'moderation-slopes' || selectedPanel === 'moderation-slope-chart') && modelHasInteractions
+    ? hasModerationSlopeCoefficients(savedModel, analysisResults)
+    : undefined
+
+  if (selectedPanel === 'moderation-slopes' || selectedPanel === 'moderation-slope-chart') {
+    console.warn('[MODERATION-DIAGNOSTIC]', {
+      selectedPanel,
+      effectiveSelectedPanel,
+      analysisMode,
+      modelHasInteractions,
+      modCoeffsAvailable,
+      savedModelConstructsCount: savedModel?.constructs?.length,
+      savedModelPathsCount: savedModel?.paths?.length,
+      moderationPaths: savedModel?.paths?.filter((p: any) => p?.kind === 'moderation'),
+      hasAnalysisResults: !!analysisResults,
+      analysisResultsKeys: analysisResults ? Object.keys(analysisResults) : [],
+      pathCoefficientsRaw: analysisResults?.final_results?.path_coefficients ?? (analysisResults as any)?.results?.final_results?.path_coefficients,
+      derivedSlopeRows: deriveModerationSlopeRows(savedModel, analysisResults),
+      panelRowsCount: panelRows.length,
+    })
+  }
+
   const cvpatPlaceholderRows = rowsContainOnlyMessage(panelRows)
   const cvpatRequested = readPlsPredictSettingsFromResults(analysisResults).cvpatEnabled
   const cvpatStatus = String((analysisResults as any)?.meta?.cvpat_status ?? '').trim().toLowerCase()
@@ -4609,10 +4682,7 @@ function TablePanel({
     hasRows: panelRows.length > 0 && !cvpatPlaceholderRows,
     hasMediationPaths: modelHasMediationPaths(savedModel),
     hasInteractions: modelHasInteractions,
-    hasInteractionCoefficients:
-      (selectedPanel === 'moderation-slopes' || selectedPanel === 'moderation-slope-chart') && modelHasInteractions
-        ? hasModerationSlopeCoefficients(savedModel, analysisResults)
-        : undefined,
+    hasInteractionCoefficients: modCoeffsAvailable,
     hasFormativeWeights: Array.isArray(savedModel?.constructs)
       ? savedModel.constructs.some((construct: any) => String(construct?.type || '').toLowerCase() === 'formative')
       : undefined,
@@ -5190,10 +5260,8 @@ export default function ResultsView() {
   }, [savedModel])
 
   const moderationAvailable = useMemo(
-    () => analysisMode === 'mga'
-      ? modelHasSavedModerationPaths(savedModel)
-      : hasModerationInteractions(savedModel, analysisResults),
-    [analysisMode, savedModel, analysisResults],
+    () => modelHasSavedModerationPaths(savedModel) || hasModerationInteractions(savedModel, analysisResults),
+    [savedModel, analysisResults],
   )
   const hasHigherOrderConstructs = useMemo(
     () => modelHasHigherOrderConstructs(savedModel, analysisResults),
@@ -6039,7 +6107,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           : derivedRows.length
             ? derivedRows
             : rows
-        const moderationR2Rows = analysisMode === 'pls-sem'
+        const moderationR2Rows = (analysisMode === 'pls-sem' || analysisMode === 'bootstrap')
           ? deriveModerationR2ChangeRows(savedModel, analysisResults)
           : []
         const exportDisplayRows = item.id === 'r-square'

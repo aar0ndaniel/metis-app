@@ -15,7 +15,8 @@ import {
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import logoBlack from '../assets/logo-black.svg'
 import logoWhite from '../assets/logo-white.svg'
-import { APP_BRAND_NAME } from '../config/appBranding'
+import setupImg from '../assets/setup.png'
+import { APP_BASE_RELEASE_LABEL, APP_BRAND_NAME, APP_EDITION } from '../config/appBranding'
 
 type Phase = 'options' | 'installing' | 'complete'
 type SetupTheme = 'Dark' | 'Light'
@@ -85,20 +86,17 @@ const STAGE_LABELS: Record<InstallStage, { label: string; detail: string }> = {
   workspace: { label: 'Creating workspace', detail: 'Creating metis folder' },
   'finding-r': { label: 'Detecting R', detail: `Checking ${RSCRIPT_LABEL}` },
   'r-paused': { label: 'R not found', detail: `Choose ${RSCRIPT_LABEL} to continue` },
-  packages: { label: 'Checking packages', detail: 'Verifying seminr, plumber, semPower...' },
-  'pkgs-failed': { label: 'Packages missing', detail: 'Run the snippet below in R' },
+  packages: { label: 'Checking packages', detail: 'Verifying seminr, plumber, semPower…' },
+  'pkgs-failed': { label: 'Packages missing', detail: 'Copy and run install command in R' },
   finalizing: { label: 'Saving setup', detail: 'Saving configuration' },
 }
 
 const DEFAULT_ROOT_PATH = ''
 const FF = 'Matter, sans-serif'
 const ACCENT_HEX = 'var(--color-accent)'
-const ACCENT_RGB = 'var(--color-accent-rgb)'
 const TEXT_PRIMARY = 'var(--color-text-primary)'
 const TEXT_SECONDARY = 'var(--color-text-secondary)'
 const TEXT_MUTED = 'rgb(var(--color-text-secondary-rgb) / 0.72)'
-const BORDER_SOFT = 'var(--color-floating-border-soft)'
-const BORDER_STRONG = 'var(--color-floating-border)'
 const DRAG_REGION_STYLE: CSSProperties & { WebkitAppRegion?: 'drag' | 'no-drag' } = {
   WebkitAppRegion: 'drag',
 }
@@ -174,18 +172,19 @@ function displayBrandName() {
   return APP_BRAND_NAME ? `${APP_BRAND_NAME[0].toUpperCase()}${APP_BRAND_NAME.slice(1)}` : 'Metis'
 }
 
+// ── Action button (No bold font for CTA) ──────────────────────────────────────
 function ActionButton({
   children,
   onClick,
   primary = false,
   disabled = false,
-  compact = false,
+  isLight = false,
 }: {
   children: React.ReactNode
   onClick?: () => void
   primary?: boolean
   disabled?: boolean
-  compact?: boolean
+  isLight?: boolean
 }) {
   return (
     <button
@@ -194,19 +193,23 @@ function ActionButton({
       onClick={onClick}
       style={{
         ...NO_DRAG_STYLE,
-        minWidth: compact ? 0 : primary ? 88 : 78,
-        height: compact ? 34 : 38,
-        padding: compact ? '0 12px' : '0 18px',
-        borderRadius: 8,
-        background: disabled ? 'var(--color-elevated)' : primary ? ACCENT_HEX : 'var(--color-input)',
-        border: primary ? `1px solid rgb(${ACCENT_RGB} / 0.42)` : `1px solid ${BORDER_SOFT}`,
-        color: disabled ? TEXT_MUTED : primary ? 'var(--color-on-accent)' : TEXT_PRIMARY,
+        minWidth: primary ? 64 : 54,
+        height: 28,
+        padding: '0 12px',
+        borderRadius: 7,
+        background: disabled
+          ? isLight ? '#F6F6F6' : '#262626'
+          : primary ? (isLight ? '#7E9362' : ACCENT_HEX) : 'transparent',
+        border: 'none',
+        color: disabled
+          ? isLight ? '#A0A0A0' : TEXT_MUTED
+          : primary ? '#FFFFFF' : (isLight ? '#444444' : TEXT_SECONDARY),
         fontFamily: FF,
-        fontSize: compact ? 12 : 13,
-        fontWeight: 700,
+        fontSize: 11,
+        fontWeight: 500, // Avoid bold font in CTA
         cursor: disabled ? 'default' : 'pointer',
         opacity: disabled ? 0.78 : 1,
-        boxShadow: primary && !disabled ? `0 8px 16px rgb(${ACCENT_RGB} / 0.28)` : 'none',
+        boxShadow: primary && !disabled ? (isLight ? '0 2px 6px rgba(126,147,98,0.22)' : `0 2px 6px rgb(var(--color-accent-rgb) / 0.22)`) : 'none',
         whiteSpace: 'nowrap',
       }}
     >
@@ -215,159 +218,75 @@ function ActionButton({
   )
 }
 
-function LogoMark({ logoSrc, pulse = false }: { logoSrc: string; pulse?: boolean }) {
+// ── Theme toggle pill ────────────────────────────────────────────────────────
+function ThemeToggle({
+  theme,
+  onThemeChange,
+  isLight,
+}: {
+  theme: SetupTheme
+  onThemeChange: (theme: SetupTheme) => void
+  isLight: boolean
+}) {
   return (
     <div
       style={{
-        width: 44,
-        height: 44,
-        borderRadius: 12,
-        background: 'rgb(var(--color-accent-rgb) / 0.08)',
-        border: `1px solid rgb(${ACCENT_RGB} / 0.24)`,
-        display: 'flex',
+        ...NO_DRAG_STYLE,
+        display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-        flexShrink: 0,
+        borderRadius: 999,
+        padding: 2,
+        background: isLight ? '#F6F6F6' : '#262626',
+        border: 'none',
       }}
     >
-      <img
-        src={logoSrc}
-        alt=""
-        style={{
-          width: '66%',
-          height: '66%',
-          maxWidth: 29,
-          maxHeight: 29,
-          display: 'block',
-          objectFit: 'contain',
-          flexShrink: 0,
-          animation: pulse ? 'logo-pulse 2.4s ease-in-out infinite' : 'none',
-        }}
-      />
+      {THEME_OPTIONS.map((option) => {
+        const active = theme === option
+        const Icon = option === 'Light' ? Sun : Moon
+        return (
+          <button
+            key={option}
+            type="button"
+            onClick={() => onThemeChange(option)}
+            aria-pressed={active}
+            style={{
+              height: 20,
+              minWidth: 46,
+              borderRadius: 999,
+              border: 'none',
+              background: active ? (isLight ? '#FFFFFF' : '#333333') : 'transparent',
+              color: active ? (isLight ? '#222222' : '#FFFFFF') : (isLight ? '#777777' : '#888888'),
+              fontFamily: FF,
+              fontSize: 9,
+              fontWeight: 500,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 3,
+              letterSpacing: 0.3,
+              boxShadow: active ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              transition: 'background 150ms, color 150ms',
+            }}
+          >
+            <Icon size={9} />
+            {option.toUpperCase()}
+          </button>
+        )
+      })}
     </div>
   )
 }
 
-function StatusMark({
-  tone,
-  children,
-}: {
-  tone: 'warning' | 'success' | 'package'
-  children: React.ReactNode
-}) {
-  const colors = tone === 'success'
-    ? { bg: 'rgb(var(--color-accent-rgb) / 0.12)', border: 'rgb(var(--color-accent-rgb) / 0.30)', icon: ACCENT_HEX }
-    : tone === 'warning'
-      ? { bg: 'rgb(var(--color-warning-rgb) / 0.12)', border: 'rgb(var(--color-warning-rgb) / 0.32)', icon: 'var(--color-warning)' }
-      : { bg: 'rgb(var(--color-warning-rgb) / 0.12)', border: 'rgb(var(--color-warning-rgb) / 0.32)', icon: 'var(--color-warning)' }
-
-  return (
-    <div
-      style={{
-        width: 44,
-        height: 44,
-        borderRadius: 12,
-        background: colors.bg,
-        border: `1px solid ${colors.border}`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: colors.icon,
-        flexShrink: 0,
-      }}
-    >
-      {children}
-    </div>
-  )
-}
-
-function Header({
-  mark,
-  title,
-  subtitle,
-}: {
-  mark: React.ReactNode
-  title: string
-  subtitle: string
-}) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, padding: '28px 28px 4px', ...DRAG_REGION_STYLE }}>
-      {mark}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <h1 style={{ margin: 0, color: TEXT_PRIMARY, fontFamily: FF, fontSize: 22, fontWeight: 800, lineHeight: 1.1 }}>
-          {title}
-        </h1>
-        <p style={{ margin: 0, color: TEXT_SECONDARY, fontFamily: FF, fontSize: 13, lineHeight: 1.45 }}>
-          {subtitle}
-        </p>
-      </div>
-    </div>
-  )
-}
-
-function AppearanceChoice({ theme, onThemeChange }: { theme: SetupTheme; onThemeChange: (theme: SetupTheme) => void }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
-        Appearance
-      </span>
-      <div
-        style={{
-          ...NO_DRAG_STYLE,
-          width: 'fit-content',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          padding: 4,
-          borderRadius: 10,
-          background: 'var(--color-elevated)',
-          border: `1px solid ${BORDER_SOFT}`,
-        }}
-      >
-        {THEME_OPTIONS.map((option) => {
-          const active = theme === option
-          const Icon = option === 'Light' ? Sun : Moon
-          return (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onThemeChange(option)}
-              aria-pressed={active}
-              style={{
-                height: 28,
-                minWidth: 74,
-                borderRadius: 7,
-                border: `1px solid ${active ? BORDER_SOFT : 'transparent'}`,
-                background: active ? 'var(--color-input)' : 'transparent',
-                color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
-                fontFamily: FF,
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 7,
-                boxShadow: active ? '0 2px 6px rgb(15 18 25 / 0.06)' : 'none',
-              }}
-            >
-              <Icon size={12} />
-              {option}
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function LanguageChoice({
+// ── Language dropdown ────────────────────────────────────────────────────────
+function LanguageDropdown({
   selectedLanguage,
   setSelectedLanguage,
+  isLight,
 }: {
   selectedLanguage: SetupLanguage
   setSelectedLanguage: (language: SetupLanguage) => void
+  isLight: boolean
 }) {
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -384,136 +303,104 @@ function LanguageChoice({
   }, [open])
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
-        Language
-      </span>
-      <div ref={dropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
-        <button
-          type="button"
-          onClick={() => setOpen((prev) => !prev)}
-          aria-haspopup="listbox"
-          aria-expanded={open}
-          style={{
-            ...NO_DRAG_STYLE,
-            height: 36,
-            minWidth: 140,
-            padding: '0 12px',
-            borderRadius: 8,
-            background: 'var(--color-input)',
-            border: `1px solid ${BORDER_STRONG}`,
-            color: TEXT_PRIMARY,
-            fontFamily: FF,
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Globe size={14} color={TEXT_SECONDARY} />
-            <span>{selectedLanguage}</span>
-          </div>
-          <CaretDown
-            size={12}
-            color={TEXT_SECONDARY}
-            style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 150ms' }}
-          />
-        </button>
-
-        {open && (
-          <div
-            role="listbox"
-            style={{
-              ...NO_DRAG_STYLE,
-              position: 'absolute',
-              top: '100%',
-              marginTop: 4,
-              left: 0,
-              width: '100%',
-              minWidth: 140,
-              borderRadius: 8,
-              background: 'var(--color-elevated)',
-              border: `1px solid ${BORDER_SOFT}`,
-              padding: 4,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 2,
-              boxShadow: '0 8px 20px rgba(0,0,0,0.22)',
-              zIndex: 50,
-            }}
-          >
-            {LANGUAGE_OPTIONS.map((option) => {
-              const active = selectedLanguage === option
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  role="option"
-                  aria-selected={active}
-                  onClick={() => {
-                    setSelectedLanguage(option)
-                    setOpen(false)
-                  }}
-                  style={{
-                    height: 28,
-                    padding: '0 8px',
-                    borderRadius: 6,
-                    border: 'none',
-                    background: active ? 'var(--color-input)' : 'transparent',
-                    color: active ? TEXT_PRIMARY : TEXT_SECONDARY,
-                    fontFamily: FF,
-                    fontSize: 12,
-                    fontWeight: active ? 700 : 500,
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    textAlign: 'left',
-                  }}
-                >
-                  <span>{option}</span>
-                  {active && <Check size={12} color={ACCENT_HEX} weight="bold" />}
-                </button>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function ProgressStep({ label, done, active }: { label: string; done: boolean; active: boolean }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <span
+    <div ref={dropdownRef} style={{ ...NO_DRAG_STYLE, position: 'relative', display: 'inline-block' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         style={{
-          width: 18,
-          height: 18,
-          borderRadius: '50%',
-          background: done ? `rgb(${ACCENT_RGB} / 0.18)` : active ? 'var(--color-input)' : 'var(--color-elevated)',
-          border: `1px solid ${done ? `rgb(${ACCENT_RGB} / 0.34)` : active ? `rgb(${ACCENT_RGB} / 0.22)` : BORDER_SOFT}`,
+          height: 24,
+          minWidth: 88,
+          padding: '0 7px',
+          borderRadius: 6,
+          background: isLight ? '#F6F6F6' : '#262626',
+          border: 'none',
+          color: isLight ? '#222222' : TEXT_PRIMARY,
+          fontFamily: FF,
+          fontSize: 9.5,
+          fontWeight: 500,
+          cursor: 'pointer',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'center',
-          color: done ? ACCENT_HEX : TEXT_MUTED,
-          flexShrink: 0,
+          justifyContent: 'space-between',
+          gap: 4,
         }}
       >
-        {done ? <Check size={11} weight="bold" /> : <span style={{ width: 6, height: 6, borderRadius: '50%', background: active ? ACCENT_HEX : TEXT_MUTED, opacity: active ? 1 : 0.5 }} />}
-      </span>
-      <span style={{ color: done || active ? TEXT_PRIMARY : TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: active ? 700 : 600 }}>
-        {label}
-      </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <Globe size={10} color={isLight ? '#666666' : TEXT_SECONDARY} />
+          <span>{selectedLanguage}</span>
+        </div>
+        <CaretDown
+          size={9}
+          color={isLight ? '#666666' : TEXT_SECONDARY}
+          style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform 150ms' }}
+        />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: 'absolute',
+            top: '100%',
+            marginTop: 3,
+            left: 0,
+            width: '100%',
+            minWidth: 100,
+            borderRadius: 7,
+            background: isLight ? '#FFFFFF' : '#262626',
+            border: 'none',
+            padding: 2,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 1,
+            boxShadow: '0 6px 16px rgba(0,0,0,0.14)',
+            zIndex: 50,
+          }}
+        >
+          {LANGUAGE_OPTIONS.map((option) => {
+            const active = selectedLanguage === option
+            return (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={active}
+                onClick={() => {
+                  setSelectedLanguage(option)
+                  setOpen(false)
+                }}
+                style={{
+                  height: 22,
+                  padding: '0 6px',
+                  borderRadius: 4,
+                  border: 'none',
+                  background: active ? (isLight ? '#F6F6F6' : '#333333') : 'transparent',
+                  color: active ? (isLight ? '#222222' : TEXT_PRIMARY) : (isLight ? '#666666' : TEXT_SECONDARY),
+                  fontFamily: FF,
+                  fontSize: 9.5,
+                  fontWeight: active ? 600 : 400,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 5,
+                  textAlign: 'left',
+                }}
+              >
+                <span>{option}</span>
+                {active && <Check size={9} color={isLight ? '#7E9362' : ACCENT_HEX} weight="bold" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
 
+// ── Main component ───────────────────────────────────────────────────────────
 export default function SetupWizard() {
   const api = (window as any).electronAPI
 
@@ -539,8 +426,20 @@ export default function SetupWizard() {
   const [copied, setCopied] = useState(false)
   const [selectedTheme, setSelectedTheme] = useState<SetupTheme>(() => getInitialSetupTheme())
   const [selectedLanguage, setSelectedLanguage] = useState<SetupLanguage>(() => getInitialSetupLanguage())
+  const [telemetryConsent, setTelemetryConsent] = useState<'pending' | 'accepted' | 'declined'>('pending')
   const logoSrc = selectedTheme === 'Light' ? logoBlack : logoWhite
   const brand = displayBrandName()
+  const editionLabel = APP_EDITION === 'Lite' ? 'lite' : 'bundle'
+  const isLight = selectedTheme === 'Light'
+
+  const headerTitleColor = isLight ? '#7E9362' : '#FFFFFF'
+  const leftCardBg = isLight ? '#F0F4EC' : '#262626'
+  const rightBg = isLight ? '#FFFFFF' : 'var(--color-surface)'
+  const childItemBg = isLight ? '#F6F6F6' : '#262626'
+  const childTextColor = isLight ? '#222222' : TEXT_PRIMARY
+  const childMutedColor = isLight ? '#666666' : TEXT_MUTED
+  const editionPillBg = isLight ? '#F6F6F6' : '#262626'
+  const editionPillColor = isLight ? '#555555' : TEXT_SECONDARY
 
   const handleThemeChange = (theme: SetupTheme) => {
     setSelectedTheme(theme)
@@ -562,7 +461,7 @@ export default function SetupWizard() {
   }, [selectedLanguage])
 
   const displayPath = rootPath.trim()
-    ? `${rootPath.trim().replace(/[\\/]+$/, '')}${PATH_SEPARATOR}metis`
+    ? `${rootPath.trim().replace(/[\/\\]+$/, '')}${PATH_SEPARATOR}metis`
     : ''
 
   const missingPkgs = REQUIRED_PKGS.filter((p) => pkgStatus[p] === false)
@@ -608,6 +507,23 @@ export default function SetupWizard() {
       return () => window.clearTimeout(t)
     }
   }, [phase, progress])
+
+  useEffect(() => {
+    if (phase !== 'complete' || telemetryConsent !== 'pending') return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        handleTelemetryChoice(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [phase, telemetryConsent])
+
+  const handleTelemetryChoice = (consent: boolean) => {
+    setTelemetryConsent(consent ? 'accepted' : 'declined')
+    void (window as any).electronAPI?.setTelemetryConsent?.(consent)
+  }
 
   const handleBrowse = async () => {
     setIsBrowsing(true)
@@ -720,15 +636,14 @@ export default function SetupWizard() {
   const handleRetryFindR = async () => {
     const root = rootPath.trim()
     if (!root) return
-    const detectedPath = await detectRscript()
-    if (!detectedPath) return
-    await continueWithR(detectedPath, root)
-  }
-
-  const handleContinueWithManualR = async () => {
     const p = manualRPath.trim()
-    if (!p) return
-    await continueWithR(p, rootPath.trim())
+    if (p) {
+      await continueWithR(p, root)
+    } else {
+      const detectedPath = await detectRscript()
+      if (!detectedPath) return
+      await continueWithR(detectedPath, root)
+    }
   }
 
   const handleReverify = async () => {
@@ -785,449 +700,285 @@ export default function SetupWizard() {
         ? 'Saving setup'
         : activeStep.detail
 
-  const setupSteps = [
-    { label: 'Workspace', done: stage !== 'workspace' || progress > 8 || installDone, active: stage === 'workspace' },
-    { label: 'Detect R', done: stage === 'packages' || stage === 'finalizing' || installDone, active: stage === 'finding-r' },
-    { label: 'Packages', done: stage === 'finalizing' || installDone, active: stage === 'packages' },
-    { label: 'Save setup', done: installDone, active: stage === 'finalizing' },
-  ]
+  // ── Header status icon ───────────────────────────────────────────────────
+  const renderStatusIcon = () => {
+    if (phase === 'complete') return <Check size={11} weight="bold" color={isLight ? '#7E9362' : ACCENT_HEX} />
+    if (stage === 'r-paused') return <WarningCircle size={11} weight="fill" color="var(--color-warning)" />
+    if (stage === 'pkgs-failed') return <Package size={11} weight="fill" color="var(--color-warning)" />
+    return null
+  }
 
-  const renderHeader = () => {
+  const getHeaderTitle = () => {
+    if (phase === 'complete') return 'Setup complete'
+    if (stage === 'r-paused') return "R wasn't found"
+    if (stage === 'pkgs-failed') return missingPackageCount ? `${missingPackageCount} packages missing` : 'Packages missing'
+    if (phase === 'installing') return `Setting up ${brand}`
+    return `Set up ${brand} Lite`
+  }
+
+  // ── Right panel body ─────────────────────────────────────────────────────
+  const renderBody = () => {
+    // ── Complete ──
     if (phase === 'complete') {
       return (
-        <Header
-          mark={<StatusMark tone="success"><Check size={22} weight="bold" /></StatusMark>}
-          title="Setup complete"
-          subtitle={`${brand} is configured and ready to launch.`}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, justifyContent: 'center' }}>
+          <div>
+            <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5, fontWeight: 500 }}>Workspace</span>
+            <p style={{ margin: '1px 0 0', color: childTextColor, fontFamily: FF, fontSize: 9.5, lineHeight: 1.35, wordBreak: 'break-all' }}>
+              {displayPath}
+            </p>
+          </div>
+
+          {telemetryConsent === 'pending' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5, fontWeight: 500 }}>
+                Anonymous telemetry (optional)
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                <button
+                  type="button"
+                  onClick={() => handleTelemetryChoice(false)}
+                  style={{
+                    ...NO_DRAG_STYLE, flex: 1, height: 24, borderRadius: 6,
+                    background: childItemBg, border: 'none',
+                    color: childTextColor, fontFamily: FF, fontSize: 9.5, fontWeight: 500, cursor: 'pointer',
+                  }}
+                >No thanks</button>
+                <button
+                  type="button"
+                  onClick={() => handleTelemetryChoice(true)}
+                  style={{
+                    ...NO_DRAG_STYLE, flex: 1, height: 24, borderRadius: 6,
+                    background: childItemBg, border: 'none',
+                    color: isLight ? '#7E9362' : ACCENT_HEX, fontFamily: FF, fontSize: 9.5, fontWeight: 500, cursor: 'pointer',
+                  }}
+                >Allow</button>
+              </div>
+            </div>
+          ) : (
+            <span style={{ color: isLight ? '#7E9362' : ACCENT_HEX, fontFamily: FF, fontSize: 9.5, fontWeight: 500 }}>
+              ✓ {telemetryConsent === 'accepted' ? 'Ping sent.' : 'Ping declined.'}
+            </span>
+          )}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <Check size={11} color={isLight ? '#7E9362' : ACCENT_HEX} weight="bold" />
+            <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5 }}>
+              All {REQUIRED_PKGS.length} required packages verified.
+            </span>
+          </div>
+        </div>
       )
     }
+
+    // ── R not found ──
     if (stage === 'r-paused') {
       return (
-        <Header
-          mark={<StatusMark tone="warning"><WarningCircle size={22} weight="fill" /></StatusMark>}
-          title="R wasn't found"
-          subtitle="Point us to your R install, or download it."
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, justifyContent: 'center' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5, fontWeight: 500 }}>
+              Locate {RSCRIPT_LABEL}
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <input
+                value={manualRPath}
+                onChange={(e) => setManualRPath(e.target.value)}
+                placeholder={RSCRIPT_PLACEHOLDER}
+                spellCheck={false}
+                style={{
+                  ...NO_DRAG_STYLE, flex: 1, minWidth: 0, height: 24, borderRadius: 6,
+                  background: childItemBg, border: 'none',
+                  color: childTextColor, padding: '0 7px', fontFamily: FF, fontSize: 9.5, outline: 'none',
+                }}
+              />
+              <button
+                type="button"
+                onClick={handleBrowseR}
+                disabled={rBrowsing}
+                title="Browse Rscript location"
+                style={{
+                  ...NO_DRAG_STYLE, height: 24, width: 24, borderRadius: 6,
+                  background: 'transparent', border: 'none',
+                  color: childTextColor, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                }}
+              >
+                <FolderOpen size={14} color={childMutedColor} />
+              </button>
+            </div>
+          </div>
+
+          {/* Download R hint - NO background, NO border */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6, padding: '2px 0', borderRadius: 0,
+            background: 'transparent', border: 'none',
+          }}>
+            <Info size={11} color={isLight ? '#7E9362' : ACCENT_HEX} weight="bold" style={{ flexShrink: 0 }} />
+            <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5, flex: 1 }}>
+              Need R 4.0+?
+            </span>
+            <button
+              type="button"
+              onClick={handleDownloadR}
+              style={{
+                ...NO_DRAG_STYLE, height: 20, padding: '0 6px', borderRadius: 5,
+                background: childItemBg, border: 'none',
+                color: isLight ? '#7E9362' : ACCENT_HEX, fontFamily: FF, fontSize: 9.5, fontWeight: 500,
+                cursor: 'pointer', flexShrink: 0,
+              }}
+            >
+              Download
+            </button>
+          </div>
+        </div>
       )
     }
+
+    // ── Packages failed ──
     if (stage === 'pkgs-failed') {
       return (
-        <Header
-          mark={<StatusMark tone="package"><Package size={22} weight="fill" /></StatusMark>}
-          title={missingPackageCount ? `${missingPackageCount} packages missing` : 'Packages missing'}
-          subtitle="Run the snippet below in R, then re-verify."
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, justifyContent: 'center', minHeight: 0 }}>
+          {/* Missing package pills - WRAPS and non-bold text */}
+          {missingPkgs.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 54, overflowY: 'auto' }}>
+              {missingPkgs.map((pkg) => (
+                <span
+                  key={pkg}
+                  style={{
+                    borderRadius: 999,
+                    background: 'rgba(217, 107, 77, 0.12)',
+                    border: 'none',
+                    color: 'var(--color-danger)',
+                    fontFamily: FF,
+                    fontSize: 9,
+                    fontWeight: 500, // Avoid bold text
+                    padding: '1px 6px',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {pkg}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Concise "Run in R / RStudio" action with copy icon (takes minimal space!) */}
+          <div style={{
+            borderRadius: 6, background: childItemBg, border: 'none',
+            padding: '5px 8px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6,
+          }}>
+            <span style={{ color: childTextColor, fontFamily: FF, fontSize: 9.5, fontWeight: 500 }}>
+              Run script in R or RStudio
+            </span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              disabled={!installCmd}
+              title="Copy package installation script"
+              style={{
+                ...NO_DRAG_STYLE, height: 22, padding: '0 6px', borderRadius: 4,
+                background: isLight ? '#FFFFFF' : '#333333', border: 'none',
+                color: copied ? (isLight ? '#7E9362' : ACCENT_HEX) : childTextColor, fontFamily: FF, fontSize: 9.5, fontWeight: 500,
+                display: 'flex', alignItems: 'center', gap: 4,
+                cursor: installCmd ? 'pointer' : 'default',
+              }}
+            >
+              {copied ? <Check size={10} weight="bold" /> : <Copy size={10} />}
+              <span>{copied ? 'Copied' : 'Copy script'}</span>
+            </button>
+          </div>
+        </div>
       )
     }
+
+    // ── Installing (progress) ──
+    if (phase === 'installing') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, justifyContent: 'center' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: childTextColor, fontFamily: FF, fontSize: 10.5, fontWeight: 600 }}>
+              {activeStep.label}
+            </span>
+            <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5, fontWeight: 600 }}>
+              {Math.floor(progress)}%
+            </span>
+          </div>
+          <div style={{ width: '100%', height: 4, borderRadius: 999, background: childItemBg, overflow: 'hidden' }}>
+            <div
+              style={{
+                width: `${progress}%`, height: '100%', borderRadius: 999,
+                background: isLight ? '#7E9362' : ACCENT_HEX, boxShadow: isLight ? '0 0 6px rgba(126,147,98,0.4)' : `0 0 6px rgb(var(--color-accent-rgb) / 0.32)`,
+                transition: 'width 520ms cubic-bezier(0.22, 1, 0.36, 1)',
+              }}
+            />
+          </div>
+          <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5 }}>{progressDetail}</span>
+        </div>
+      )
+    }
+
+    // ── Options ──
     return (
-      <Header
-        mark={<LogoMark logoSrc={logoSrc} pulse={phase === 'installing'} />}
-        title={phase === 'installing' ? `Setting up ${brand}` : `Set up ${brand} Lite`}
-        subtitle={phase === 'installing' ? 'Verifying your R install and packages.' : 'Uses your existing R 4.0+ install.'}
-      />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, flex: 1, justifyContent: 'center' }}>
+        {/* Theme + Language in a row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'nowrap' }}>
+          <ThemeToggle theme={selectedTheme} onThemeChange={handleThemeChange} isLight={isLight} />
+          <LanguageDropdown selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} isLight={isLight} />
+        </div>
+
+        {/* Folder */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <span style={{ color: childMutedColor, fontFamily: FF, fontSize: 9.5, fontWeight: 500 }}>
+            Workspace folder
+          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <input
+              value={displayPath}
+              onChange={(e) => {
+                const raw = e.target.value
+                const stripped = raw.replace(/[\/\\]metis$/i, '')
+                setRootPath(stripped)
+                setInstallError('')
+              }}
+              spellCheck={false}
+              placeholder="Choose a directory..."
+              style={{
+                ...NO_DRAG_STYLE, flex: 1, minWidth: 0, height: 24, borderRadius: 6,
+                background: childItemBg,
+                border: 'none',
+                color: childTextColor, padding: '0 7px', fontFamily: FF, fontSize: 9.5, outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleBrowse}
+              disabled={isBrowsing}
+              type="button"
+              title="Browse directory"
+              style={{
+                ...NO_DRAG_STYLE, height: 24, width: 24, borderRadius: 6,
+                background: 'transparent', border: 'none',
+                color: childTextColor, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+              }}
+            >
+              <FolderOpen size={14} color={childMutedColor} />
+            </button>
+          </div>
+          {installError && (
+            <span style={{ color: 'var(--color-danger)', fontFamily: FF, fontSize: 9 }}>
+              {installError}
+            </span>
+          )}
+        </div>
+      </div>
     )
   }
 
-  const renderOptions = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, flex: 1 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
-          Workspace folder
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            value={displayPath}
-            onChange={(e) => {
-              const raw = e.target.value
-              const stripped = raw.replace(/[\\/]metis$/i, '')
-              setRootPath(stripped)
-              setInstallError('')
-            }}
-            spellCheck={false}
-            placeholder="Choose a directory..."
-            style={{
-              ...NO_DRAG_STYLE,
-              flex: 1,
-              minWidth: 0,
-              height: 36,
-              borderRadius: 8,
-              background: 'var(--color-input)',
-              border: `1px solid ${installError ? 'rgba(217,107,77,0.52)' : BORDER_STRONG}`,
-              color: TEXT_PRIMARY,
-              padding: '0 10px',
-              fontFamily: FF,
-              fontSize: 12,
-              outline: 'none',
-            }}
-          />
-          <button
-            onClick={handleBrowse}
-            disabled={isBrowsing}
-            type="button"
-            style={{
-              ...NO_DRAG_STYLE,
-              height: 36,
-              padding: '0 12px',
-              borderRadius: 8,
-              background: 'var(--color-input)',
-              border: `1px solid ${BORDER_STRONG}`,
-              color: TEXT_PRIMARY,
-              fontFamily: FF,
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              flexShrink: 0,
-            }}
-          >
-            <FolderOpen size={14} /> Browse
-          </button>
-        </div>
-        {installError && (
-          <span style={{ color: 'var(--color-danger)', fontFamily: FF, fontSize: 11 }}>
-            {installError}
-          </span>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 20, flexWrap: 'wrap' }}>
-        <AppearanceChoice theme={selectedTheme} onThemeChange={handleThemeChange} />
-        <LanguageChoice selectedLanguage={selectedLanguage} setSelectedLanguage={setSelectedLanguage} />
-      </div>
-    </div>
-  )
-
-  const renderInstalling = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, flex: 1 }}>
-      <div
-        style={{
-          borderRadius: 12,
-          background: 'transparent',
-          border: 'none',
-          padding: '14px 16px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 10,
-        }}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 13, fontWeight: 700 }}>
-            {activeStep.label}
-          </span>
-          <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
-            {Math.floor(progress)}%
-          </span>
-        </div>
-        <div style={{ width: '100%', height: 8, borderRadius: 999, background: 'var(--color-input)', overflow: 'hidden' }}>
-          <div
-            style={{
-              width: `${progress}%`,
-              height: '100%',
-              borderRadius: 999,
-              background: ACCENT_HEX,
-              boxShadow: `0 0 12px rgb(${ACCENT_RGB} / 0.32)`,
-              transition: 'width 520ms cubic-bezier(0.22, 1, 0.36, 1)',
-            }}
-          />
-        </div>
-        <span style={{ color: TEXT_MUTED, fontFamily: FF, fontSize: 12 }}>
-          {progressDetail}
-        </span>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 4 }}>
-        {setupSteps.map((step) => (
-          <ProgressStep key={step.label} label={step.label} done={step.done} active={step.active} />
-        ))}
-      </div>
-    </div>
-  )
-
-  const renderRPaused = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>
-          Locate {RSCRIPT_LABEL}
-        </span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            value={manualRPath}
-            onChange={(e) => setManualRPath(e.target.value)}
-            placeholder={RSCRIPT_PLACEHOLDER}
-            spellCheck={false}
-            style={{
-              ...NO_DRAG_STYLE,
-              flex: 1,
-              minWidth: 0,
-              height: 36,
-              borderRadius: 8,
-              background: 'var(--color-input)',
-              border: `1px solid ${BORDER_STRONG}`,
-              color: TEXT_PRIMARY,
-              padding: '0 10px',
-              fontFamily: FF,
-              fontSize: 12,
-              outline: 'none',
-            }}
-          />
-          <button
-            type="button"
-            onClick={handleBrowseR}
-            disabled={rBrowsing}
-            style={{
-              ...NO_DRAG_STYLE,
-              height: 36,
-              padding: '0 12px',
-              borderRadius: 8,
-              background: 'var(--color-input)',
-              border: `1px solid ${BORDER_STRONG}`,
-              color: TEXT_PRIMARY,
-              fontFamily: FF,
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              flexShrink: 0,
-            }}
-          >
-            <FolderOpen size={14} /> Browse
-          </button>
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span style={{ height: 1, flex: 1, background: BORDER_SOFT }} />
-        <span style={{ color: TEXT_MUTED, fontFamily: FF, fontSize: 11, fontWeight: 700 }}>or</span>
-        <span style={{ height: 1, flex: 1, background: BORDER_SOFT }} />
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, borderRadius: 12, background: 'transparent', border: 'none', padding: '14px 16px' }}>
-        <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--color-input)', border: `1px solid ${BORDER_SOFT}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: ACCENT_HEX, flexShrink: 0 }}>
-          <Info size={16} weight="bold" />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0, flex: 1 }}>
-          <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 700 }}>Need R?</span>
-          <span style={{ color: TEXT_MUTED, fontFamily: FF, fontSize: 11 }}>Install R 4.0+ first.</span>
-        </div>
-        <button
-          type="button"
-          onClick={handleDownloadR}
-          style={{
-            ...NO_DRAG_STYLE,
-            height: 34,
-            padding: '0 12px',
-            borderRadius: 8,
-            background: 'var(--color-input)',
-            border: `1px solid rgb(${ACCENT_RGB} / 0.22)`,
-            color: ACCENT_HEX,
-            fontFamily: FF,
-            fontSize: 12,
-            fontWeight: 700,
-            cursor: 'pointer',
-            flexShrink: 0,
-          }}
-        >
-          Download
-        </button>
-      </div>
-    </div>
-  )
-
-  const renderPackagesFailed = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1, minHeight: 0 }}>
-      {missingPkgs.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-          {missingPkgs.slice(0, 4).map((pkg) => (
-            <span
-              key={pkg}
-              style={{
-                borderRadius: 6,
-                background: 'rgba(217, 107, 77, 0.10)',
-                border: '1px solid rgba(217, 107, 77, 0.22)',
-                color: 'var(--color-danger)',
-                fontFamily: FF,
-                fontSize: 11,
-                fontWeight: 700,
-                padding: '5px 9px',
-              }}
-            >
-              {pkg}
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div style={{ borderRadius: 10, background: 'var(--color-elevated)', border: `1px solid ${BORDER_SOFT}`, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: `1px solid ${BORDER_SOFT}` }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: ACCENT_HEX }} />
-            <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 11, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase' }}>
-              Run in R
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={handleCopy}
-            disabled={!installCmd}
-            style={{
-              ...NO_DRAG_STYLE,
-              height: 26,
-              padding: '0 10px',
-              borderRadius: 6,
-              background: 'var(--color-input)',
-              border: `1px solid ${BORDER_SOFT}`,
-              color: copied ? ACCENT_HEX : TEXT_PRIMARY,
-              fontFamily: FF,
-              fontSize: 11,
-              fontWeight: 700,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 5,
-              cursor: installCmd ? 'pointer' : 'default',
-            }}
-          >
-            {copied ? <Check size={11} weight="bold" /> : <Copy size={11} />}
-            {copied ? 'Copied' : 'Copy'}
-          </button>
-        </div>
-        <pre
-          style={{
-            margin: 0,
-            padding: '12px 14px',
-            maxHeight: 82,
-            overflowY: 'auto',
-            color: TEXT_PRIMARY,
-            fontFamily: '"Fira Code", Consolas, monospace',
-            fontSize: 10.5,
-            lineHeight: 1.45,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          }}
-        >
-          {installCmd || 'Install the missing packages in R, then re-verify.'}
-        </pre>
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <Info size={13} color={TEXT_MUTED} />
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 11 }}>
-          After running, click Re-verify below.
-        </span>
-      </div>
-    </div>
-  )
-
-  const [telemetryConsent, setTelemetryConsent] = useState<'pending' | 'accepted' | 'declined'>('pending')
-
-  useEffect(() => {
-    if (phase !== 'complete' || telemetryConsent !== 'pending') return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        handleTelemetryChoice(false)
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [phase, telemetryConsent])
-
-  const handleTelemetryChoice = (consent: boolean) => {
-    setTelemetryConsent(consent ? 'accepted' : 'declined')
-    void (window as any).electronAPI?.setTelemetryConsent?.(consent)
-  }
-
-  const renderComplete = () => (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, flex: 1 }}>
-      <div style={{ background: 'transparent', border: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>Workspace</span>
-        <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, lineHeight: 1.45, wordBreak: 'break-all' }}>
-          {displayPath}
-        </span>
-      </div>
-
-      <div style={{ background: 'transparent', border: 'none', padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <span style={{ color: TEXT_PRIMARY, fontFamily: FF, fontSize: 12, fontWeight: 500 }}>
-          Anonymous Installation Telemetry (Optional)
-        </span>
-        <p style={{ margin: 0, color: TEXT_SECONDARY, fontFamily: FF, fontSize: 11.5, lineHeight: 1.45 }}>
-          Send a single non-identifying ping (OS, App Version, CPU Arch) to help report adoption metrics to research grant funders. No research data or personal info leaves your computer.
-        </p>
-        {telemetryConsent === 'pending' ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4 }}>
-            <button
-              type="button"
-              onClick={() => handleTelemetryChoice(false)}
-              style={{
-                ...NO_DRAG_STYLE,
-                flex: 1,
-                height: 32,
-                borderRadius: 8,
-                background: 'var(--color-input)',
-                border: `1px solid ${BORDER_STRONG}`,
-                color: TEXT_PRIMARY,
-                fontFamily: FF,
-                fontSize: 11.5,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              No Thanks (Esc)
-            </button>
-            <button
-              type="button"
-              onClick={() => handleTelemetryChoice(true)}
-              style={{
-                ...NO_DRAG_STYLE,
-                flex: 1,
-                height: 32,
-                borderRadius: 8,
-                background: 'var(--color-input)',
-                border: `1px solid rgb(${ACCENT_RGB} / 0.35)`,
-                color: ACCENT_HEX,
-                fontFamily: FF,
-                fontSize: 11.5,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Send Anonymous Ping
-            </button>
-          </div>
-        ) : (
-          <span style={{ color: ACCENT_HEX, fontFamily: FF, fontSize: 11.5, fontWeight: 600 }}>
-            ✓ Preference recorded ({telemetryConsent === 'accepted' ? 'Ping sent' : 'Ping declined'}).
-          </span>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '2px 0' }}>
-        <Check size={14} color={ACCENT_HEX} weight="bold" />
-        <span style={{ color: TEXT_SECONDARY, fontFamily: FF, fontSize: 12 }}>
-          All {REQUIRED_PKGS.length} required packages verified.
-        </span>
-      </div>
-    </div>
-  )
-
-  const renderBody = () => {
-    if (phase === 'complete') return renderComplete()
-    if (stage === 'r-paused') return renderRPaused()
-    if (stage === 'pkgs-failed') return renderPackagesFailed()
-    if (phase === 'installing') return renderInstalling()
-    return renderOptions()
-  }
-
+  // ── Actions footer ───────────────────────────────────────────────────────
   const renderActions = () => {
     if (phase === 'options') {
       return (
         <>
-          <ActionButton onClick={handleCancel}>Cancel</ActionButton>
-          <ActionButton primary onClick={handleInstall} disabled={!rootPath.trim()}>Continue</ActionButton>
+          <ActionButton isLight={isLight} onClick={handleCancel}>Cancel</ActionButton>
+          <ActionButton isLight={isLight} primary onClick={handleInstall} disabled={!rootPath.trim()}>Continue</ActionButton>
         </>
       )
     }
@@ -1235,23 +986,22 @@ export default function SetupWizard() {
       if (stage === 'r-paused') {
         return (
           <>
-            <ActionButton onClick={handleRetryFindR} compact>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <ArrowClockwise size={13} /> Try again
+            <ActionButton isLight={isLight} onClick={handleCancel}>Cancel</ActionButton>
+            <ActionButton isLight={isLight} primary onClick={handleRetryFindR}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <ArrowClockwise size={10} weight="bold" /> Retry
               </span>
             </ActionButton>
-            <ActionButton onClick={handleCancel}>Cancel</ActionButton>
-            <ActionButton primary onClick={handleContinueWithManualR} disabled={!manualRPath.trim()}>Continue</ActionButton>
           </>
         )
       }
       if (stage === 'pkgs-failed') {
         return (
           <>
-            <ActionButton onClick={handleCancel}>Cancel</ActionButton>
-            <ActionButton primary onClick={handleReverify}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <ArrowClockwise size={13} weight="bold" /> Re-verify
+            <ActionButton isLight={isLight} onClick={handleCancel}>Cancel</ActionButton>
+            <ActionButton isLight={isLight} primary onClick={handleReverify}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <ArrowClockwise size={10} weight="bold" /> Re-verify
               </span>
             </ActionButton>
           </>
@@ -1259,38 +1009,155 @@ export default function SetupWizard() {
       }
       return (
         <>
-          <ActionButton onClick={handleCancel}>Cancel</ActionButton>
+          <ActionButton isLight={isLight} onClick={handleCancel}>Cancel</ActionButton>
         </>
       )
     }
     return (
       <>
-        <ActionButton onClick={handleCancel}>Finish</ActionButton>
-        <ActionButton primary onClick={() => api?.launchApp?.()}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <RocketLaunch size={14} weight="fill" /> Launch {brand}
+        <ActionButton isLight={isLight} onClick={handleCancel}>Finish</ActionButton>
+        <ActionButton isLight={isLight} primary onClick={() => api?.launchApp?.()}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <RocketLaunch size={10} weight="fill" /> Launch
           </span>
         </ActionButton>
       </>
     )
   }
 
+  const statusIcon = renderStatusIcon()
+
   return (
-    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: 'var(--color-surface)', padding: 0 }}>
+    <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', background: rightBg, padding: 0 }}>
       <style>{`
         @keyframes logo-pulse { 0%,100% { opacity:0.88; transform:scale(1); } 50% { opacity:1; transform:scale(1.04); } }
         * { box-sizing: border-box; }
       `}</style>
 
-      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--color-surface)', overflow: 'hidden' }}>
-        {renderHeader()}
+      <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'row', overflow: 'hidden', padding: 6 }}>
 
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: stage === 'pkgs-failed' ? '14px 28px 12px' : '16px 28px', minHeight: 0 }}>
-          {renderBody()}
+        {/* ── Left panel: equal 50% width rounded container ── */}
+        <div
+          style={{
+            ...DRAG_REGION_STYLE,
+            width: '50%',
+            minWidth: '50%',
+            maxWidth: '50%',
+            height: '100%',
+            background: leftCardBg,
+            borderRadius: 14,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden',
+            position: 'relative',
+            flexShrink: 0,
+            padding: 8,
+          }}
+        >
+          <img
+            src={setupImg}
+            alt=""
+            draggable={false}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              objectPosition: 'center center',
+              display: 'block',
+              userSelect: 'none',
+              pointerEvents: 'none',
+            }}
+            onError={(e) => {
+              ;(e.target as HTMLImageElement).style.display = 'none'
+            }}
+          />
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: stage === 'r-paused' ? 'space-between' : 'flex-end', gap: 8, padding: '16px 28px', borderTop: 'none' }}>
-          {renderActions()}
+        {/* ── Right panel: equal 50% width content ── */}
+        <div
+          style={{
+            width: '50%',
+            minWidth: '50%',
+            maxWidth: '50%',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            background: rightBg,
+            padding: '8px 12px 6px 12px',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Header: logo + brand + version + edition pill on extreme right */}
+          <div style={{ ...DRAG_REGION_STYLE, display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6, flexShrink: 0, width: '100%' }}>
+            {statusIcon ? (
+              <span style={{ flexShrink: 0 }}>{statusIcon}</span>
+            ) : (
+              <img
+                src={logoSrc}
+                alt=""
+                style={{
+                  width: 18,
+                  height: 18,
+                  objectFit: 'contain',
+                  flexShrink: 0,
+                  filter: isLight ? 'invert(52%) sepia(21%) saturate(735%) hue-rotate(48deg) brightness(92%) contrast(85%)' : 'none',
+                  animation: phase === 'installing' && stage !== 'r-paused' && stage !== 'pkgs-failed'
+                    ? 'logo-pulse 2.4s ease-in-out infinite'
+                    : 'none',
+                }}
+              />
+            )}
+            <span style={{ color: headerTitleColor, fontFamily: FF, fontSize: 15, fontWeight: 800, letterSpacing: -0.2 }}>
+              {brand} {APP_BASE_RELEASE_LABEL}
+            </span>
+            <span
+              style={{
+                marginLeft: 'auto',
+                height: 18,
+                padding: '0 7px',
+                borderRadius: 999,
+                border: 'none',
+                background: editionPillBg,
+                color: editionPillColor,
+                fontFamily: FF,
+                fontSize: 9.5,
+                fontWeight: 500,
+                display: 'inline-flex',
+                alignItems: 'center',
+                letterSpacing: 0.1,
+              }}
+            >
+              {editionLabel}
+            </span>
+          </div>
+
+          {/* Status subtitle for error/complete states */}
+          {(stage === 'r-paused' || stage === 'pkgs-failed' || phase === 'complete') && (
+            <div style={{ marginBottom: 4, flexShrink: 0 }}>
+              <span style={{ color: headerTitleColor, fontFamily: FF, fontSize: 11, fontWeight: 800, letterSpacing: -0.1 }}>
+                {getHeaderTitle()}
+              </span>
+            </div>
+          )}
+
+          {/* Body content */}
+          {renderBody()}
+
+          {/* Actions */}
+          <div
+            style={{
+              ...NO_DRAG_STYLE,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-end',
+              gap: 5,
+              marginTop: 6,
+              flexShrink: 0,
+            }}
+          >
+            {renderActions()}
+          </div>
         </div>
       </div>
     </div>

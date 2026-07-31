@@ -1090,6 +1090,7 @@ function AppShell() {
       if (action === 'open-tark')        { setTarkOpen(true); return }
       if (action === 'open-about')       { setPrefsInitialTab('updates'); setPrefsOpen(true); return }
       if (action === 'open-docs')        { openMetisExternal(METIS_DOCS_URL); return }
+      if (action === 'open-rate-metis')   { setShowRateMetis(true); return }
       if (action === 'open-feedback')    { openMetisExternal(METIS_FEEDBACK_URL); return }
       if (action === 'open-report-bug')  { openMetisExternal(METIS_BUG_REPORT_URL); return }
       if (action === 'open-cite-metis')  { openMetisExternal(METIS_CITATION_URL); return }
@@ -1373,7 +1374,7 @@ function AppShell() {
             : 'Browser mode: window.electronAPI is not available. Run `npm run electron:dev` to test native file dialogs and the R/Plumber backend.'}
         </div>
       )}
-      {!isInstallerPreview && <TitleBar currentScreen={currentScreen} theme={theme} activeModelName={activeTitleModelName} />}
+      {!isInstallerPreview && <TitleBar currentScreen={currentScreen} theme={theme} activeModelName={activeTitleModelName} isPreferencesOpen={prefsOpen} />}
       <div className="flex-1 overflow-hidden">
         <LocalizationRuntime />
         <Routes>

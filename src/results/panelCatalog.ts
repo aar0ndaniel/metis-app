@@ -396,13 +396,26 @@ export function getPanelSectionsForMode(mode: AnalysisMode, options: PanelCatalo
   }
 
   if (mode === 'bootstrap') {
+    const qualitySection = sections.find((section) => section.id === 'base-model-quality')
+    const rSquareIndex = qualitySection?.items.findIndex((item) => item.id === 'r-square') ?? -1
+    if (qualitySection && rSquareIndex >= 0) {
+      qualitySection.items.splice(rSquareIndex + 1, 0, {
+        id: 'moderation-r2-change',
+        label: 'R² change',
+        iconKey: 'graph',
+      })
+    }
+
     const structuralIndex = sections.findIndex((section) => section.id === 'resampled-structural-effects')
     sections.splice(structuralIndex >= 0 ? structuralIndex + 1 : sections.length, 0, {
       id: 'moderation-effects',
       label: 'Moderation effects',
       defaultOpen: true,
       items: [
-        { id: 'moderation-bootstrap', label: 'Interaction effects', iconKey: 'table' },
+        { id: 'moderation-summary', label: 'Interaction effects', iconKey: 'table' },
+        { id: 'moderation-bootstrap', label: 'Bootstrap interaction CIs', iconKey: 'table' },
+        { id: 'moderation-slopes', label: 'Simple slope analysis', iconKey: 'table' },
+        { id: 'moderation-slope-chart', label: 'Slope plot', iconKey: 'graph' },
       ],
     })
   }

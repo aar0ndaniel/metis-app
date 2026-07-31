@@ -4,6 +4,33 @@ This document serves as a living record of recent queries, changes, logs, and th
 
 Project by Aaron Daniel Akuteye on Saturday, March 14, 2026, 6:50:27 PM.
 
+## 2026-07-30 — PLS-SEM Moderation Simple Slopes & Slope Plot Diagnostic Fixes
+
+### User Request
+- Fix PLS-SEM Moderation analysis so that the Simple Slope Analysis table and Slope Plot render results instead of displaying the empty state message.
+- Ensure interaction construct names (IV, Moderator, DV) display their real construct names on axes, titles, and legends instead of generic `"IV"`, `"DV"`, `"Low (-1 SD)"`.
+- Eliminate construct name text overflow in the SVG slope plot.
+- Provide full dark mode and light mode theme adaptation for the SVG slope plot and panel containers using app CSS color variables.
+
+### Implemented
+- **Array Serialization Unwrapping (`src/results/panelDerivedData.ts`)**:
+  - Identified R `jsonlite` serialization returning 1-element arrays for row properties (e.g. `from: ["IV*Mod"]`, `to: ["DV"]`, `coefficient: [-0.0271]`).
+  - Added `extractString()` helper and updated `toFiniteNumber()`, `readRowValue()`, and `parsePathFromRow()` to unwrap 1-element string and numeric arrays. This fixed the string type check error where `typeof row.from` evaluated to `'object'`, restoring path coefficient lookups from size 0 to the full path set.
+- **Construct Names & Legend Formatting (`src/results/panelDerivedData.ts`)**:
+  - Updated `deriveModerationSlopeRows` so `Moderator_level` includes the actual moderator construct name (e.g. `Low Academic Self-Efficacy (-1 SD)`, `Mean Academic Self-Efficacy (0)`, `High Academic Self-Efficacy (+1 SD)`).
+  - Updated `buildModerationSlopeChartSvg` to use exact construct names for X-axis (`ivName`), Y-axis (`dvName`), tick labels, and chart title (`IV * Moderator → DV`).
+- **SVG Layout & Overflow Prevention (`src/results/panelDerivedData.ts`)**:
+  - Expanded SVG canvas to `740x400` with left margin `88px` and right margin `230px` to give ample space for long construct names and legend labels.
+  - Added `truncateLabelText()` helper and embedded SVG `<title>` tooltips on all text elements so long construct names render cleanly without overflow and show full names on hover.
+- **Dark Theme Adaptation (`src/results/panelDerivedData.ts` & `src/pages/ResultsView.tsx`)**:
+  - Replaced hardcoded `bg-white` container in `ResultsView.tsx` with `bg-surface text-text-primary border-border/70`.
+  - Replaced hardcoded SVG colors (`#ffffff`, `#111827`, `#374151`) with CSS variables (`var(--color-surface)`, `var(--color-text-primary)`, `var(--color-text-secondary)`, `var(--color-border)`, `var(--color-accent)`, `var(--color-danger)`, `var(--color-success)`), making the SVG adapt automatically to dark and light mode.
+
+### Verification
+- Passed: `npx tsc --noEmit` (0 type errors).
+- Passed: Vite HMR runtime rendering verified cleanly.
+
+
 ## 2026-07-28 - Isolated per-moderator R² Change table & Moderation Slope Plot Fixes
 
 ### User Request

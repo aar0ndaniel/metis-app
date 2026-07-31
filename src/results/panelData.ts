@@ -1016,13 +1016,10 @@ export function getPanelDataFromResults(
 ): any {
   const results = unwrapAnalysisResults(analysisResults)
 
-  if (mode === 'pls-sem') {
+  if (mode === 'pls-sem' || mode === 'bootstrap') {
     if (panelId === 'moderation-summary') return deriveModerationSummaryRows(options.savedModel, results)
     if (panelId === 'moderation-slopes' || panelId === 'moderation-slope-chart') return deriveModerationSlopeRows(options.savedModel, results)
     if (panelId === 'moderation-r2-change') return deriveModerationR2ChangeRows(options.savedModel, results)
-  }
-
-  if (mode === 'bootstrap') {
     if (panelId === 'moderation-bootstrap') return deriveModerationBootstrapRows(options.savedModel, results)
   }
 

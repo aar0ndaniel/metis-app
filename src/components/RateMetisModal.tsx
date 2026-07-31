@@ -1,16 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  PaperPlaneTilt,
-  X,
-  SmileyAngry,
-  SmileySad,
-  SmileyNervous,
-  SmileyMeh,
-  Smiley,
-  SmileyWink,
-  SmileySticker,
-} from '@phosphor-icons/react'
+import { PaperPlaneTilt, X } from '@phosphor-icons/react'
 import {
   getAccentOption,
   METIS_PREF_ACCENT_COLOR_KEY,
@@ -31,14 +21,112 @@ interface RateMetisModalProps {
   error?: string
 }
 
+// ─── Custom Vector SVG Faces matching each feeling description ────────────────
+function FaceTerrible({ size = 36, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="18" r="15" />
+      {/* Angry eyebrows */}
+      <path d="M10 12.5L15 15.5" />
+      <path d="M26 12.5L21 15.5" />
+      {/* Squeezed angry eyes */}
+      <path d="M11 17L15 17" />
+      <path d="M21 17L25 17" />
+      {/* Angry downward frown */}
+      <path d="M12 25Q18 19 24 25" />
+    </svg>
+  )
+}
+
+function FaceDisappointed({ size = 36, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="18" r="15" />
+      {/* Sad eyes */}
+      <circle cx="13" cy="15" r="1.8" fill={color} stroke="none" />
+      <circle cx="23" cy="15" r="1.8" fill={color} stroke="none" />
+      {/* Sad drooping eyebrows */}
+      <path d="M10 12Q13 13.5 15 12" />
+      <path d="M26 12Q23 13.5 21 12" />
+      {/* Sad curved mouth */}
+      <path d="M13 24.5Q18 20.5 23 24.5" />
+    </svg>
+  )
+}
+
+function FaceUneasy({ size = 36, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="18" r="15" />
+      {/* Worried eyes */}
+      <circle cx="13" cy="15" r="2" fill={color} stroke="none" />
+      <circle cx="23" cy="15" r="2" fill={color} stroke="none" />
+      {/* Uneasy wavy mouth */}
+      <path d="M12 23.5Q15 21.5 18 23.5T24 22.5" />
+    </svg>
+  )
+}
+
+function FaceNeutral({ size = 36, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="18" r="15" />
+      {/* Calm neutral eyes */}
+      <circle cx="13" cy="15" r="1.9" fill={color} stroke="none" />
+      <circle cx="23" cy="15" r="1.9" fill={color} stroke="none" />
+      {/* Flat neutral mouth */}
+      <line x1="13" y1="23" x2="23" y2="23" />
+    </svg>
+  )
+}
+
+function FaceSatisfied({ size = 36, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="18" r="15" />
+      {/* Content curved eyes */}
+      <path d="M10 15.5Q13 12.5 16 15.5" />
+      <path d="M20 15.5Q23 12.5 26 15.5" />
+      {/* Gentle smiling mouth */}
+      <path d="M12 22Q18 26.5 24 22" />
+    </svg>
+  )
+}
+
+function FaceHappy({ size = 36, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="18" r="15" />
+      {/* Happy winking eye + open eye */}
+      <path d="M10 15.5Q13 12.5 16 15.5" />
+      <circle cx="23" cy="15" r="2" fill={color} stroke="none" />
+      {/* Open smile mouth */}
+      <path d="M12 21Q18 27.5 24 21Z" fill={color} />
+    </svg>
+  )
+}
+
+function FaceDelighted({ size = 36, color = 'currentColor' }: { size?: number; color?: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 36 36" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="18" cy="18" r="15" />
+      {/* Star eyes */}
+      <polygon points="13,10 14.2,13 17,13.4 15,15.3 15.5,18 13,16.7 10.5,18 11,15.3 9,13.4 11.8,13" fill={color} stroke="none" />
+      <polygon points="23,10 24.2,13 27,13.4 25,15.3 25.5,18 23,16.7 20.5,18 21,15.3 19,13.4 21.8,13" fill={color} stroke="none" />
+      {/* Broad joyful open laughing mouth */}
+      <path d="M11 20.5Q18 28.5 25 20.5Z" fill={color} />
+    </svg>
+  )
+}
+
 const feelings = [
-  { rating: 1, Icon: SmileyAngry, emoji: '😣', label: 'Terrible' },
-  { rating: 2, Icon: SmileySad, emoji: '😞', label: 'Disappointed' },
-  { rating: 3, Icon: SmileyNervous, emoji: '😕', label: 'Uneasy' },
-  { rating: 4, Icon: SmileyMeh, emoji: '😐', label: 'Neutral' },
-  { rating: 5, Icon: Smiley, emoji: '🙂', label: 'Satisfied' },
-  { rating: 6, Icon: SmileyWink, emoji: '😄', label: 'Happy' },
-  { rating: 7, Icon: SmileySticker, emoji: '🤩', label: 'Delighted' },
+  { rating: 1, Icon: FaceTerrible, animClass: 'animate-rate-shake', emoji: '😣', label: 'Terrible' },
+  { rating: 2, Icon: FaceDisappointed, animClass: 'animate-rate-sad-pulse', emoji: '😞', label: 'Disappointed' },
+  { rating: 3, Icon: FaceUneasy, animClass: 'animate-rate-wobble', emoji: '😕', label: 'Uneasy' },
+  { rating: 4, Icon: FaceNeutral, animClass: 'animate-rate-breath', emoji: '😐', label: 'Neutral' },
+  { rating: 5, Icon: FaceSatisfied, animClass: 'animate-rate-pop', emoji: '🙂', label: 'Satisfied' },
+  { rating: 6, Icon: FaceHappy, animClass: 'animate-rate-bounce', emoji: '😄', label: 'Happy' },
+  { rating: 7, Icon: FaceDelighted, animClass: 'animate-rate-spin-burst', emoji: '🤩', label: 'Delighted' },
 ] as const
 
 export default function RateMetisModal({ theme, onSubmit, onCancel, submitting = false, error = '' }: RateMetisModalProps) {
@@ -78,6 +166,52 @@ export default function RateMetisModal({ theme, onSubmit, onCancel, submitting =
         if (event.target === event.currentTarget && !submitting) onCancel()
       }}
     >
+      <style>{`
+        @keyframes rateShake {
+          0%, 100% { transform: scale(1.28) rotate(0deg); }
+          20% { transform: scale(1.28) rotate(-7deg); }
+          40% { transform: scale(1.28) rotate(7deg); }
+          60% { transform: scale(1.28) rotate(-4deg); }
+          80% { transform: scale(1.28) rotate(4deg); }
+        }
+        @keyframes rateSadPulse {
+          0%, 100% { transform: scale(1.26) translateY(0); }
+          50% { transform: scale(1.22) translateY(3px); }
+        }
+        @keyframes rateWobble {
+          0%, 100% { transform: scale(1.28) translateX(0); }
+          25% { transform: scale(1.28) translateX(-3px); }
+          75% { transform: scale(1.28) translateX(3px); }
+        }
+        @keyframes rateBreath {
+          0%, 100% { transform: scale(1.24); }
+          50% { transform: scale(1.28); }
+        }
+        @keyframes ratePop {
+          0% { transform: scale(1); }
+          40% { transform: scale(1.36); }
+          100% { transform: scale(1.28); }
+        }
+        @keyframes rateBounce {
+          0%, 100% { transform: scale(1.28) translateY(0); }
+          35% { transform: scale(1.28) translateY(-6px); }
+          65% { transform: scale(1.28) translateY(-2px); }
+        }
+        @keyframes rateSpinBurst {
+          0% { transform: scale(1) rotate(0deg); }
+          50% { transform: scale(1.36) rotate(14deg); }
+          100% { transform: scale(1.28) rotate(0deg); }
+        }
+
+        .animate-rate-shake { animation: rateShake 0.45s ease-in-out infinite; }
+        .animate-rate-sad-pulse { animation: rateSadPulse 1.2s ease-in-out infinite; }
+        .animate-rate-wobble { animation: rateWobble 0.6s ease-in-out infinite; }
+        .animate-rate-breath { animation: rateBreath 1.5s ease-in-out infinite; }
+        .animate-rate-pop { animation: ratePop 0.35s ease-out forwards; }
+        .animate-rate-bounce { animation: rateBounce 0.8s ease-in-out infinite; }
+        .animate-rate-spin-burst { animation: rateSpinBurst 0.5s ease-out forwards; }
+      `}</style>
+
       <div
         role="dialog"
         aria-modal="true"
@@ -90,7 +224,7 @@ export default function RateMetisModal({ theme, onSubmit, onCancel, submitting =
           maxHeight: 'calc(100vh - 32px)',
           background: 'var(--color-elevated)',
           border: '1px solid var(--color-floating-border-soft)',
-          boxShadow: 'var(--shadow-modal)',
+          boxShadow: 'none',
           color: 'var(--color-text-primary)',
           fontFamily: 'DM Sans, Inter, sans-serif',
         }}
@@ -162,7 +296,7 @@ export default function RateMetisModal({ theme, onSubmit, onCancel, submitting =
                     flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    gap: 5,
+                    gap: 6,
                     border: 0,
                     borderRadius: 8,
                     background: 'transparent',
@@ -171,18 +305,24 @@ export default function RateMetisModal({ theme, onSubmit, onCancel, submitting =
                     cursor: submitting ? 'default' : 'pointer',
                     opacity: submitting ? 0.6 : 1,
                     padding: '4px 6px',
-                    transition: 'all 0.15s ease',
-                    transform: selected ? 'scale(1.15)' : 'scale(1)',
+                    transition: 'color 0.15s ease',
                   }}
                 >
-                  <IconComp
-                    size={28}
-                    weight={selected ? 'fill' : 'regular'}
+                  <div
+                    className={selected ? item.animClass : ''}
                     style={{
-                      color: selected ? activeAccent.color : 'var(--color-text-muted)',
-                      filter: selected ? `drop-shadow(0 0 6px ${activeAccent.color})` : 'none',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      transform: selected ? 'scale(1.28)' : 'scale(1)',
+                      transition: selected ? 'none' : 'transform 0.2s ease-out',
                     }}
-                  />
+                  >
+                    <IconComp
+                      size={36}
+                      color={selected ? activeAccent.color : 'var(--color-text-muted)'}
+                    />
+                  </div>
                   <span
                     style={{
                       fontSize: 9.5,
@@ -223,6 +363,7 @@ export default function RateMetisModal({ theme, onSubmit, onCancel, submitting =
               fontSize: 11.5,
               lineHeight: 1.45,
               outline: 'none',
+              boxShadow: 'none',
             }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4, color: 'var(--color-text-muted)', fontSize: 9.5 }}>
@@ -248,6 +389,7 @@ export default function RateMetisModal({ theme, onSubmit, onCancel, submitting =
               opacity: submitting ? 0.5 : 1,
               fontFamily: 'inherit',
               fontSize: 11.5,
+              boxShadow: 'none',
             }}
           >
             <span>Cancel</span>
@@ -273,8 +415,8 @@ export default function RateMetisModal({ theme, onSubmit, onCancel, submitting =
               fontFamily: 'inherit',
               fontSize: 11.5,
               fontWeight: 600,
-              boxShadow: rating !== null ? `0 2px 10px ${activeAccent.color}4D` : 'none',
-              transition: 'all 0.15s ease',
+              boxShadow: 'none',
+              transition: 'background 0.15s ease, color 0.15s ease',
             }}
           >
             <PaperPlaneTilt size={13} weight="bold" />

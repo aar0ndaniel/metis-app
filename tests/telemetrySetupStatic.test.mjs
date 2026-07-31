@@ -9,7 +9,7 @@ test('SetupWizard contains telemetry consent state and Esc keyboard handler', ()
 
   assert.ok(content.includes('telemetryConsent'), 'SetupWizard should manage telemetryConsent state')
   assert.ok(content.includes('setTelemetryConsent'), 'SetupWizard should call electronAPI.setTelemetryConsent')
-  assert.ok(content.includes('Anonymous Installation Telemetry'), 'SetupWizard should render Telemetry header')
+  assert.ok(/Anonymous (?:Installation )?[Tt]elemetry/.test(content), 'SetupWizard should render Telemetry header')
   assert.ok(content.includes("e.key === 'Escape'"), 'SetupWizard should support Esc shortcut to decline telemetry')
 })
 

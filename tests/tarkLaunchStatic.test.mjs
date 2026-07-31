@@ -105,7 +105,7 @@ assert.match(tarkPreview, /setDiagramCollapsed\(\(collapsed\) => !collapsed\)/, 
 assert.match(tarkPreview, /onClick=\{\(\) => copySections\(tableSections, request\.reportTitle\)\}/, 'Copy all should copy only the Tark report tables.')
 assert.doesNotMatch(tarkPreview, /copyTarkReport|buildDiagramClipboardHtml|normalizeDiagramSvgForClipboard|renderDiagramSvgToPngDataUrl|diagramPng|image\/png|leadingHtml: options\.diagramHtml|leadingText: options\.diagramText/, 'Tark copy-all should not copy, rasterize, or include the path diagram.')
 assert.match(tarkPreview, /buildTarkReportSections\(request, savedAnalyses, savedModel\)/, 'Tark preview should use the tested report-table builder.')
-assert.match(tarkPreview, /buildTarkDiagramResults\(plsResults, savedModel\)/, 'Tark preview should build diagram overlays from saved PLS values.')
+assert.match(tarkPreview, /buildTarkDiagramResults\(savedAnalyses, savedModel\)/, 'Tark preview should build diagram overlays from saved PLS values.')
 assert.match(tarkPreview, /child\.state\?\.modelSnapshot\?\.constructs/, 'Tark preview should prefer the result model snapshot for path diagrams.')
 assert.doesNotMatch(tarkPreview, /function buildMeasurementSection|function buildStructuralSection|function buildModelFitSection/, 'Tark preview should not keep stale inline table parsers.')
 assert.match(tarkReportTables, /includes\('htmt'\)/, 'Tark discriminant table should filter to HTMT rows only.')
