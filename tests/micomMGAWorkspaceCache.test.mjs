@@ -50,6 +50,12 @@ const payload = {
   seed: 123,
 }
 
+assert.deepEqual(micomCache.MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW, {
+  status: 'unavailable',
+  message: 'MICOM is unavailable for HOC models; MGA was estimated without a MICOM invariance assessment.',
+  source: 'hoc-not-supported',
+})
+
 const fullMicomResults = {
   method: 'MICOM',
   groups: {

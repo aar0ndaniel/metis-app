@@ -26,13 +26,13 @@ assert.match(
 )
 
 const sharedErrorFormatter = sliceBetween(userFriendlyErrorsSource, 'export function formatUserFriendlyAnalysisError', '\n}')
-const backendDetailIndex = sharedErrorFormatter.indexOf('Backend detail:')
+const technicalDetailIndex = sharedErrorFormatter.indexOf('Technical detail:')
 const sharedSingularIndex = sharedErrorFormatter.indexOf('perfectly duplicated or collinear')
 
 assert.notEqual(sharedSingularIndex, -1, 'Shared formatter should explain singular matrix backend failures in plain language.')
 assert.ok(
-  sharedSingularIndex < backendDetailIndex,
-  'Shared formatter should map singular matrix failures before falling back to raw Backend detail text.',
+  sharedSingularIndex < technicalDetailIndex,
+  'Shared formatter should map singular matrix failures before falling back to raw technical detail text.',
 )
 assert.match(
   sharedErrorFormatter,

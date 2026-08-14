@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   ArrowLeft,
   CaretDown,
+  CaretLeft,
   CaretRight,
   Check,
   Copy,
@@ -18,6 +19,12 @@ import {
   getUniqueHeaderName,
   prepareDatasetForPersistence,
 } from '../utils/datasetColumns'
+import {
+  findMissingCellLocations,
+  getNextMissingCellIndex,
+  getPreviousMissingCellIndex,
+  type MissingCellLocation,
+} from '../utils/datasetMissing'
 import { computeDerivedColumn, type ComputeOperation } from '../utils/dataViewCompute'
 import {
   applyColumnTransforms,
@@ -34,6 +41,7 @@ import {
 import { getWorkspaceDatasets, migrateWorkspace } from '../utils/datasetWorkspace'
 import type { Workspace } from '../types/workspace'
 import { addDiagnostic } from '../utils/diagnostics'
+import { formatUserFriendlyDatasetError } from '../utils/userFriendlyErrors'
 
 interface DataViewProps {
   workspaces: Workspace[]
@@ -79,6 +87,9 @@ const HEADER_HEIGHT = 44
 const INDEX_WIDTH = 64
 const OVERSCAN_ROWS = 12
 const CONTEXT_MENU_WIDTH = 188
+const MISSING_VALUE_HIGHLIGHT = 'rgb(var(--color-accent-rgb))'
+const MISSING_VALUE_FILL = 'rgb(var(--color-accent-rgb) / 0.20)'
+const MISSING_VALUE_GUIDE_WIDTH = 1
 
 function normalizeName(name: string): string {
   return name.replace(/\.(csv|xlsx|xls)$/i, '')
@@ -227,6 +238,8 @@ export default function DataView({ workspaces }: DataViewProps) {
   const [transformDrafts, setTransformDrafts] = useState<DataViewTransformDraft[]>([])
   const [transformOpenDropdownId, setTransformOpenDropdownId] = useState<string | null>(null)
   const [showUnsavedExitModal, setShowUnsavedExitModal] = useState(false)
+  const [missingValuesOpen, setMissingValuesOpen] = useState(false)
+  const [missingValueLocation, setMissingValueLocation] = useState<MissingCellLocation | null>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(0)
   const dragStateRef = useRef<null | { kind: 'column' | 'row'; index: number; startClient: number; startSize: number }>(null)
@@ -295,6 +308,8 @@ export default function DataView({ workspaces }: DataViewProps) {
         setTransformDrafts([])
         setTransformOpenDropdownId(null)
         setHasChanges(false)
+        setMissingValuesOpen(false)
+        setMissingValueLocation(null)
         setScrollTop(0)
         pendingScrollTopRef.current = 0
         writeDatasetViewCache(dataset.id, parsed)
@@ -321,7 +336,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               error: err,
             },
           })
-          dispatchToast('error', 'Dataset unavailable', err?.message || 'Could not load this dataset into the data view.')
+          dispatchToast('error', 'Dataset unavailable', formatUserFriendlyDatasetError(err))
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -485,6 +500,54 @@ export default function DataView({ workspaces }: DataViewProps) {
     if (visibleRange.end < visibleRange.start) return []
     return Array.from({ length: visibleRange.end - visibleRange.start + 1 }, (_, offset) => visibleRange.start + offset)
   }, [visibleRange.end, visibleRange.start])
+  const missingCellLocations = useMemo(() => findMissingCellLocations(rows), [rows])
+
+  useEffect(() => {
+    if (!missingValueLocation) return
+    const stillMissing = missingCellLocations.some((location) => (
+      location.rowIndex === missingValueLocation.rowIndex
+      && location.columnIndex === missingValueLocation.columnIndex
+    ))
+    if (!stillMissing) setMissingValueLocation(null)
+  }, [missingCellLocations, missingValueLocation])
+
+  const scrollToMissingCell = (location: MissingCellLocation) => {
+    const element = gridScrollRef.current
+    if (!element) return
+
+    const rowTop = HEADER_HEIGHT + rowMetrics.offsets[location.rowIndex]
+    const rowHeight = resolvedRowHeights[location.rowIndex] || DEFAULT_ROW_HEIGHT
+    const columnLeft = INDEX_WIDTH + resolvedColumnWidths
+      .slice(0, location.columnIndex)
+      .reduce((sum, width) => sum + width, 0)
+    const cellWidth = resolvedColumnWidths[location.columnIndex] || MIN_COLUMN_WIDTH
+    const bodyViewportHeight = Math.max(0, element.clientHeight - HEADER_HEIGHT)
+    const nextTop = Math.max(0, rowTop - HEADER_HEIGHT - Math.max(0, (bodyViewportHeight - rowHeight) / 2))
+    const nextLeft = Math.max(0, columnLeft - Math.max(0, (element.clientWidth - cellWidth) / 2))
+
+    element.scrollTo({
+      top: Math.min(nextTop, Math.max(0, element.scrollHeight - element.clientHeight)),
+      left: Math.min(nextLeft, Math.max(0, element.scrollWidth - element.clientWidth)),
+      behavior: 'smooth',
+    })
+  }
+
+  const navigateMissingValue = (direction: 'next' | 'previous') => {
+    if (!missingCellLocations.length) return
+    const currentIndex = missingValueLocation
+      ? missingCellLocations.findIndex((location) => (
+        location.rowIndex === missingValueLocation.rowIndex
+        && location.columnIndex === missingValueLocation.columnIndex
+      ))
+      : direction === 'next' ? -1 : 0
+    const targetIndex = direction === 'next'
+      ? getNextMissingCellIndex(currentIndex, missingCellLocations.length)
+      : getPreviousMissingCellIndex(currentIndex, missingCellLocations.length)
+    if (targetIndex == null) return
+    const target = missingCellLocations[targetIndex]
+    setMissingValueLocation(target)
+    scrollToMissingCell(target)
+  }
 
   const updateCell = (rowIndex: number, columnIndex: number, value: string) => {
     setRows((prev) => prev.map((row, currentRowIndex) => {
@@ -1212,6 +1275,18 @@ export default function DataView({ workspaces }: DataViewProps) {
       : []
   const activeRowAppendIndex = activeRowDeletion.length ? Math.max(...activeRowDeletion) : 0
   const activeColumnAppendIndex = activeColumnDeletion.length ? Math.max(...activeColumnDeletion) : 0
+  const missingValueColumnLeft = missingValueLocation == null
+    ? 0
+    : INDEX_WIDTH + resolvedColumnWidths.slice(0, missingValueLocation.columnIndex).reduce((sum, width) => sum + width, 0)
+  const missingValueColumnWidth = missingValueLocation == null
+    ? 0
+    : resolvedColumnWidths[missingValueLocation.columnIndex] || MIN_COLUMN_WIDTH
+  const missingValueRowTop = missingValueLocation == null
+    ? 0
+    : HEADER_HEIGHT + (rowMetrics.offsets[missingValueLocation.rowIndex] || 0)
+  const missingValueRowHeight = missingValueLocation == null
+    ? 0
+    : resolvedRowHeights[missingValueLocation.rowIndex] || DEFAULT_ROW_HEIGHT
 
   if (!workspace || !dataset) {
     return (
@@ -1248,6 +1323,31 @@ export default function DataView({ workspaces }: DataViewProps) {
         </div>
 
         <div className="flex items-center" style={{ gap: 10 }}>
+          <button
+            onClick={() => setMissingValuesOpen((open) => !open)}
+            disabled={!missingCellLocations.length}
+            title={missingCellLocations.length ? 'Show missing values' : 'No missing values'}
+            aria-expanded={missingValuesOpen}
+            className="flex items-center"
+            style={{
+              height: 34,
+              borderRadius: 10,
+              border: missingValuesOpen
+                ? '1px solid rgb(var(--color-accent-rgb) / 0.42)'
+                : '1px solid var(--color-border)',
+              background: missingValuesOpen ? 'rgb(var(--color-accent-rgb) / 0.12)' : 'var(--color-elevated)',
+              color: missingCellLocations.length ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
+              padding: '0 10px',
+              gap: 6,
+              opacity: missingCellLocations.length ? 1 : 0.58,
+            }}
+          >
+            <WarningCircle size={15} color={missingCellLocations.length ? 'var(--color-danger)' : 'var(--color-text-muted)'} weight="fill" />
+            <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 700 }}>Missing values</span>
+            <span style={{ fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 800 }}>{missingCellLocations.length.toLocaleString()}</span>
+            <CaretDown size={12} color="var(--color-text-muted)" style={{ transform: missingValuesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.16s ease' }} />
+          </button>
+
           {showBulkRowDelete && (
             <button
               onClick={() => deleteRowIndices(selectedRows)}
@@ -1336,6 +1436,37 @@ export default function DataView({ workspaces }: DataViewProps) {
         </div>
       </div>
 
+      {missingValuesOpen && missingCellLocations.length > 0 && (
+        <div
+          className="shrink-0 flex items-center justify-end"
+          style={{ minHeight: 48, padding: '7px 18px', gap: 8, borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface)' }}
+        >
+          <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, marginRight: 4 }}>
+            {missingValueLocation
+              ? `Cell ${missingValueLocation.rowIndex + 1}, column ${missingValueLocation.columnIndex + 1}`
+              : `${missingCellLocations.length.toLocaleString()} cells found`}
+          </span>
+          <button
+            onClick={() => navigateMissingValue('previous')}
+            title="Find previous missing value"
+            className="flex items-center"
+            style={{ height: 30, borderRadius: 8, border: '1px solid var(--color-border)', background: 'var(--color-elevated)', color: 'var(--color-text-primary)', padding: '0 10px', gap: 6, fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 700 }}
+          >
+            <CaretLeft size={13} color="var(--color-text-secondary)" />
+            Find previous
+          </button>
+          <button
+            onClick={() => navigateMissingValue('next')}
+            title="Find next missing value"
+            className="flex items-center"
+            style={{ height: 30, borderRadius: 8, border: '1px solid rgb(var(--color-accent-rgb) / 0.38)', background: 'rgb(var(--color-accent-rgb) / 0.12)', color: 'var(--color-text-primary)', padding: '0 10px', gap: 6, fontFamily: 'DM Sans, sans-serif', fontSize: 11, fontWeight: 700 }}
+          >
+            Find next
+            <CaretRight size={13} color="var(--color-accent)" />
+          </button>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
           <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 13 }}>Loading dataset…</span>
@@ -1382,6 +1513,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               {headers.map((header, columnIndex) => {
                 const isSelected = selectedColumnSet.has(columnIndex)
                 const isHighlighted = highlightedHeaderIndex === columnIndex
+                const isMissingTargetColumn = missingValueLocation?.columnIndex === columnIndex
                 return (
                   <div
                     key={`header-${columnIndex}`}
@@ -1397,6 +1529,9 @@ export default function DataView({ workspaces }: DataViewProps) {
                         : isSelected
                           ? 'rgb(var(--color-accent-rgb) / 0.10)'
                           : 'var(--color-surface)',
+                      boxShadow: isMissingTargetColumn
+                        ? `inset ${MISSING_VALUE_GUIDE_WIDTH}px 0 0 ${MISSING_VALUE_HIGHLIGHT}, inset -${MISSING_VALUE_GUIDE_WIDTH}px 0 0 ${MISSING_VALUE_HIGHLIGHT}`
+                        : 'none',
                     }}
                   >
                     <button
@@ -1462,6 +1597,7 @@ export default function DataView({ workspaces }: DataViewProps) {
               const rowTop = rowMetrics.offsets[rowIndex]
               const rowHeight = resolvedRowHeights[rowIndex]
               const baseRowBackground = rowIndex % 2 === 0 ? 'var(--color-surface)' : 'var(--color-elevated)'
+              const isMissingTargetRow = missingValueLocation?.rowIndex === rowIndex
               return (
                 <div
                   key={`row-${rowIndex}`}
@@ -1476,7 +1612,12 @@ export default function DataView({ workspaces }: DataViewProps) {
                       height: rowHeight,
                       borderRight: '1px solid var(--color-border)',
                       userSelect: 'none',
-                      background: isSelectedRow ? 'rgb(var(--color-accent-rgb) / 0.12)' : rowIndex % 2 === 0 ? 'var(--color-surface)' : 'var(--color-elevated)',
+                      background: isSelectedRow
+                          ? 'rgb(var(--color-accent-rgb) / 0.12)'
+                          : rowIndex % 2 === 0 ? 'var(--color-surface)' : 'var(--color-elevated)',
+                      boxShadow: isMissingTargetRow
+                        ? `inset 0 ${MISSING_VALUE_GUIDE_WIDTH}px 0 ${MISSING_VALUE_HIGHLIGHT}, inset 0 -${MISSING_VALUE_GUIDE_WIDTH}px 0 ${MISSING_VALUE_HIGHLIGHT}`
+                        : 'none',
                     }}
                     >
                       <button
@@ -1500,7 +1641,10 @@ export default function DataView({ workspaces }: DataViewProps) {
                     />
                   </div>
 
-                  {headers.map((_, columnIndex) => (
+                  {headers.map((_, columnIndex) => {
+                    const isMissingTargetColumn = missingValueLocation?.columnIndex === columnIndex
+                    const isMissingTargetCell = isMissingTargetRow && isMissingTargetColumn
+                    return (
                     <div
                       key={`cell-${rowIndex}-${columnIndex}`}
                       style={{
@@ -1508,13 +1652,20 @@ export default function DataView({ workspaces }: DataViewProps) {
                         height: rowHeight,
                         borderRight: '1px solid var(--color-border)',
                         userSelect: 'none',
-                        background: isSelectedRow && selectedColumnSet.has(columnIndex)
-                          ? 'rgb(var(--color-accent-rgb) / 0.16)'
-                          : isSelectedRow
-                            ? 'rgb(var(--color-accent-rgb) / 0.10)'
-                            : selectedColumnSet.has(columnIndex)
-                              ? 'rgb(var(--color-accent-rgb) / 0.07)'
-                              : baseRowBackground,
+                        position: 'relative',
+                        zIndex: isMissingTargetCell ? 5 : 1,
+                        background: isMissingTargetCell
+                          ? MISSING_VALUE_FILL
+                          : isSelectedRow && selectedColumnSet.has(columnIndex)
+                            ? 'rgb(var(--color-accent-rgb) / 0.16)'
+                            : isSelectedRow
+                              ? 'rgb(var(--color-accent-rgb) / 0.10)'
+                              : selectedColumnSet.has(columnIndex)
+                                ? 'rgb(var(--color-accent-rgb) / 0.07)'
+                                : baseRowBackground,
+                        boxShadow: isMissingTargetCell
+                          ? `inset 0 0 0 ${MISSING_VALUE_GUIDE_WIDTH}px ${MISSING_VALUE_HIGHLIGHT}`
+                          : 'none',
                       }}
                       onDoubleClick={() => {
                         if (!editMode) return
@@ -1548,11 +1699,47 @@ export default function DataView({ workspaces }: DataViewProps) {
                         </div>
                       )}
                     </div>
-                  ))}
+                    )
+                  })}
                 </div>
               )
             })}
             </div>
+
+            {missingValueLocation && (
+              <>
+                <div
+                  aria-hidden="true"
+                  className="data-view-missing-column-guide"
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: missingValueColumnLeft,
+                    width: MISSING_VALUE_GUIDE_WIDTH,
+                    height: HEADER_HEIGHT + rowMetrics.totalHeight,
+                    background: MISSING_VALUE_HIGHLIGHT,
+                    boxShadow: `${missingValueColumnWidth - MISSING_VALUE_GUIDE_WIDTH}px 0 0 ${MISSING_VALUE_HIGHLIGHT}`,
+                    pointerEvents: 'none',
+                    zIndex: 3,
+                  }}
+                />
+                <div
+                  aria-hidden="true"
+                  className="data-view-missing-row-guide"
+                  style={{
+                    position: 'absolute',
+                    top: missingValueRowTop,
+                    left: 0,
+                    width: totalTableWidth,
+                    height: MISSING_VALUE_GUIDE_WIDTH,
+                    background: MISSING_VALUE_HIGHLIGHT,
+                    boxShadow: `0 ${missingValueRowHeight - MISSING_VALUE_GUIDE_WIDTH}px 0 ${MISSING_VALUE_HIGHLIGHT}`,
+                    pointerEvents: 'none',
+                    zIndex: 3,
+                  }}
+                />
+              </>
+            )}
           </div>
         </div>
       )}

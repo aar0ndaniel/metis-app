@@ -162,10 +162,61 @@ await runTest('dataset loader extracts relative dataset paths from metis workspa
     },
   })
 
-  assert.deepEqual(calls[0], ['extractDataset', { adaFilePath: 'C:/tmp/Workspace.metisws', datasetId: 'ds-relative' }])
+  assert.deepEqual(calls[0], ['extractDataset', { workspacePath: 'C:/tmp/Workspace.metisws', datasetId: 'ds-relative' }])
   assert.deepEqual(calls[1], ['readFile', 'C:/tmp/extracted/micom-flow.csv'])
   assert.deepEqual(result?.headers, ['A', 'B', 'Gender'])
   assert.equal(result?.datasetTempPath, 'C:/tmp/extracted/micom-flow.csv')
+})
+
+await runTest('dataset loader ignores stale archive-internal cached paths and re-extracts from workspace', async () => {
+  globalThis.localStorage.clear()
+  globalThis.localStorage.setItem('metis:dataset-view:ds-stale', JSON.stringify({
+    datasetId: 'ds-stale',
+    fileName: 'workspace.csv',
+    filePath: 'workspace.csv',
+    workspaceId: 'ws-1',
+    workspaceName: 'Workspace.metisws',
+    workspacePath: 'C:/tmp/Workspace.metisws',
+    absolutePath: 'workspace.csv',
+  }))
+
+  const bundled = await bundleModule('src/utils/datasetLoading.ts', 'datasetLoading.stale-archive-path.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/utils/datasetLoading.ts to exist and compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const { loadDatasetSnapshot } = bundled.module ?? {}
+  assert.equal(typeof loadDatasetSnapshot, 'function', 'loadDatasetSnapshot should be exported')
+
+  const calls = []
+  const csvBase64 = Buffer.from('A,B\n10,20\n30,40', 'utf-8').toString('base64')
+  const result = await loadDatasetSnapshot({
+    datasetId: 'ds-stale',
+    fileName: 'workspace.csv',
+    filePath: 'workspace.csv',
+    workspaceId: 'ws-1',
+    workspaceName: 'Workspace.metisws',
+    workspacePath: 'C:/tmp/Workspace.metisws',
+    api: {
+      extractDataset: async (payload) => {
+        calls.push(['extractDataset', payload])
+        return { success: true, datasetTempPath: 'C:/tmp/extracted/workspace.csv' }
+      },
+      readFile: async (filePath) => {
+        calls.push(['readFile', filePath])
+        if (filePath === 'workspace.csv') {
+          return {
+            success: false,
+            error: 'Renderer file read blocked: path was not selected through an approved import dialog.',
+          }
+        }
+        return { success: true, data: csvBase64 }
+      },
+    },
+  })
+
+  assert.deepEqual(calls[0], ['extractDataset', { workspacePath: 'C:/tmp/Workspace.metisws', datasetId: 'ds-stale' }])
+  assert.deepEqual(calls[1], ['readFile', 'C:/tmp/extracted/workspace.csv'])
+  assert.deepEqual(result?.headers, ['A', 'B'])
+  assert.equal(result?.datasetTempPath, 'C:/tmp/extracted/workspace.csv')
 })
 
 if (process.exitCode && process.exitCode !== 0) {

@@ -79,6 +79,7 @@ import {
   resolveMicomOverviewForMgaCache,
   attachMicomOverviewToMgaResults,
   putMicomCacheInWorkspaceList,
+  MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW,
   type MicomCacheEntry,
 } from '../utils/micomCache'
 import { addDiagnostic } from '../utils/diagnostics'
@@ -89,6 +90,11 @@ import {
   type PlsPredictSettings,
 } from '../utils/plsPredictSettings'
 import { buildPlsModelPayloadParts, type HocPathRole } from '../utils/plsModelPayload'
+import { normalizeHocSettings, readHocSettings, type HocSettings, type HocMethod, type HocTwoStageApproach } from '../utils/hocSettings'
+import {
+  MICOM_HOC_UNAVAILABLE_MESSAGE,
+  containsHigherOrderConstruct,
+} from '../utils/micomAvailability'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -745,15 +751,14 @@ function buildDragGuides(dragged: Construct, stationary: Construct[]): { snapped
   return { snappedX, snappedY, lines }
 }
 
-function formatAnalysisError(prefix: string, response?: { error?: string; status?: number; url?: string } | null): string {
-  const errorText = response?.error || 'Unknown error'
+function formatAnalysisError(prefix: string, response?: { error?: string; status?: number; userAction?: string; backendDetail?: string } | null): string {
+  const errorText = response?.error || response?.backendDetail || response?.userAction || 'Unknown error'
   const statusText = typeof response?.status === 'number' ? ` (status ${response.status})` : ''
-  const backendText = response?.url ? `\nBackend: ${response.url}` : ''
   const isNetworkIssue = /failed to fetch|fetch failed|network/i.test(errorText)
   const hint = isNetworkIssue
     ? '\nTip: wait a few seconds for the PLS backend to start, then retry.'
     : ''
-  return `${prefix}: ${errorText}${statusText}${backendText}${hint}`
+  return `${prefix ? `${prefix}: ` : ''}${errorText}${statusText}${hint}`
 }
 
 function bridgeDiagnosticDetails(response: any) {
@@ -766,7 +771,7 @@ function bridgeDiagnosticDetails(response: any) {
 
 function toLaymanErrorMessage(rawError: unknown): string {
   // Static guard: the shared formatter maps dgesv, exactly singular, singular matrix, and computationally singular
-  // to the perfectly duplicated or collinear guidance before any Backend detail fallback.
+  // to the perfectly duplicated or collinear guidance before any technical detail fallback.
   return formatUserFriendlyAnalysisError(rawError)
 }
 
@@ -1297,6 +1302,9 @@ export default function ModelCanvas({
   const [algoTab, setAlgoTab] = useState<'PLS setup' | 'Data'>('PLS setup')
   const [weightingScheme, setWeightingScheme] = useState<'Factor' | 'Path' | 'PCA'>('Path')
   const [plsAlgorithm, setPlsAlgorithm] = useState<'standard' | 'consistent'>('standard')
+  const [hocMethod, setHocMethod] = useState<HocMethod>(() => readHocSettings(readSharedStorageValue).method)
+  const [hocTwoStage, setHocTwoStage] = useState<HocTwoStageApproach>(() => readHocSettings(readSharedStorageValue).twoStage)
+  const [preferencesRevision, setPreferencesRevision] = useState(0)
   const [resultsType, setResultsType] = useState<'Standardized' | 'Unstandardized' | 'Mean-centered'>('Standardized')
   const [initialWeight, setInitialWeight] = useState<'Default' | 'Individual'>('Default')
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null) // 'results' | 'initial' | null
@@ -1471,6 +1479,7 @@ export default function ModelCanvas({
       const next = saved === null ? true : saved === 'true'
       setRealtimeEnabled(next)
       if (!next) setLiveLoadings({})
+      setPreferencesRevision((value) => value + 1)
     }
     window.addEventListener('pls:preferences-updated', handler)
     return () => window.removeEventListener('pls:preferences-updated', handler)
@@ -1788,13 +1797,56 @@ export default function ModelCanvas({
   }, [activeWs, electronAPI, modelId, setWorkspaces, workspaces])
 
   const persistedPlsPredictSettings = useMemo(
-    () => readPlsPredictSettingsFromState(currentModel?.state),
-    [currentModel?.state]
+    () => normalizePlsPredictSettings({
+      ...readPlsPredictSettingsFromState(currentModel?.state),
+      folds: Number(readSharedStorageValue('prefs:predictFolds') || '') || undefined,
+      repetitions: Number(readSharedStorageValue('prefs:predictRepetitions') || '') || undefined,
+      technique: (readSharedStorageValue('prefs:predictTechnique') || undefined) as PlsPredictSettings['technique'] | undefined,
+      predictionSeed: Number(readSharedStorageValue('prefs:predictSeed') || '') || undefined,
+      cvpatEnabled: readSharedStorageValue('prefs:cvpatEnabled') === 'true',
+    }),
+    [currentModel?.state, preferencesRevision]
   )
+
+  const hasHigherOrderLink = useMemo(
+    () => buildPlsModelPayloadParts(constructs, paths).hocDimensionsById.size > 0,
+    [constructs, paths],
+  )
+
+  const hasHigherOrderConstructs = useMemo(
+    () => containsHigherOrderConstruct(constructs),
+    [constructs],
+  )
+
+  const showMicomHocUnavailable = useCallback(() => {
+    dispatchToast('warning', 'MICOM unavailable', MICOM_HOC_UNAVAILABLE_MESSAGE)
+  }, [])
+
+  const initialMgaHocSettings = useMemo(() => {
+    const basePlsAnalysis = currentModel?.state?.basePlsAnalysis
+    const fittedSettings = basePlsAnalysis?.graphSignature === currentGraphSignature
+      ? (basePlsAnalysis?.results as any)?.algorithm?.settings?.algorithm_settings
+      : null
+
+    if (fittedSettings && typeof fittedSettings === 'object') {
+      return normalizeHocSettings(fittedSettings.hocMethod, fittedSettings.hocTwoStage)
+    }
+    return readHocSettings(readSharedStorageValue)
+  }, [currentGraphSignature, currentModel?.state?.basePlsAnalysis, preferencesRevision])
+
+  useEffect(() => {
+    if (!showAlgorithmDialog) return
+    const savedHocSettings = readHocSettings(readSharedStorageValue)
+    setHocMethod(savedHocSettings.method)
+    setHocTwoStage(savedHocSettings.twoStage)
+  }, [showAlgorithmDialog])
 
   const currentResultsRoute = () => `/results/${modelId || 'full-tam'}`
 
-  const handleStartCalculation = async (algorithmOverride?: 'standard' | 'consistent') => {
+  const handleStartCalculation = async (
+    algorithmOverride?: 'standard' | 'consistent',
+    hocSettingsOverride?: HocSettings,
+  ) => {
     if (isAnyCalculationRunning) return
     setCalculatingType('pls')
     setIsCalculating(true)
@@ -1814,7 +1866,7 @@ export default function ModelCanvas({
     })
     setShowAlgorithmDialog(false)
     try {
-      const payload = buildAnalysisPayload('pls-sem', algorithmOverride)
+      const payload = buildAnalysisPayload('pls-sem', algorithmOverride, hocSettingsOverride)
       calcDispatch({ type: 'setPhase', phaseId: 'paths' })
       const result = await runPlsModel(payload)
       if (cancelRequestedRef.current) {
@@ -1901,7 +1953,8 @@ export default function ModelCanvas({
       }
     } catch (error: any) {
       const msg = error?.message || 'Unexpected error'
-      calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+      const friendlyMessage = toLaymanErrorMessage(msg)
+      calcDispatch({ type: 'fail', message: friendlyMessage })
       recordDiagnostic('calculation', 'error', 'PLS-SEM calculation threw an error before completion.', {
         analysisKind: 'pls-sem',
         error: msg,
@@ -1910,10 +1963,10 @@ export default function ModelCanvas({
         setCautionModal({
           open: true,
           title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-          message: msg,
+          message: friendlyMessage,
         })
       } else {
-        dispatchToast('error', 'PLS calculation failed', toLaymanErrorMessage(msg))
+        dispatchToast('error', 'PLS calculation failed', friendlyMessage)
       }
     } finally {
       setIsCalculating(false)
@@ -2057,8 +2110,13 @@ export default function ModelCanvas({
   const buildAnalysisPayload = (
     analysisKind: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga',
     algorithmOverride?: 'standard' | 'consistent',
+    hocSettingsOverride?: HocSettings,
   ) => {
-    const selectedAlgorithm = algorithmOverride ?? plsAlgorithm
+    const preferenceAlgorithm = readSharedStorageValue(analysisKind === 'plspredict' ? 'prefs:predictAlgorithm' : 'prefs:plsAlgorithm')
+    const preferenceAlgorithmValue: 'standard' | 'consistent' = /consistent/i.test(preferenceAlgorithm || '') ? 'consistent' : 'standard'
+    const selectedAlgorithm = preferenceAlgorithm
+      ? preferenceAlgorithmValue
+      : (algorithmOverride ?? plsAlgorithm)
     const datasetFilePath = resolveDatasetFilePath()
     if (!datasetFilePath) {
       recordDiagnostic('calculation', 'error', `${getAnalysisLabel(analysisKind)} blocked: dataset path missing.`, {
@@ -2148,6 +2206,10 @@ export default function ModelCanvas({
     const maxIterationsStr = readSharedStorageValue('prefs:maxIterations')
     const maxIterations = maxIterationsStr ? Number(maxIterationsStr) : 300
     const stopCriterion = readSharedStorageValue('prefs:stopCriterion') || '1e-7'
+    const missingData = readSharedStorageValue('prefs:missingData') || 'Mean replacement'
+    const missingValue = readSharedStorageValue('prefs:missingValue') || 'NA'
+    const assessSyntax = readSharedStorageValue('prefs:assessSyntax') === 'true'
+    const selectedHocSettings = hocSettingsOverride ?? readHocSettings(readSharedStorageValue)
 
     return {
       datasetPath: datasetFilePath,
@@ -2159,7 +2221,12 @@ export default function ModelCanvas({
         innerWeighting,
         initialWeights,
         maxIterations,
-        stopCriterion
+        stopCriterion,
+        missingData,
+        missingValue,
+        assessSyntax,
+        hocMethod: selectedHocSettings.method,
+        hocTwoStage: selectedHocSettings.twoStage,
       }
     }
   }
@@ -2196,9 +2263,18 @@ export default function ModelCanvas({
       })
       const bootstrapPayload = {
         ...basePayload,
+        algorithmSettings: {
+          ...basePayload.algorithmSettings,
+          maxIterations: Number(settings?.maxIterations) || basePayload.algorithmSettings?.maxIterations,
+          stopCriterion: settings?.stopCriterion || basePayload.algorithmSettings?.stopCriterion,
+        },
         nboot: Number(settings?.subsamples) || 500,
         ciType: settings?.ciType || 'Percentile',
         confidenceLevel: settings?.confidenceLevel || '95%',
+        bootstrapSeed: Number(settings?.seed) || undefined,
+        bootstrapTails: settings?.tails,
+        bootstrapResampling: settings?.resampling,
+        bootstrapSignChanges: settings?.signChanges,
       }
       const result = await runBootstrapModel(bootstrapPayload)
 
@@ -2296,7 +2372,8 @@ export default function ModelCanvas({
         return
       }
       const msg = error?.message || 'Unexpected error'
-      calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+      const friendlyMessage = toLaymanErrorMessage(msg)
+      calcDispatch({ type: 'fail', message: friendlyMessage })
       recordDiagnostic('calculation', 'error', 'Bootstrap calculation threw an error before completion.', {
         analysisKind: 'bootstrap',
         error: msg,
@@ -2305,10 +2382,10 @@ export default function ModelCanvas({
         setCautionModal({
           open: true,
           title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-          message: msg,
+          message: friendlyMessage,
         })
       } else {
-        dispatchToast('error', 'Bootstrap failed', toLaymanErrorMessage(msg))
+        dispatchToast('error', 'Bootstrap failed', friendlyMessage)
       }
     } finally {
       bootstrapAbortRef.current = null
@@ -2325,7 +2402,7 @@ export default function ModelCanvas({
     setIsCalculating(true)
     const phases: CalcPhase[] = [
       { id: 'prep', label: 'Preparing prediction model', status: 'pending' },
-      { id: 'validation', label: `${normalizedSettings.folds} folds x ${normalizedSettings.repetitions} repetitions`, status: 'pending' },
+      { id: 'validation', label: normalizedSettings.validationMode === 'LOOCV' ? 'Leave-one-out cross-validation' : `${normalizedSettings.folds} folds${normalizedSettings.repetitions > 1 ? `, ${normalizedSettings.repetitions} repetitions` : ''}`, status: 'pending' },
       ...(normalizedSettings.cvpatEnabled
         ? [{ id: 'cvpat', label: 'Running CVPAT comparison', status: 'pending' } as CalcPhase]
         : []),
@@ -2347,6 +2424,9 @@ export default function ModelCanvas({
         ...basePayload,
         folds: normalizedSettings.folds,
         repetitions: normalizedSettings.repetitions,
+        technique: normalizedSettings.technique,
+        predictionSeed: normalizedSettings.predictionSeed,
+        validationMode: normalizedSettings.validationMode,
         cvpatEnabled: normalizedSettings.cvpatEnabled,
       })
 
@@ -2425,7 +2505,7 @@ export default function ModelCanvas({
         },
         showTransientDone: !shouldAutoOpenResults,
       })
-      dispatchToast('success', 'PLSpredict complete', `${normalizedSettings.folds * normalizedSettings.repetitions} validation cycles`)
+      dispatchToast('success', 'PLSpredict complete')
 
       if (shouldAutoOpenResults) {
         navigate(`/results/${modelId || 'full-tam'}`, {
@@ -2441,7 +2521,8 @@ export default function ModelCanvas({
       }
     } catch (error: any) {
       const msg = error?.message || 'Unexpected error'
-      calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+      const friendlyMessage = toLaymanErrorMessage(msg)
+      calcDispatch({ type: 'fail', message: friendlyMessage })
       recordDiagnostic('calculation', 'error', 'PLSpredict calculation threw an error before completion.', {
         analysisKind: 'plspredict',
         error: msg,
@@ -2450,10 +2531,10 @@ export default function ModelCanvas({
         setCautionModal({
           open: true,
           title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-          message: msg,
+          message: friendlyMessage,
         })
       } else {
-        dispatchToast('error', 'PLS Predict failed', toLaymanErrorMessage(msg))
+        dispatchToast('error', 'PLS Predict failed', friendlyMessage)
       }
     } finally {
       setIsCalculating(false)
@@ -2587,7 +2668,8 @@ export default function ModelCanvas({
       }
     } catch (error: any) {
       const msg = error?.message || 'Unexpected error'
-      calcDispatch({ type: 'fail', message: toLaymanErrorMessage(msg) })
+      const friendlyMessage = toLaymanErrorMessage(msg)
+      calcDispatch({ type: 'fail', message: friendlyMessage })
       recordDiagnostic('calculation', 'error', 'Advanced analysis threw an error before completion.', {
         analysisKind: 'advanced',
         error: msg,
@@ -2596,10 +2678,10 @@ export default function ModelCanvas({
         setCautionModal({
           open: true,
           title: /dataset not found|no dataset/i.test(msg) ? 'No Dataset Found' : 'R Runtime / Backend Missing',
-          message: msg,
+          message: friendlyMessage,
         })
       } else {
-        dispatchToast('error', 'Advanced analysis failed', toLaymanErrorMessage(msg))
+        dispatchToast('error', 'Advanced analysis failed', friendlyMessage)
       }
     } finally {
       setIsCalculating(false)
@@ -2608,6 +2690,12 @@ export default function ModelCanvas({
   }
 
   const handlePermutationConfiguralPrecheck = async (settings: PermutationAnalysisSettings) => {
+    if (hasHigherOrderConstructs) {
+      showMicomHocUnavailable()
+      setPermutationConfiguralStatus('failed')
+      return { success: false, error: MICOM_HOC_UNAVAILABLE_MESSAGE }
+    }
+
     try {
       setPermutationConfiguralStatus('checking')
       const basePayload = buildAnalysisPayload('permutation', plsAlgorithm)
@@ -2643,6 +2731,11 @@ export default function ModelCanvas({
 
   const handleRunPermutationAnalysis = async (settings: PermutationAnalysisSettings) => {
     if (isAnyCalculationRunning) return
+    if (hasHigherOrderConstructs) {
+      showMicomHocUnavailable()
+      return
+    }
+
     setShowPermutationAnalysisModal(false)
     setCalculatingType('permutation')
     setIsCalculating(true)
@@ -2781,7 +2874,10 @@ export default function ModelCanvas({
       },
     })
     try {
-      const basePayload = buildAnalysisPayload('mga', plsAlgorithm)
+      const selectedHocSettings = hasHigherOrderConstructs
+        ? normalizeHocSettings(settings.hocMethod, settings.hocTwoStage)
+        : undefined
+      const basePayload = buildAnalysisPayload('mga', plsAlgorithm, selectedHocSettings)
       const cachedMicom = micomCacheRef.current ?? (currentModel?.state?.micomCache as MicomCacheEntry | undefined) ?? null
       const micomValidationPayload = {
         ...basePayload,
@@ -2792,12 +2888,15 @@ export default function ModelCanvas({
         alpha: cachedMicom?.settings.alpha ?? settings.alpha,
         seed: cachedMicom?.settings.seed ?? settings.seed,
       }
-      const micomOverview = await resolveMicomOverviewForMgaCache({
-        cache: cachedMicom,
-        payload: micomValidationPayload,
-        graphSignature: currentGraphSignature,
-        runConfiguralPrecheck: runPermutationConfiguralPrecheck,
-      })
+      const payloadHasHoc = containsHigherOrderConstruct(basePayload.constructs)
+      const micomOverview = payloadHasHoc
+        ? MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW
+        : await resolveMicomOverviewForMgaCache({
+            cache: cachedMicom,
+            payload: micomValidationPayload,
+            graphSignature: currentGraphSignature,
+            runConfiguralPrecheck: runPermutationConfiguralPrecheck,
+          })
       calcDispatch({ type: 'setPhase', phaseId: 'bootstrap' })
       const result = await runMultiGroupAnalysisModel({
         ...basePayload,
@@ -2807,6 +2906,7 @@ export default function ModelCanvas({
         nboot: settings.nboot,
         alpha: settings.alpha,
         seed: settings.seed,
+        ...(hasHigherOrderConstructs ? { baseHocMethod: settings.baseHocMethod } : {}),
       })
 
       if (cancelRequestedRef.current) {
@@ -3215,7 +3315,10 @@ export default function ModelCanvas({
           if (!isAnyCalculationRunning) setShowAdvancedAnalysisModal(true)
           break
         case 'run-permutation-analysis':
-          if (!isAnyCalculationRunning) setShowPermutationAnalysisModal(true)
+          if (!isAnyCalculationRunning) {
+            if (hasHigherOrderConstructs) showMicomHocUnavailable()
+            else setShowPermutationAnalysisModal(true)
+          }
           break
         case 'run-multi-group-analysis':
           if (!isAnyCalculationRunning) setShowMultiGroupAnalysisModal(true)
@@ -3231,7 +3334,7 @@ export default function ModelCanvas({
     }
     window.addEventListener('pls:action', handler)
     return () => window.removeEventListener('pls:action', handler)
-  }, [canRunAdvancedAnalysis, deleteSelected, cutSelected, copySelected, fitCanvasToScreen, handleSave, isDirty, navigate, pasteClipboard, redo, returnToWorkspaceHome, selectAll, undo])
+  }, [canRunAdvancedAnalysis, deleteSelected, cutSelected, copySelected, fitCanvasToScreen, handleSave, hasHigherOrderConstructs, isDirty, navigate, pasteClipboard, redo, returnToWorkspaceHome, selectAll, showMicomHocUnavailable, undo])
 
   // ── Selected construct ────────────────────────────────────────────────────────
   const selectedConstruct = selected.length === 1 ? constructs.find(c => c.id === selected[0]) ?? null : null
@@ -4546,7 +4649,7 @@ function computeModerationAnchorRatio(
   const floatingPanelBottom = 52
   const currentCanvasTab = canvasTabs.find((tab) => tab.modelId === modelId) ?? canvasTabs[0]
   const currentModelSwitcherLabel = currentCanvasTab
-    ? `${stripModelDisplayName(String(currentCanvasTab.model?.name || currentCanvasTab.modelId).replace(/\.(hbe|ada|metisws)$/i, ''))}${dirtyModels[currentCanvasTab.modelId] ? '*' : ''}`
+    ? `${stripModelDisplayName(String(currentCanvasTab.model?.name || currentCanvasTab.modelId).replace(/\.(hbe|metisws)$/i, ''))}${dirtyModels[currentCanvasTab.modelId] ? '*' : ''}`
     : stripModelDisplayName(currentModel?.name ?? 'Untitled model')
   const currentWorkspaceSwitcherLabel = currentCanvasTab
     ? stripWorkspaceDisplayName(currentCanvasTab.workspace?.name || '')
@@ -5587,7 +5690,7 @@ function computeModerationAnchorRatio(
                   {canvasTabs.map((tab) => {
                     const isActiveTab = tab.modelId === modelId
                     const workspaceLabel = stripWorkspaceDisplayName(tab.workspace?.name || '')
-                    const modelLabel = stripModelDisplayName(String(tab.model?.name || tab.modelId).replace(/\.(hbe|ada|metisws)$/i, ''))
+                    const modelLabel = stripModelDisplayName(String(tab.model?.name || tab.modelId).replace(/\.(hbe|metisws)$/i, ''))
                     const isDirtyTab = !!dirtyModels[tab.modelId]
                     return (
                       <button
@@ -6428,6 +6531,14 @@ function computeModerationAnchorRatio(
         <BootstrapModal
           onClose={() => setShowBootstrapModal(false)}
           onRun={handleRunBootstrap}
+          initialSettings={{
+            subsamples: Number(readSharedStorageValue('prefs:defaultSubsamples') || '') || 500,
+            ciType: (readSharedStorageValue('prefs:bootstrapCiType') || 'Percentile') as 'Percentile' | 'BCa' | 't-statistic',
+            confidenceLevel: (readSharedStorageValue('prefs:bootstrapConfidence') || '95%') as '90%' | '95%' | '99%',
+            maxIterations: Number(readSharedStorageValue('prefs:bootstrapMaxIterations') || '') || 300,
+            stopCriterion: readSharedStorageValue('prefs:bootstrapStopCriterion') || '1e-7',
+            seed: Number(readSharedStorageValue('prefs:defaultSeed') || '') || undefined,
+          }}
         />
       )}
 
@@ -6450,7 +6561,11 @@ function computeModerationAnchorRatio(
           }}
           onRun={handleRunAdvancedAnalysis}
           isRunning={calculatingType === 'advanced' && isCalculating}
-          initialSettings={currentModel?.state?.analysisSettings?.advanced}
+          initialSettings={{
+            ...(currentModel?.state?.analysisSettings?.advanced ?? {}),
+            runDepth: Number(readSharedStorageValue('prefs:ncaRunDepth') || '') || 500,
+            bottleneckStepSize: Number(readSharedStorageValue('prefs:ncaStepSize') || '') || 10,
+          }}
         />
       )}
 
@@ -6476,6 +6591,8 @@ function computeModerationAnchorRatio(
           modelName={currentModel?.name ?? ''}
           groupingOptions={effectiveDatasetHeaders}
           datasetRows={linkedDatasetCache?.allRows ?? []}
+          hasHigherOrderConstructs={hasHigherOrderConstructs}
+          initialHocSettings={initialMgaHocSettings}
           onClose={() => {
             if (calculatingType === 'mga' && isCalculating) return
             setShowMultiGroupAnalysisModal(false)
@@ -6553,6 +6670,67 @@ function computeModerationAnchorRatio(
                     ))}
                   </div>
                 </div>
+
+                {hasHigherOrderLink && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 12,
+                      padding: '14px 0 2px',
+                      borderTop: '1px solid var(--color-border)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <span style={{ width: 150, fontSize: 13, color: C.textMuted, fontWeight: 400 }}>HOC method</span>
+                      <div style={{ display: 'flex', gap: 18 }}>
+                        {(['Repeated indicators', 'Two-stage'] as const).map((method) => (
+                          <label key={method} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: C.textSec, fontSize: 13 }}>
+                            <input
+                              type="radio"
+                              name="hocMethod"
+                              value={method}
+                              checked={hocMethod === method}
+                              onChange={() => setHocMethod(method)}
+                              style={{ accentColor: C.primary }}
+                            />
+                            {method}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <span style={{ width: 150, fontSize: 13, color: C.textMuted, fontWeight: 400 }}>Two-stage approach</span>
+                      <div style={{ display: 'flex', gap: 18 }}>
+                        {(['Embedded', 'Disjoint two-stage'] as const).map((approach) => (
+                          <label
+                            key={approach}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              cursor: hocMethod === 'Two-stage' ? 'pointer' : 'not-allowed',
+                              color: hocMethod === 'Two-stage' ? C.textSec : C.textMuted,
+                              fontSize: 13,
+                              opacity: hocMethod === 'Two-stage' ? 1 : 0.55,
+                            }}
+                          >
+                            <input
+                              type="radio"
+                              name="hocTwoStage"
+                              value={approach}
+                              checked={hocTwoStage === approach}
+                              disabled={hocMethod !== 'Two-stage'}
+                              onChange={() => setHocTwoStage(approach)}
+                              style={{ accentColor: C.primary }}
+                            />
+                            {approach === 'Disjoint two-stage' ? 'Disjoint' : approach}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Type of results */}
                 <div style={{ display: 'flex', alignItems: 'center', position: 'relative' }}>
@@ -6669,7 +6847,7 @@ function computeModerationAnchorRatio(
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button
-                    onClick={() => handleStartCalculation(plsAlgorithm)}
+                    onClick={() => handleStartCalculation(plsAlgorithm, { method: hocMethod, twoStage: hocTwoStage })}
                     disabled={isAnyCalculationRunning}
                     style={{
                       padding: '8px 18px', borderRadius: 6, backgroundColor: 'var(--color-accent)', border: '1px solid rgb(var(--color-accent-rgb) / 0.42)',

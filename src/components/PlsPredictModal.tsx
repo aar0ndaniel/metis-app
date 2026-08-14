@@ -137,7 +137,6 @@ export default function PlsPredictModal({
   const [settings, setSettings] = useState<PlsPredictSettings>(initial)
 
   const normalized = normalizePlsPredictSettings(settings)
-  const validationCycles = normalized.folds * normalized.repetitions
 
   const set = <K extends keyof PlsPredictSettings>(key: K, value: PlsPredictSettings[K]) => {
     setSettings((previous) => ({ ...previous, [key]: value }))
@@ -214,6 +213,20 @@ export default function PlsPredictModal({
               >
                 <SectionTitle>Cross-validation</SectionTitle>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 260 }}>
+                  <InlineField label="Validation mode">
+                    <InputBox>
+                      <select
+                        value={settings.validationMode}
+                        onChange={(event) => set('validationMode', event.target.value as PlsPredictSettings['validationMode'])}
+                        disabled={isRunning}
+                        aria-label="Validation mode"
+                        style={{ width: '100%', color: 'var(--color-text-secondary)', background: 'transparent', border: 0, outline: 'none', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
+                      >
+                        <option>K-fold</option>
+                        <option>LOOCV</option>
+                      </select>
+                    </InputBox>
+                  </InlineField>
                   <InlineField label="Folds">
                     <InputBox>
                       <DraftNumberInput
@@ -222,6 +235,7 @@ export default function PlsPredictModal({
                         max={20}
                         fallback={DEFAULT_PLS_PREDICT_SETTINGS.folds}
                         onCommit={(value) => set('folds', value)}
+                        disabled={settings.validationMode === 'LOOCV'}
                         className="outline-none bg-transparent w-full"
                         style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
                       />
@@ -242,7 +256,36 @@ export default function PlsPredictModal({
                     </InputBox>
                   </InlineField>
 
-                  <InlineField label="Validation cycles">
+                  <InlineField label="Prediction technique">
+                    <InputBox>
+                      <select
+                        value={settings.technique}
+                        onChange={(event) => set('technique', event.target.value as PlsPredictSettings['technique'])}
+                        disabled={isRunning}
+                        aria-label="Prediction technique"
+                        style={{ width: '100%', color: 'var(--color-text-secondary)', background: 'transparent', border: 0, outline: 'none', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
+                      >
+                        <option>Direct antecedents (DA)</option>
+                        <option>Entire antecedents (EA)</option>
+                      </select>
+                    </InputBox>
+                  </InlineField>
+
+                  <InlineField label="Prediction seed">
+                    <InputBox>
+                      <DraftNumberInput
+                        value={settings.predictionSeed}
+                        min={1}
+                        max={2147483647}
+                        fallback={DEFAULT_PLS_PREDICT_SETTINGS.predictionSeed}
+                        onCommit={(value) => set('predictionSeed', value)}
+                        className="outline-none bg-transparent w-full"
+                        style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
+                      />
+                    </InputBox>
+                  </InlineField>
+
+                  <InlineField label="Validation plan">
                     <InputBox>
                       <span
                         style={{
@@ -252,7 +295,9 @@ export default function PlsPredictModal({
                           fontWeight: 500,
                         }}
                       >
-                        {validationCycles}
+                        {settings.validationMode === 'LOOCV'
+                          ? 'Leave-one-out cross-validation'
+                          : `${settings.folds} fold${settings.folds === 1 ? '' : 's'}${settings.repetitions > 1 ? `, ${settings.repetitions} repetitions` : ''}`}
                       </span>
                     </InputBox>
                   </InlineField>

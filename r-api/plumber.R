@@ -16,7 +16,7 @@ max_bootstrap_samples <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_BOOTS
 max_nca_run_depth <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_NCA_RUN_DEPTH", "")))
 max_predict_folds <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PREDICT_FOLDS", "20")))
 max_predict_repetitions <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PREDICT_REPETITIONS", "50")))
-max_cvpat_bootstrap_samples <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_CVPAT_BOOTSTRAP_SAMPLES", "500")))
+max_cvpat_bootstrap_samples <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_CVPAT_BOOTSTRAP_SAMPLES", "2000")))
 max_analysis_cores <- suppressWarnings(as.integer(Sys.getenv("METIS_ANALYSIS_CORES", "")))
 max_cached_pls_cores <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PLS_CORE_CACHE_ENTRIES", "2")))
  
@@ -43,7 +43,7 @@ max_cached_pls_cores <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PLS_CO
  if (!is.na(max_nca_run_depth) && max_nca_run_depth < 10L) max_nca_run_depth <- NA_integer_
  if (is.na(max_predict_folds) || max_predict_folds < 2L) max_predict_folds <- 20L
  if (is.na(max_predict_repetitions) || max_predict_repetitions < 1L) max_predict_repetitions <- 50L
- if (is.na(max_cvpat_bootstrap_samples) || max_cvpat_bootstrap_samples < 50L) max_cvpat_bootstrap_samples <- 500L
+ if (is.na(max_cvpat_bootstrap_samples) || max_cvpat_bootstrap_samples < 50L) max_cvpat_bootstrap_samples <- 2000L
  if (is.na(max_cached_pls_cores) || max_cached_pls_cores < 0L) max_cached_pls_cores <- 16L
 
 # Redefine fSquared in the seminr namespace safely to avoid subscript out of bounds errors
@@ -413,7 +413,7 @@ analysis_error_code <- function(raw_message) {
   if (grepl("elapsed time limit|could not finish within", message)) return("TIMEOUT")
   if (grepl("cannot allocate vector|memory exhausted|cannot allocate memory|ran out of memory", message)) return("MEMORY")
   if (grepl("dgesv|exactly singular|singular matrix|computationally singular", message)) return("SINGULAR_MATRIX")
-  if (grepl("plspredict could not be computed|seminr returned no prediction", message)) return("PLSPREDICT_UNSUPPORTED")
+  if (grepl("plspredict could not be computed|seminr returned no prediction|plspredict is not available", message)) return("PLSPREDICT_UNSUPPORTED")
   if (grepl("dataset access is disabled|outside trusted metis workspace", message)) return("DATASET_ACCESS")
   if (grepl("dataset not found|dataset file exceeds|unsupported dataset extension|dataset must be tabular|dataset must contain|missing indicator columns", message)) {
     return("DATASET_INVALID")
@@ -545,11 +545,12 @@ require_scalar_integer <- function(x, field_name, min_value, max_value, configur
 
 require_optional_choice <- function(x, field_name, allowed, default_value) {
   if (is.null(x)) return(default_value)
-  value <- tolower(require_scalar_string(x, field_name, allow_empty = FALSE, max_chars = 40))
-  if (!(value %in% allowed)) {
+  value <- require_scalar_string(x, field_name, allow_empty = FALSE, max_chars = 40)
+  match_index <- match(tolower(value), tolower(allowed))
+  if (is.na(match_index)) {
     stop(sprintf("%s must be one of: %s.", field_name, paste(allowed, collapse = ", ")))
   }
-  value
+  allowed[[match_index]]
 }
 
 require_object_array <- function(x, field_name, min_len = 0L, max_len = 1000L) {
@@ -730,13 +731,41 @@ validate_interactions_payload <- function(interactions_payload, construct_names)
   normalized
 }
 
+normalize_hoc_settings <- function(settings_payload = list()) {
+  if (is.null(settings_payload)) settings_payload <- list()
+  if (!is.list(settings_payload)) stop("algorithmSettings must be an object.")
+
+  list(
+    hocMethod = require_optional_choice(
+      settings_payload$hocMethod,
+      "algorithmSettings.hocMethod",
+      c("Repeated indicators", "Two-stage"),
+      "Two-stage"
+    ),
+    hocTwoStage = require_optional_choice(
+      settings_payload$hocTwoStage,
+      "algorithmSettings.hocTwoStage",
+      c("Embedded", "Disjoint two-stage"),
+      "Disjoint two-stage"
+    )
+  )
+}
+
+hoc_method_label <- function(settings_payload = list(), has_hoc = TRUE) {
+  if (!isTRUE(has_hoc)) return("Not applicable")
+  hoc <- normalize_hoc_settings(settings_payload)
+  if (identical(hoc$hocMethod, "Repeated indicators")) return("Repeated Indicators")
+  if (identical(hoc$hocTwoStage, "Embedded")) return("Embedded Two-stage")
+  "Disjoint Two-stage"
+}
+
 validate_algorithm_settings_payload <- function(settings_payload) {
-  if (is.null(settings_payload)) return(NULL)
-  if (!is.list(settings_payload) || is.null(names(settings_payload)) || any(names(settings_payload) == "")) {
+  if (is.null(settings_payload)) settings_payload <- list()
+  if (!is.list(settings_payload) || (length(settings_payload) > 0L && (is.null(names(settings_payload)) || any(names(settings_payload) == "")))) {
     stop("algorithmSettings must be an object.")
   }
 
-  normalized <- list()
+  normalized <- normalize_hoc_settings(settings_payload)
   if (!is.null(settings_payload$innerWeighting)) {
     normalized$innerWeighting <- require_scalar_string(settings_payload$innerWeighting, "algorithmSettings.innerWeighting", max_chars = 80)
   }
@@ -748,6 +777,20 @@ validate_algorithm_settings_payload <- function(settings_payload) {
   }
   if (!is.null(settings_payload$stopCriterion)) {
     normalized$stopCriterion <- require_scalar_string(settings_payload$stopCriterion, "algorithmSettings.stopCriterion", max_chars = 80)
+  }
+  if (!is.null(settings_payload$missingData)) {
+    normalized$missingData <- require_scalar_string(settings_payload$missingData, "algorithmSettings.missingData", max_chars = 80)
+    if (!(normalized$missingData %in% c("Mean replacement", "Listwise deletion", "Median replacement"))) {
+      stop("algorithmSettings.missingData must be Mean replacement, Listwise deletion, or Median replacement.")
+    }
+  }
+  if (!is.null(settings_payload$missingValue)) {
+    normalized$missingValue <- require_scalar_string(settings_payload$missingValue, "algorithmSettings.missingValue", max_chars = 20)
+    if (toupper(trimws(normalized$missingValue)) != "NA") stop("algorithmSettings.missingValue currently supports only NA, the SEMinR default sentinel.")
+  }
+  if (!is.null(settings_payload$assessSyntax)) {
+    if (!is_scalar_logical(settings_payload$assessSyntax)) stop("algorithmSettings.assessSyntax must be true or false.")
+    normalized$assessSyntax <- isTRUE(settings_payload$assessSyntax)
   }
 
   normalized
@@ -817,7 +860,7 @@ validate_permutation_analysis_payload <- function(payload, construct_names, data
   )
 }
 
-validate_multi_group_analysis_payload <- function(payload, construct_names, data_columns) {
+validate_multi_group_analysis_payload <- function(payload, construct_names, data_columns, normalized_constructs = NULL) {
   if (!is.list(payload) || is.null(names(payload))) {
     stop("Multi-group analysis payload must be a JSON object.")
   }
@@ -847,6 +890,19 @@ validate_multi_group_analysis_payload <- function(payload, construct_names, data
     stop("alpha must be a number greater than 0 and less than 1.")
   }
   seed <- require_scalar_integer(payload$seed, "seed", -2147483647L, 2147483647L)
+  hoc_constructs <- normalized_constructs %||% payload$constructs %||% list()
+  has_hoc <- any(vapply(
+    hoc_constructs,
+    function(con) isTRUE(con$is_higher_order) || isTRUE(con$isHigherOrder),
+    logical(1)
+  ))
+  selected_hoc_method <- hoc_method_label(payload$algorithmSettings %||% list(), has_hoc = has_hoc)
+  base_hoc_method <- require_optional_choice(
+    payload$baseHocMethod,
+    "baseHocMethod",
+    c("Repeated Indicators", "Embedded Two-stage", "Disjoint Two-stage"),
+    selected_hoc_method
+  )
 
   list(
     groupingVariable = grouping_variable,
@@ -854,7 +910,8 @@ validate_multi_group_analysis_payload <- function(payload, construct_names, data
     groupB = group_b,
     nboot = nboot,
     alpha = as.numeric(payload$alpha),
-    seed = seed
+    seed = seed,
+    baseHocMethod = base_hoc_method
   )
 }
 
@@ -901,6 +958,9 @@ validate_payload_object <- function(payload) {
   if (!is.null(payload$folds)) {
     normalized$folds <- require_scalar_integer(payload$folds, "folds", 2L, max_predict_folds)
   }
+  if (!is.null(payload$validationMode)) {
+    normalized$validationMode <- require_optional_choice(payload$validationMode, "validationMode", c("K-fold", "LOOCV"), "K-fold")
+  }
   if (!is.null(payload$repetitions)) {
     normalized$repetitions <- require_scalar_integer(payload$repetitions, "repetitions", 1L, max_predict_repetitions)
   }
@@ -909,6 +969,20 @@ validate_payload_object <- function(payload) {
       stop("cvpatEnabled must be true or false.")
     }
     normalized$cvpatEnabled <- isTRUE(payload$cvpatEnabled)
+  }
+  if (!is.null(payload$technique)) {
+    technique <- toupper(trimws(as.character(payload$technique)))
+    technique <- if (technique %in% c("EA", "ENTIRE ANTECEDENTS (EA)")) "EA" else if (technique %in% c("DA", "DIRECT ANTECEDENTS (DA)")) "DA" else stop("technique must be Direct antecedents (DA) or Entire antecedents (EA).")
+    normalized$technique <- technique
+  }
+  if (!is.null(payload$predictionSeed)) {
+    normalized$predictionSeed <- require_scalar_integer(payload$predictionSeed, "predictionSeed", 1L, 2147483647L)
+  }
+  if (!is.null(payload$bootstrapSeed)) {
+    normalized$bootstrapSeed <- require_scalar_integer(payload$bootstrapSeed, "bootstrapSeed", 1L, 2147483647L)
+  }
+  for (field in c("bootstrapTails", "bootstrapResampling", "bootstrapSignChanges")) {
+    if (!is.null(payload[[field]])) normalized[[field]] <- require_scalar_string(payload[[field]], field, max_chars = 80)
   }
   if (!is.null(payload$targetConstruct)) {
     normalized$targetConstruct <- require_scalar_string(payload$targetConstruct, "targetConstruct", max_chars = 120)
@@ -1164,7 +1238,7 @@ cvpat_matrix_to_rows <- function(matrix_like, benchmark_label, label_map = NULL)
   })
 }
 
-run_cvpat_assessment <- function(core, folds, reps, payload = NULL) {
+run_cvpat_assessment <- function(core, folds, reps, payload = NULL, prediction_seed = 123L, validation_mode = "K-fold") {
   if (!requireNamespace("seminrExtras", quietly = TRUE)) {
     return(list(
       status = "missing-seminrextras",
@@ -1175,14 +1249,15 @@ run_cvpat_assessment <- function(core, folds, reps, payload = NULL) {
   }
 
   nboot <- max_cvpat_bootstrap_samples
+  prediction_no_folds <- if (toupper(as.character(validation_mode %||% "K-fold")) == "LOOCV") NULL else folds
   result <- tryCatch({
     seminrExtras::assess_cvpat(
       seminr_model = core$model,
       testtype = "two.sided",
       nboot = nboot,
-      seed = 123,
-      technique = seminr::predict_DA,
-      noFolds = folds,
+      seed = prediction_seed,
+      technique = normalize_plspredict_technique(payload$technique %||% payload$predictionTechnique %||% "DA"),
+      noFolds = prediction_no_folds,
       reps = reps,
       cores = 1
     )
@@ -1475,8 +1550,9 @@ read_dataset <- function(file_path) {
 }
 
 # Collect the leaf (manifest) indicators for a construct, recursing through the
-# dimensions of higher-order constructs. Used to build a repeated-indicators
-# representation of a HOC for PLSpredict (seminr cannot predict two-stage HOCs).
+# dimensions of higher-order constructs. Used by standalone Repeated Indicators
+# estimation and Embedded Stage 1.
+# The same traversal maps leaf indicators back to LOCs in HOC reporting.
 # The `seen` guard prevents infinite recursion on malformed/cyclic dimensions.
 gather_leaf_indicators <- function(name, by_name, seen = character(0)) {
   name <- as.character(name)
@@ -1495,11 +1571,17 @@ gather_leaf_indicators <- function(name, by_name, seen = character(0)) {
   unique(items)
 }
 
-build_measurement <- function(constructs_payload, algorithm = "standard", interactions_payload = list(), for_prediction = FALSE) {
+build_measurement <- function(
+  constructs_payload,
+  algorithm = "standard",
+  interactions_payload = list(),
+  hoc_method = "Two-stage"
+) {
   algorithm <- tolower(as.character(algorithm))
   if (!(algorithm %in% c("standard", "consistent"))) {
     algorithm <- "standard"
   }
+  hoc_method <- normalize_hoc_settings(list(hocMethod = hoc_method))$hocMethod
 
   by_name <- list()
   for (con in constructs_payload) {
@@ -1520,13 +1602,10 @@ build_measurement <- function(constructs_payload, algorithm = "standard", intera
       hoc_type <- tolower(as.character(con$higher_order_type %||% "reflective"))
       hoc_weights <- if (hoc_type == "formative") seminr::mode_B else seminr::mode_A
 
-      if (isTRUE(for_prediction)) {
-        # seminr's predict_pls() has no published solution for two-stage higher-order
-        # models, so for prediction we represent each HOC with the repeated-indicators
-        # approach: a composite over the leaf indicators of all its dimensions.
+      if (identical(hoc_method, "Repeated indicators")) {
         leaf_items <- gather_leaf_indicators(con_name, by_name)
         if (!length(leaf_items)) {
-          stop(sprintf("Higher-order construct '%s' has no indicators to predict.", con_name))
+          stop(sprintf("Higher-order construct '%s' has no leaf indicators.", con_name))
         }
         seminr::composite(con_name, leaf_items, weights = hoc_weights)
       } else {
@@ -1556,7 +1635,7 @@ build_measurement <- function(constructs_payload, algorithm = "standard", intera
           seminr::composite(con_name, single_item_spec, weights = seminr::mode_A)
         }
       } else if (con_type == "formative") {
-        seminr::composite(con_name, items)
+        seminr::composite(con_name, items, weights = seminr::mode_B)
       } else {
         if (algorithm == "consistent") {
           seminr::reflective(con_name, items)
@@ -1795,7 +1874,12 @@ prepare_payload <- function(req) {
   multi_group_fields <- c("groupingVariable", "groupA", "groupB", "nboot", "alpha", "seed")
   if (all(multi_group_fields %in% names(raw_payload))) {
     construct_names <- vapply(payload$constructs, function(con) con$name, character(1), USE.NAMES = FALSE)
-    payload <- c(payload, validate_multi_group_analysis_payload(raw_payload, construct_names, colnames(data)))
+    payload <- c(payload, validate_multi_group_analysis_payload(
+      raw_payload,
+      construct_names,
+      colnames(data),
+      normalized_constructs = payload$constructs
+    ))
   }
 
   used_items <- unique(unlist(
@@ -1972,15 +2056,16 @@ effect_size_label <- function(f2) {
   "Negligible"
 }
 
-compute_isolated_moderation_r2 <- function(payload, data, timings) {
+compute_isolated_moderation_r2 <- function(payload, data, timings, use_cache = TRUE) {
   interactions <- payload$interactions %||% list()
   if (!length(interactions)) return(list())
+  fit_pls_core <- if (isTRUE(use_cache)) get_cached_pls_core else run_pls_core
 
   # 1. Baseline fit (main effects only, zero interactions)
   baseline_payload <- strip_all_interactions(payload)
   baseline_core <- timed_or_direct(timings, "isolated baseline pls core", {
     tryCatch(
-      get_cached_pls_core(baseline_payload, data),
+      fit_pls_core(baseline_payload, data),
       error = function(e) NULL
     )
   })
@@ -2010,7 +2095,7 @@ compute_isolated_moderation_r2 <- function(payload, data, timings) {
     iso_payload <- isolate_single_interaction(payload, interaction)
     iso_core <- timed_or_direct(timings, phase_label, {
       tryCatch({
-        get_cached_pls_core(iso_payload, data)
+        fit_pls_core(iso_payload, data)
       }, error = function(e) NULL)
     })
 
@@ -2059,28 +2144,351 @@ has_higher_order_construct <- function(payload) {
   any(vapply(constructs, function(con) isTRUE(con$is_higher_order), logical(1)))
 }
 
-run_pls_core <- function(payload, data, for_prediction = FALSE) {
-  algorithm <- if (!is.null(payload$algorithm)) as.character(payload$algorithm) else "standard"
-  measurement_model <- build_measurement(
-    payload$constructs,
-    algorithm = algorithm,
-    interactions_payload = payload$interactions %||% list(),
-    for_prediction = for_prediction
+micom_hoc_unavailable_message <- paste0(
+  "MICOM is currently not available for models containing higher-order constructs. ",
+  "Run MICOM on a model without higher-order constructs."
+)
+
+assert_micom_payload_supported <- function(payload) {
+  if (has_higher_order_construct(payload)) {
+    stop(micom_hoc_unavailable_message, call. = FALSE)
+  }
+  TRUE
+}
+
+resolve_missing_data_handler <- function(label) {
+  normalized <- tolower(trimws(as.character(label %||% "Mean replacement")))
+  if (grepl("listwise", normalized)) {
+    return(function(data) data[stats::complete.cases(data), , drop = FALSE])
+  }
+  if (grepl("median", normalized)) {
+    return(function(data) {
+      out <- data
+      for (column in names(out)) {
+        values <- suppressWarnings(as.numeric(out[[column]]))
+        if (anyNA(values)) {
+          replacement <- stats::median(values, na.rm = TRUE)
+          if (is.finite(replacement)) values[is.na(values)] <- replacement
+          out[[column]] <- values
+        }
+      }
+      out
+    })
+  }
+  seminr::mean_replacement
+}
+
+resolve_pls_estimation_settings <- function(payload) {
+  settings <- payload$algorithmSettings %||% list()
+  inner_label <- tolower(as.character(settings$innerWeighting %||% "Path weighting scheme"))
+  inner_weights <- if (grepl("factor", inner_label)) {
+    get("path_factorial", envir = asNamespace("seminr"))
+  } else if (grepl("centroid", inner_label)) {
+    # SEMinR 2.5.0 has no public centroid inner-weighting function. Keep the
+    # run usable, but expose the requested/applied mismatch in result metadata.
+    seminr::path_weighting
+  } else {
+    seminr::path_weighting
+  }
+  max_it <- suppressWarnings(as.integer(settings$maxIterations %||% 300L))
+  if (is.na(max_it) || max_it < 1L) max_it <- 300L
+  stop_raw <- as.character(settings$stopCriterion %||% "1e-7")
+  stop_numeric <- suppressWarnings(as.numeric(stop_raw))
+  # seminr expresses the convergence threshold as a power of ten (7 means
+  # 1e-7), while the Results UI stores the human-readable threshold string.
+  stop_criterion <- if (!is.na(stop_numeric) && stop_numeric > 0 && stop_numeric < 1) {
+    as.integer(round(-log10(stop_numeric)))
+  } else {
+    as.integer(round(stop_numeric))
+  }
+  if (is.na(stop_criterion) || stop_criterion < 1L) stop_criterion <- 7L
+  list(
+    inner_weights = inner_weights,
+    maxIt = max_it,
+    stopCriterion = stop_criterion,
+    missing = resolve_missing_data_handler(settings$missingData),
+    missing_label = settings$missingData %||% "Mean replacement",
+    missing_value = NA,
+    assess_syntax = isTRUE(settings$assessSyntax),
+    initial_weights = settings$initialWeights %||% "1 (uniform)"
   )
+}
+
+estimate_pls_model <- function(data, measurement_model, structural_model, estimation_settings) {
+  seminr::estimate_pls(
+    data = data,
+    measurement_model = measurement_model,
+    structural_model = structural_model,
+    inner_weights = estimation_settings$inner_weights,
+    maxIt = estimation_settings$maxIt,
+    stopCriterion = estimation_settings$stopCriterion,
+    missing = estimation_settings$missing,
+    missing_value = estimation_settings$missing_value,
+    assess_syntax = estimation_settings$assess_syntax
+  )
+}
+
+extract_embedded_stage1_scores <- function(model, constructs_payload) {
+  base_scores <- as.data.frame(
+    model$construct_scores %||% model$composite_scores,
+    stringsAsFactors = FALSE,
+    check.names = FALSE
+  )
+  if (is.null(base_scores) || !nrow(base_scores)) {
+    stop("SEMinR did not return construct scores for embedded two-stage estimation.")
+  }
+
+  required_scores <- unique(vapply(
+    constructs_payload %||% list(),
+    function(con) as.character(con$name),
+    character(1),
+    USE.NAMES = FALSE
+  ))
+  missing_scores <- setdiff(required_scores, colnames(base_scores))
+  if (length(missing_scores)) {
+    stop(sprintf(
+      "Embedded two-stage Stage 1 is missing required construct scores from SEMinR: %s.",
+      paste(missing_scores, collapse = ", ")
+    ))
+  }
+
+  base_scores
+}
+
+build_repeated_indicator_hoc_paths <- function(payload, original_paths = payload$paths %||% list()) {
+  stage1_paths <- original_paths %||% list()
+  existing_keys <- vapply(stage1_paths, function(path) {
+    paste0(as.character(path$from %||% ""), "|", as.character(path$to %||% ""))
+  }, character(1), USE.NAMES = FALSE)
+
+  for (hoc in Filter(function(con) isTRUE(con$is_higher_order), payload$constructs %||% list())) {
+    hoc_name <- as.character(hoc$name)
+    hoc_type <- tolower(as.character(hoc$higher_order_type %||% "reflective"))
+    dimensions <- unique(as.character(unlist(hoc$dimensions %||% list(), use.names = FALSE)))
+    dimensions <- dimensions[!is.na(dimensions) & nzchar(dimensions)]
+
+    for (dimension in dimensions) {
+      path <- if (identical(hoc_type, "formative")) {
+        list(from = dimension, to = hoc_name)
+      } else {
+        list(from = hoc_name, to = dimension)
+      }
+      key <- paste0(path$from, "|", path$to)
+      if (!(key %in% existing_keys)) {
+        stage1_paths[[length(stage1_paths) + 1L]] <- path
+        existing_keys <- c(existing_keys, key)
+      }
+    }
+  }
+
+  stage1_paths
+}
+
+build_embedded_stage2_payload <- function(payload) {
+  hocs <- Filter(function(con) isTRUE(con$is_higher_order), payload$constructs %||% list())
+  loc_names <- unique(unlist(lapply(hocs, function(hoc) {
+    as.character(unlist(hoc$dimensions %||% list(), use.names = FALSE))
+  }), use.names = FALSE))
+  loc_names <- loc_names[!is.na(loc_names) & nzchar(loc_names)]
+
+  structural_role_names <- unique(c(
+    unlist(lapply(payload$paths %||% list(), function(path) {
+      c(as.character(path$from %||% ""), as.character(path$to %||% ""))
+    }), use.names = FALSE),
+    unlist(lapply(payload$interactions %||% list(), function(interaction) {
+      c(
+        as.character(interaction$iv %||% ""),
+        as.character(interaction$moderator %||% ""),
+        as.character(interaction$outcome %||% "")
+      )
+    }), use.names = FALSE)
+  ))
+  structural_role_names <- structural_role_names[nzchar(structural_role_names)]
+
+  stage2_sources <- Filter(function(con) {
+    con_name <- as.character(con$name)
+    isTRUE(con$is_higher_order) ||
+      !(con_name %in% loc_names) ||
+      con_name %in% structural_role_names
+  }, payload$constructs %||% list())
+
+  stage2_constructs <- lapply(stage2_sources, function(con) {
+    con_name <- as.character(con$name)
+    stage2_con <- con
+    stage2_con$is_higher_order <- FALSE
+    if (isTRUE(con$is_higher_order)) {
+      dimensions <- unlist(con$dimensions)
+      dimensions <- dimensions[!is.na(dimensions) & nzchar(dimensions)]
+      stage2_con$indicators <- as.list(dimensions)
+      stage2_con$type <- con$higher_order_type %||% "reflective"
+    } else {
+      stage2_con$indicators <- list(con_name)
+    }
+    stage2_con
+  })
+
+  stage2_payload <- payload
+  stage2_payload$constructs <- stage2_constructs
+  stage2_payload
+}
+
+run_pls_core <- function(payload, data) {
+  algorithm <- if (!is.null(payload$algorithm)) as.character(payload$algorithm) else "standard"
+  estimation_settings <- resolve_pls_estimation_settings(payload)
+  hoc_settings <- normalize_hoc_settings(payload$algorithmSettings %||% list())
   # two_stage interactions require the moderator to have a direct structural path to the
   # outcome. The frontend always includes it, but this guard prevents "subscript out of
   # bounds" from seminr if the path is ever absent.
   safe_paths <- ensure_moderator_main_effects(payload$paths, payload$interactions %||% list())
-  structural_model <- build_structural(safe_paths)
+  structural_paths <- if (
+    has_higher_order_construct(payload) &&
+    identical(hoc_settings$hocMethod, "Repeated indicators")
+  ) {
+    build_repeated_indicator_hoc_paths(payload, safe_paths)
+  } else {
+    safe_paths
+  }
+  structural_model <- build_structural(structural_paths)
 
-  model <- seminr::estimate_pls(
-    data = data,
-    measurement_model = measurement_model,
-    structural_model = structural_model
+  use_embedded <-
+    has_higher_order_construct(payload) &&
+    identical(hoc_settings$hocMethod, "Two-stage") &&
+    identical(hoc_settings$hocTwoStage, "Embedded")
+
+  if (use_embedded) {
+    stage1_measurement <- build_measurement(
+      payload$constructs,
+      algorithm = algorithm,
+      interactions_payload = payload$interactions %||% list(),
+      hoc_method = "Repeated indicators"
+    )
+    stage1_structural_model <- build_structural(build_repeated_indicator_hoc_paths(payload, safe_paths))
+    stage1_model <- estimate_pls_model(data, stage1_measurement, stage1_structural_model, estimation_settings)
+    stage1_scores <- extract_embedded_stage1_scores(stage1_model, payload$constructs)
+    stage2_payload <- build_embedded_stage2_payload(payload)
+    stage2_measurement <- build_measurement(
+      stage2_payload$constructs,
+      algorithm = algorithm,
+      interactions_payload = stage2_payload$interactions %||% list(),
+      hoc_method = "Repeated indicators"
+    )
+    model <- estimate_pls_model(stage1_scores, stage2_measurement, structural_model, estimation_settings)
+    summary_obj <- summary(model)
+    return(list(
+      model = model,
+      summary = summary_obj,
+      hoc_settings = hoc_settings,
+      hoc_method_label = hoc_method_label(hoc_settings, has_hoc = TRUE),
+      stage1_model = stage1_model,
+      stage2_payload = stage2_payload
+    ))
+  }
+
+  measurement_model <- build_measurement(
+    payload$constructs,
+    algorithm = algorithm,
+    interactions_payload = payload$interactions %||% list(),
+    hoc_method = hoc_settings$hocMethod
   )
+  model <- estimate_pls_model(data, measurement_model, structural_model, estimation_settings)
 
   summary_obj <- summary(model)
-  list(model = model, summary = summary_obj)
+  list(
+    model = model,
+    summary = summary_obj,
+    hoc_settings = hoc_settings,
+    hoc_method_label = hoc_method_label(hoc_settings, has_hoc = has_higher_order_construct(payload))
+  )
+}
+
+# SEMinR's PLSpredict data-frame indexing requires unique manifest column names,
+# while repeated-indicator HOCs intentionally reuse LOC indicators. Alias only the
+# repeated prediction columns, then prove the fitted paths and scores are unchanged.
+build_repeated_indicator_prediction_core <- function(payload, core) {
+  model <- core$model
+  mm_matrix <- as.matrix(model$mmMatrix)
+  if (is.null(mm_matrix) || !nrow(mm_matrix) || !("measurement" %in% colnames(mm_matrix))) {
+    return(core)
+  }
+
+  measurements <- as.character(mm_matrix[, "measurement"])
+  duplicate_rows <- which(duplicated(measurements))
+  if (!length(duplicate_rows)) return(core)
+
+  prediction_data <- as.data.frame(model$data, stringsAsFactors = FALSE, check.names = FALSE)
+  prediction_measurement <- model$measurement_model
+  alias_lookup <- list()
+  alias_metadata <- list()
+
+  for (row_index in duplicate_rows) {
+    construct_name <- as.character(mm_matrix[row_index, "construct"])
+    measurement_name <- as.character(mm_matrix[row_index, "measurement"])
+    if (!(measurement_name %in% colnames(prediction_data))) {
+      stop(sprintf("Repeated-indicator PLSpredict could not find manifest indicator '%s'.", measurement_name))
+    }
+
+    alias_name <- sprintf(
+      "METIS_PRED_%s_%s_%s",
+      row_index,
+      make.names(construct_name),
+      make.names(measurement_name)
+    )
+    while (alias_name %in% colnames(prediction_data)) alias_name <- paste0(alias_name, "_")
+
+    prediction_data[[alias_name]] <- prediction_data[[measurement_name]]
+    alias_lookup[[paste(construct_name, measurement_name, sep = "\r")]] <- alias_name
+    alias_metadata[[alias_name]] <- list(
+      indicator = measurement_name,
+      construct = construct_name
+    )
+  }
+
+  for (construct_index in seq_along(prediction_measurement)) {
+    construct_spec <- prediction_measurement[[construct_index]]
+    if (!inherits(construct_spec, "construct")) next
+
+    construct_positions <- seq.int(1L, length(construct_spec), by = 3L)
+    construct_name <- as.character(construct_spec[[construct_positions[[1L]]]])
+    for (construct_position in construct_positions) {
+      measurement_position <- construct_position + 1L
+      measurement_name <- as.character(construct_spec[[measurement_position]])
+      alias_name <- alias_lookup[[paste(construct_name, measurement_name, sep = "\r")]]
+      if (!is.null(alias_name)) construct_spec[[measurement_position]] <- alias_name
+    }
+    prediction_measurement[[construct_index]] <- construct_spec
+  }
+
+  prediction_model <- estimate_pls_model(
+    prediction_data,
+    prediction_measurement,
+    model$smMatrix,
+    resolve_pls_estimation_settings(payload)
+  )
+  if (anyDuplicated(prediction_model$mmVariables)) {
+    stop("Repeated-indicator PLSpredict could not create a unique internal manifest-indicator representation.")
+  }
+
+  same_paths <- isTRUE(all.equal(
+    model$path_coef,
+    prediction_model$path_coef,
+    tolerance = 1e-10,
+    check.attributes = FALSE
+  ))
+  same_scores <- isTRUE(all.equal(
+    model$construct_scores,
+    prediction_model$construct_scores,
+    tolerance = 1e-10,
+    check.attributes = FALSE
+  ))
+  if (!same_paths || !same_scores) {
+    stop("Repeated-indicator PLSpredict aliases changed the fitted HOC model.")
+  }
+
+  prediction_core <- core
+  prediction_core$model <- prediction_model
+  prediction_core$summary <- summary(prediction_model)
+  prediction_core$prediction_indicator_aliases <- alias_metadata
+  prediction_core
 }
 
 # seminrExtras IPMA/cIPMA (compute_ipma_performance) recurse infinitely when a
@@ -2784,7 +3192,7 @@ vif_list_to_rows <- function(vif_obj) {
   list()
 }
 
-extract_quality_criteria <- function(payload, data, core) {
+extract_quality_criteria <- function(payload, data, core, bypass_isolated_moderation_cache = FALSE) {
   summary_obj <- core$summary
   model <- core$model
 
@@ -2803,7 +3211,12 @@ extract_quality_criteria <- function(payload, data, core) {
     error = function(e) list()
   )
 
-  isolated_r2 <- compute_isolated_moderation_r2(payload, data, NULL)
+  isolated_r2 <- compute_isolated_moderation_r2(
+    payload,
+    data,
+    NULL,
+    use_cache = !isTRUE(bypass_isolated_moderation_cache)
+  )
 
   list(
     r_square = extract_r2_results(summary_obj, payload$constructs, payload$paths, data),
@@ -2827,6 +3240,14 @@ extract_hoc_results <- function(payload, model, summary_obj) {
   constructs <- payload$constructs %||% list()
   hoc_constructs <- Filter(function(con) isTRUE(con$is_higher_order), constructs)
   if (length(hoc_constructs) == 0) return(list())
+  hoc_settings <- normalize_hoc_settings(payload$algorithmSettings %||% list())
+  use_leaf_indicators <- identical(hoc_settings$hocMethod, "Repeated indicators")
+
+  by_name <- list()
+  for (con in constructs) {
+    con_name <- as.character(con$name)
+    if (nzchar(con_name)) by_name[[con_name]] <- con
+  }
 
   ol <- model$outer_loadings
   ow <- model$outer_weights
@@ -2843,48 +3264,312 @@ extract_hoc_results <- function(payload, model, summary_obj) {
     dimensions <- unlist(con$dimensions)
 
     for (dim_name in dimensions) {
-      loading_val <- NA_real_
-      weight_val <- NA_real_
-      vif_val <- NA_real_
-
-      if (!is.null(ol) && dim_name %in% rownames(ol) && hoc_name %in% colnames(ol)) {
-        loading_val <- safe_num(ol[dim_name, hoc_name])
-      }
-
-      if (!is.null(ow) && dim_name %in% rownames(ow) && hoc_name %in% colnames(ow)) {
-        weight_val <- safe_num(ow[dim_name, hoc_name])
-      }
-
-      if (!is.null(vif_items)) {
-        if (is.list(vif_items) && !is.null(vif_items[[hoc_name]]) && dim_name %in% names(vif_items[[hoc_name]])) {
-          vif_val <- safe_num(vif_items[[hoc_name]][[dim_name]])
-        } else if (is.matrix(vif_items) || is.data.frame(vif_items)) {
-          if (dim_name %in% rownames(vif_items) && hoc_name %in% colnames(vif_items)) {
-            vif_val <- safe_num(vif_items[dim_name, hoc_name])
-          } else if (dim_name %in% names(vif_items)) {
-            vif_val <- safe_num(vif_items[[dim_name]])
-          }
-        } else if (dim_name %in% names(vif_items)) {
-          vif_val <- safe_num(vif_items[[dim_name]])
-        }
-      }
-
       loc_con <- Filter(function(c) as.character(c$name) == dim_name, constructs)
       loc_type <- if (length(loc_con) > 0) tolower(as.character(loc_con[[1]]$type %||% "reflective")) else "reflective"
+      indicator_names <- if (use_leaf_indicators) gather_leaf_indicators(dim_name, by_name) else dim_name
 
-      hoc_rows[[length(hoc_rows) + 1]] <- list(
-        hoc_construct = hoc_name,
-        loc_construct = dim_name,
-        hoc_type = hoc_type,
-        loc_type = loc_type,
-        loading = loading_val,
-        weight = weight_val,
-        vif = vif_val
-      )
+      for (indicator_name in indicator_names) {
+        loading_val <- NA_real_
+        weight_val <- NA_real_
+        vif_val <- NA_real_
+
+        if (!is.null(ol) && indicator_name %in% rownames(ol) && hoc_name %in% colnames(ol)) {
+          loading_val <- safe_num(ol[indicator_name, hoc_name])
+        }
+
+        if (!is.null(ow) && indicator_name %in% rownames(ow) && hoc_name %in% colnames(ow)) {
+          weight_val <- safe_num(ow[indicator_name, hoc_name])
+        }
+
+        if (!is.null(vif_items)) {
+          if (is.list(vif_items) && !is.null(vif_items[[hoc_name]]) && indicator_name %in% names(vif_items[[hoc_name]])) {
+            vif_val <- safe_num(vif_items[[hoc_name]][[indicator_name]])
+          } else if (is.matrix(vif_items) || is.data.frame(vif_items)) {
+            if (indicator_name %in% rownames(vif_items) && hoc_name %in% colnames(vif_items)) {
+              vif_val <- safe_num(vif_items[indicator_name, hoc_name])
+            } else if (hoc_name %in% rownames(vif_items) && indicator_name %in% colnames(vif_items)) {
+              vif_val <- safe_num(vif_items[hoc_name, indicator_name])
+            }
+          } else if (indicator_name %in% names(vif_items)) {
+            vif_val <- safe_num(vif_items[[indicator_name]])
+          }
+        }
+
+        hoc_rows[[length(hoc_rows) + 1]] <- list(
+          hoc_construct = hoc_name,
+          loc_construct = dim_name,
+          indicator = indicator_name,
+          hoc_type = hoc_type,
+          loc_type = loc_type,
+          loading = loading_val,
+          weight = weight_val,
+          vif = vif_val
+        )
+      }
     }
   }
 
   hoc_rows
+}
+
+embedded_bootstrap_matrix <- function(models, field, reference) {
+  if (is.null(reference) || is.null(dim(reference))) return(NULL)
+  out <- array(NA_real_, dim = c(nrow(reference), ncol(reference), length(models)), dimnames = list(rownames(reference), colnames(reference), NULL))
+  for (k in seq_along(models)) {
+    current <- models[[k]]$model[[field]]
+    if (is.null(current)) next
+    for (i in seq_len(nrow(reference))) {
+      for (j in seq_len(ncol(reference))) {
+        if (rownames(reference)[[i]] %in% rownames(current) && colnames(reference)[[j]] %in% colnames(current)) {
+          out[i, j, k] <- suppressWarnings(as.numeric(current[rownames(reference)[[i]], colnames(reference)[[j]]]))
+        }
+      }
+    }
+  }
+  out
+}
+
+embedded_bootstrap_derived_matrix <- function(models, reference, derive_matrix) {
+  if (is.null(reference) || is.null(dim(reference))) return(NULL)
+  out <- array(
+    NA_real_,
+    dim = c(nrow(reference), ncol(reference), length(models)),
+    dimnames = list(rownames(reference), colnames(reference), NULL)
+  )
+  for (k in seq_along(models)) {
+    current <- derive_matrix(models[[k]]$model)
+    if (is.null(current) || is.null(dim(current))) next
+    shared_rows <- intersect(rownames(reference), rownames(current))
+    shared_columns <- intersect(colnames(reference), colnames(current))
+    if (length(shared_rows) && length(shared_columns)) {
+      out[shared_rows, shared_columns, k] <- current[shared_rows, shared_columns, drop = FALSE]
+    }
+  }
+  out
+}
+
+run_embedded_hoc_bootstrap <- function(payload, data, core, nboot, seed = NULL, timings = NULL) {
+  if (!is.null(seed)) set.seed(as.integer(seed))
+  models <- vector("list", nboot)
+  for (idx in seq_len(nboot)) {
+    sample_rows <- sample.int(nrow(data), nrow(data), replace = TRUE)
+    models[[idx]] <- timed_or_direct(timings, sprintf("embedded bootstrap resample %s", idx), run_pls_core(payload, data[sample_rows, , drop = FALSE]))
+  }
+  total_paths <- seminr:::total_effects(core$model$path_coef)
+  boot_paths <- embedded_bootstrap_matrix(models, "path_coef", core$model$path_coef)
+  boot_total_paths <- embedded_bootstrap_derived_matrix(
+    models,
+    total_paths,
+    function(model) seminr:::total_effects(model$path_coef)
+  )
+  list(
+    path_coef = core$model$path_coef,
+    total_paths = total_paths,
+    total_indirect_paths = total_paths - core$model$path_coef,
+    outer_loadings = core$model$outer_loadings,
+    outer_weights = core$model$outer_weights,
+    boot_paths = boot_paths,
+    boot_total_paths = boot_total_paths,
+    boot_total_indirect_paths = boot_total_paths - boot_paths,
+    boot_loadings = embedded_bootstrap_matrix(models, "outer_loadings", core$model$outer_loadings),
+    boot_weights = embedded_bootstrap_matrix(models, "outer_weights", core$model$outer_weights)
+  )
+}
+
+embedded_bootstrap_statistics <- function(observed, values, alpha = 0.05) {
+  observed <- suppressWarnings(as.numeric(observed))[1]
+  values <- suppressWarnings(as.numeric(values))
+  values <- values[is.finite(values)]
+  if (!is.finite(observed) || !length(values)) return(NULL)
+
+  bootstrap_sd <- if (length(values) > 1L) stats::sd(values) else NA_real_
+  t_stat <- observed / bootstrap_sd
+  if (!is.finite(t_stat) || abs(t_stat) > 999999999) t_stat <- NA_real_
+  percentile_interval <- as.numeric(stats::quantile(
+    values,
+    probs = c(alpha / 2, 1 - alpha / 2),
+    na.rm = TRUE,
+    names = FALSE
+  ))
+  bias_corrected <- bias_corrected_interval(values, observed, alpha)
+  percentile_labels <- bootstrap_interval_labels(alpha)
+  bias_corrected_labels <- bootstrap_interval_labels(alpha, " (BC)")
+
+  row <- list(
+    `Original Est.` = observed,
+    `Bootstrap Mean` = mean(values),
+    `Bootstrap SD` = bootstrap_sd,
+    `T Stat.` = t_stat
+  )
+  row[[percentile_labels[[1]]]] <- percentile_interval[[1]]
+  row[[percentile_labels[[2]]]] <- percentile_interval[[2]]
+  row[["Bootstrap P Val"]] <- 2 * min(mean(values <= 0), mean(values > 0))
+  row[[bias_corrected_labels[[1]]]] <- bias_corrected[[1]]
+  row[[bias_corrected_labels[[2]]]] <- bias_corrected[[2]]
+  row[["Significance"]] <- if (
+    percentile_interval[[1]] > 0 || percentile_interval[[2]] < 0
+  ) "Significant" else "Not significant"
+  row
+}
+
+embedded_bootstrap_rows <- function(original, boot_array, alpha = 0.05) {
+  if (is.null(original) || is.null(boot_array) || is.null(dim(original)) || length(dim(boot_array)) < 3L) return(list())
+  rows <- list()
+  for (i in seq_len(nrow(original))) {
+    for (j in seq_len(ncol(original))) {
+      observed <- suppressWarnings(as.numeric(original[i, j]))
+      if (!is.finite(observed) || observed == 0) next
+      statistics <- embedded_bootstrap_statistics(observed, boot_array[i, j, ], alpha)
+      if (is.null(statistics)) next
+      rows[[length(rows) + 1L]] <- c(
+        list(row_name = paste(rownames(original)[[i]], colnames(original)[[j]], sep = " -> ")),
+        statistics
+      )
+    }
+  }
+  rows
+}
+
+embedded_specific_indirect_paths <- function(payload) {
+  edges <- lapply(payload$paths %||% list(), function(path) {
+    c(as.character(path$from %||% ""), as.character(path$to %||% ""))
+  })
+  edges <- Filter(function(edge) length(edge) == 2L && all(nzchar(edge)), edges)
+  nodes <- unique(unlist(edges, use.names = FALSE))
+  adjacency <- setNames(vector("list", length(nodes)), nodes)
+  for (edge in edges) adjacency[[edge[[1]]]] <- unique(c(adjacency[[edge[[1]]]], edge[[2]]))
+
+  paths <- list()
+  walk <- function(current, path_nodes) {
+    next_nodes <- adjacency[[current]] %||% character(0)
+    for (next_node in next_nodes) {
+      if (next_node %in% path_nodes) next
+      next_path <- c(path_nodes, next_node)
+      if (length(next_path) >= 3L) paths[[length(paths) + 1L]] <<- next_path
+      walk(next_node, next_path)
+    }
+  }
+  for (node in nodes) walk(node, node)
+
+  if (!length(paths)) return(list())
+  keys <- vapply(
+    paths,
+    function(path_nodes) paste(path_nodes, collapse = "|"),
+    character(1),
+    USE.NAMES = FALSE
+  )
+  paths[!duplicated(keys)]
+}
+
+embedded_path_product <- function(path_matrix, path_nodes) {
+  if (is.null(path_matrix) || length(path_nodes) < 2L) return(NA_real_)
+  product <- 1
+  for (idx in seq_len(length(path_nodes) - 1L)) {
+    source <- path_nodes[[idx]]
+    target <- path_nodes[[idx + 1L]]
+    if (!(source %in% rownames(path_matrix)) || !(target %in% colnames(path_matrix))) return(NA_real_)
+    product <- product * suppressWarnings(as.numeric(path_matrix[source, target]))
+  }
+  product
+}
+
+embedded_specific_indirect_effects <- function(payload, path_coef, boot_paths, alpha = 0.05) {
+  chains <- embedded_specific_indirect_paths(payload)
+  if (!length(chains) || is.null(boot_paths) || length(dim(boot_paths)) < 3L) return(list())
+
+  effects <- list()
+  for (path_nodes in chains) {
+    original <- embedded_path_product(path_coef, path_nodes)
+    values <- vapply(seq_len(dim(boot_paths)[3]), function(k) {
+      embedded_path_product(boot_paths[, , k], path_nodes)
+    }, numeric(1))
+    statistics <- embedded_bootstrap_statistics(original, values, alpha)
+    if (is.null(statistics)) next
+    path_label <- paste(path_nodes, collapse = " -> ")
+    effects[[length(effects) + 1L]] <- c(
+      list(path = path_label, row_name = path_label),
+      statistics
+    )
+  }
+  effects
+}
+
+assemble_embedded_bootstrap_response <- function(payload, data, core, boot, nboot, confidence_level, algorithm, algorithm_label, alpha = 0.05, bypass_isolated_moderation_cache = FALSE) {
+  hoc_settings <- payload$algorithmSettings %||% list()
+  execution_log <- list(list(message = sprintf("Embedded two-stage bootstrap reran Stage 1 and Stage 2 for all %s resamples.", nboot)))
+  results <- list(
+    final_results = list(
+      path_coefficients = embedded_bootstrap_rows(boot$path_coef, boot$boot_paths, alpha),
+      total_indirect_effects = embedded_bootstrap_rows(boot$total_indirect_paths, boot$boot_total_indirect_paths, alpha),
+      specific_indirect_effects = embedded_specific_indirect_effects(payload, boot$path_coef, boot$boot_paths, alpha),
+      total_effects = embedded_bootstrap_rows(boot$total_paths, boot$boot_total_paths, alpha),
+      outer_loadings = embedded_bootstrap_rows(boot$outer_loadings, boot$boot_loadings, alpha),
+      outer_weights = embedded_bootstrap_rows(boot$outer_weights, boot$boot_weights, alpha)
+    ),
+    quality_criteria = extract_quality_criteria(
+      payload,
+      data,
+      core,
+      bypass_isolated_moderation_cache = bypass_isolated_moderation_cache
+    ),
+    algorithm = list(settings = list(mode = "PLS-SEM", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = "Embedded Two-stage", hoc_method_requested = hoc_settings$hocMethod %||% "Two-stage", hoc_two_stage = "Embedded", algorithm_settings = hoc_settings, nboot = nboot, ci_type = payload$ciType %||% "Percentile", confidence_level = confidence_level), execution_log = execution_log),
+    execution_log = execution_log,
+    model_and_data = list(inner_model = as_rows(core$model$path_coef), outer_model = as_rows(core$model$outer_loadings), indicator_data_original = as_rows(utils::head(data, 200)), indicator_data_standardized = as_rows(utils::head(standardize_data(data), 200)), indicator_data_correlations = extract_indicator_correlations(data)),
+    meta = list(mode = "bootstrap", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = "Embedded Two-stage", rows = nrow(data), columns = ncol(data), engine = "seminr")
+  )
+  list(success = TRUE, results = results)
+}
+
+assemble_bootstrap_response <- function(payload, data, core, boot_model, boot_summary, nboot, confidence_level, algorithm, algorithm_label, alpha = 0.05, bypass_isolated_moderation_cache = FALSE) {
+  total_indirect_matrix <- seminr:::total_indirect_effects(boot_model$path_coef)
+  if (!is.null(total_indirect_matrix) && any(total_indirect_matrix != 0, na.rm = TRUE) && !is.null(boot_model$boot_total_paths) && !is.null(boot_model$boot_paths)) {
+    boot_total_indirect <- boot_model$boot_total_paths - boot_model$boot_paths
+    boot_summary$bootstrapped_total_indirect_paths <- seminr:::parse_boot_array(total_indirect_matrix, boot_total_indirect, alpha = alpha)
+    boot_summary$bootstrapped_total_indirect_paths <- add_bias_corrected_intervals(boot_summary$bootstrapped_total_indirect_paths, total_indirect_matrix, boot_total_indirect, alpha = alpha)
+  }
+  specific_indirect <- extract_specific_indirect_effects(payload, boot_model, alpha = alpha)
+
+  boot_paths <- as_rows(boot_summary$bootstrapped_paths)
+  if (!length(boot_paths)) boot_paths <- extract_path_results(core$model, payload$paths)
+  boot_total_indirect <- as_rows(boot_summary$bootstrapped_total_indirect_effects %||% boot_summary$bootstrapped_total_indirect_paths %||% boot_summary$total_indirect_effects)
+  if (!length(boot_total_indirect)) boot_total_indirect <- as_rows(core$summary$total_indirect_effects)
+  boot_total_effects <- as_rows(boot_summary$bootstrapped_total_effects %||% boot_summary$bootstrapped_total_paths %||% boot_summary$total_effects)
+  if (!length(boot_total_effects)) boot_total_effects <- as_rows(core$summary$total_effects)
+  boot_loadings <- as_rows(boot_summary$bootstrapped_loadings)
+  if (!length(boot_loadings)) boot_loadings <- as_rows(core$summary$loadings)
+  boot_weights <- as_rows(boot_summary$bootstrapped_weights)
+  if (!length(boot_weights)) boot_weights <- as_rows(core$summary$weights)
+
+  quality_criteria <- c(
+    extract_quality_criteria(
+      payload,
+      data,
+      core,
+      bypass_isolated_moderation_cache = bypass_isolated_moderation_cache
+    ),
+    list(htmt_confidence_intervals = as_rows(boot_summary$bootstrapped_HTMT))
+  )
+  execution_log <- list(list(message = sprintf("Bootstrap completed with %s subsamples", nboot)))
+  hoc_settings <- payload$algorithmSettings %||% list()
+  results <- list(
+    final_results = list(path_coefficients = boot_paths, total_indirect_effects = boot_total_indirect, specific_indirect_effects = specific_indirect, total_effects = boot_total_effects, outer_loadings = boot_loadings, outer_weights = boot_weights),
+    quality_criteria = quality_criteria,
+    algorithm = list(settings = list(mode = "PLS-SEM", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = core$hoc_method_label %||% hoc_method_label(hoc_settings, has_hoc = has_higher_order_construct(payload)), hoc_method_requested = hoc_settings$hocMethod %||% "Two-stage", hoc_two_stage = hoc_settings$hocTwoStage %||% "Disjoint two-stage", algorithm_settings = hoc_settings, nboot = nboot, ci_type = payload$ciType %||% "Percentile", confidence_level = confidence_level), execution_log = execution_log),
+    execution_log = execution_log,
+    model_and_data = list(inner_model = as_rows(core$model$path_coef), outer_model = as_rows(core$model$outer_loadings), indicator_data_original = as_rows(utils::head(data, 200)), indicator_data_standardized = as_rows(utils::head(standardize_data(data), 200)), indicator_data_correlations = extract_indicator_correlations(data)),
+    meta = list(mode = "bootstrap", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = core$hoc_method_label %||% hoc_method_label(hoc_settings, has_hoc = has_higher_order_construct(payload)), rows = nrow(data), columns = ncol(data), engine = "seminr")
+  )
+  list(success = TRUE, results = results)
+}
+
+describe_unsupported_pls_settings <- function(payload) {
+  settings <- payload$algorithmSettings %||% list()
+  inner <- tolower(as.character(settings$innerWeighting %||% ""))
+  initial <- tolower(as.character(settings$initialWeights %||% ""))
+  notes <- character(0)
+  if (grepl("centroid", inner)) notes <- c(notes, "Centroid inner weighting is not exposed by SEMinR 2.5.0; Path weighting was applied and the request was recorded.")
+  if (grepl("loh", initial) || grepl("random", initial)) notes <- c(notes, "Selectable Lohmöller or random initial outer weights are not exposed by SEMinR 2.5.0; SEMinR default initialization was applied and the request was recorded.")
+  notes
 }
 
 extract_pls_sections <- function(payload, data, core) {
@@ -2912,11 +3597,19 @@ extract_pls_sections <- function(payload, data, core) {
       settings = list(
         mode = "PLS-SEM",
         algorithm = algorithm,
-        algorithm_label = algorithm_label
+        algorithm_label = algorithm_label,
+        hoc_method = core$hoc_method_label %||% hoc_method_label(payload$algorithmSettings, has_hoc = has_higher_order_construct(payload)),
+        hoc_method_requested = payload$algorithmSettings$hocMethod %||% "Two-stage",
+        hoc_two_stage = payload$algorithmSettings$hocTwoStage %||% "Disjoint two-stage",
+        algorithm_settings = payload$algorithmSettings %||% list(),
+        missing_data = payload$algorithmSettings$missingData %||% "Mean replacement",
+        assess_syntax = isTRUE(payload$algorithmSettings$assessSyntax),
+        missing_value_sentinel = payload$algorithmSettings$missingValue %||% "NA",
+        unsupported_settings = describe_unsupported_pls_settings(payload)
       ),
       stop_criterion_changes = extract_stop_criterion(summary_obj),
       post_hoc_power_analysis = extract_post_hoc_power_analysis(payload, data),
-      execution_log = list(list(message = "PLS-SEM estimation completed"))
+      execution_log = c(list(list(message = "PLS-SEM estimation completed")), lapply(describe_unsupported_pls_settings(payload), function(message) list(message = message)))
     ),
     model_and_data = list(
       inner_model = as_rows(model$path_coef),
@@ -2929,6 +3622,7 @@ extract_pls_sections <- function(payload, data, core) {
       mode = "pls-sem",
       algorithm = algorithm,
       algorithm_label = algorithm_label,
+      hoc_method = core$hoc_method_label %||% hoc_method_label(payload$algorithmSettings, has_hoc = has_higher_order_construct(payload)),
       rows = nrow(data),
       columns = ncol(data),
       engine = "seminr"
@@ -3533,6 +4227,7 @@ run_advanced_sections <- function(payload, data, core, timings = NULL) {
         base_mode = "PLS-SEM",
         algorithm = algorithm,
         algorithm_label = algorithm_label,
+        algorithm_settings = pls_sections$algorithm$settings$algorithm_settings %||% list(),
         target_construct = target_construct,
         predecessor_scope = predecessor_scope,
         run_depth = run_depth,
@@ -3563,756 +4258,191 @@ run_advanced_sections <- function(payload, data, core, timings = NULL) {
   )
 }
 
-extract_plspredict_sections <- function(payload, data, core, predict_model, folds = NULL, reps = NULL, timings = NULL) {
-  model <- core$model
-  pred_summary <- timed_or_direct(timings, "plspredict summary predict_model", summary(predict_model))
-
-  effective_folds <- folds %||% pred_summary$noFolds %||% payload$folds
-  effective_reps <- reps %||% pred_summary$reps %||% payload$repetitions
-  cvpat_enabled <- isTRUE(payload$cvpatEnabled)
-  cvpat <- if (cvpat_enabled) {
-    timed_or_direct(
-      timings,
-      "plspredict cvpat assessment",
-      run_cvpat_assessment(core, effective_folds, effective_reps, payload),
-      details = list(folds = effective_folds, repetitions = effective_reps)
-    )
-  } else {
-    list(
-      status = "disabled",
-      lv_rows = list(),
-      mv_rows = list(),
-      execution_log = list()
-    )
-  }
-  cvpat_status <- cvpat$status
-
-  algorithm <- if (!is.null(payload$algorithm)) tolower(as.character(payload$algorithm)) else "standard"
-  if (!(algorithm %in% c("standard", "consistent"))) algorithm <- "standard"
-  algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
-
-  # seminr capitalizes these differently across versions
-  pls_oos <- pred_summary$PLS_out_of_sample
-  if (is.null(pls_oos)) pls_oos <- pred_summary$pls_out_of_sample
-
-  lm_oos <- pred_summary$LM_out_of_sample
-  if (is.null(lm_oos)) lm_oos <- pred_summary$lm_out_of_sample
-
-  to_numeric_scalar <- function(v) {
-    vv <- suppressWarnings(as.numeric(unlist(v)))
-    if (!length(vv) || is.na(vv[1])) return(NULL)
-    vv[1]
-  }
-
-  sanitize_scalar <- function(v) {
-    if (is.null(v)) return(NULL)
-    if (is.atomic(v) && length(v) == 1 && !is.na(v)) return(as.numeric(v))
-    to_numeric_scalar(v)
-  }
-
-  find_metric_row <- function(df, metric_pattern) {
-    if (is.null(df) || is.null(rownames(df))) return(NULL)
-    rn <- rownames(df)
-    if (!length(rn)) return(NULL)
-    idx <- grep(metric_pattern, rn, ignore.case = TRUE)
-    if (!length(idx)) return(NULL)
-    rn[idx[1]]
-  }
-
-  find_metric_col <- function(df, metric_pattern) {
-    if (is.null(df) || is.null(colnames(df))) return(NULL)
-    cn <- colnames(df)
-    if (!length(cn)) return(NULL)
-    idx <- grep(metric_pattern, cn, ignore.case = TRUE)
-    if (!length(idx)) return(NULL)
-    cn[idx[1]]
-  }
-
-  as_df <- function(x) {
-    if (is.null(x)) return(NULL)
-    if (is.matrix(x)) return(as.data.frame(x, stringsAsFactors = FALSE))
-    if (is.data.frame(x)) return(x)
-    if (is.list(x)) {
-      nn <- names(x)
-      if (!is.null(nn) && length(nn)) {
-        # Typical list-of-metrics shape: $RMSE, $MAE, $Q2_predict (named by indicator)
-        metric_like <- vapply(nn, function(n) grepl("q2|rmse|mae", n, ignore.case = TRUE), logical(1))
-        if (any(metric_like)) {
-          sub <- x[metric_like]
-          ind_names <- unique(unlist(lapply(sub, names), use.names = FALSE))
-          ind_names <- ind_names[!is.na(ind_names) & nzchar(ind_names)]
-          if (length(ind_names)) {
-            out <- data.frame(row.names = ind_names)
-            for (metric in names(sub)) {
-              vals <- sub[[metric]]
-              out[[metric]] <- vapply(ind_names, function(ind) {
-                if (!is.null(vals[[ind]])) return(to_numeric_scalar(vals[[ind]]) %||% NA_real_)
-                if (!is.null(vals[ind])) return(to_numeric_scalar(vals[ind]) %||% NA_real_)
-                NA_real_
-              }, numeric(1))
-            }
-            return(out)
-          }
-        }
-      }
-    }
-    NULL
-  }
-
-  `%||%` <- function(a, b) if (is.null(a)) b else a
-
-  pick_first_non_null <- function(...) {
-    vals <- list(...)
-    for (v in vals) {
-      if (!is.null(v)) return(v)
-    }
-    NULL
-  }
-
-  collect_tabular_leaves <- function(x) {
-    out <- list()
-    walk <- function(node) {
-      if (is.null(node)) return()
-      if (is.matrix(node) || is.data.frame(node)) {
-        out[[length(out) + 1]] <<- as.data.frame(node, stringsAsFactors = FALSE)
-        return()
-      }
-      if (is.list(node)) {
-        for (item in node) walk(item)
-      }
-    }
-    walk(x)
-    out
-  }
-
-  to_case_df <- function(x) {
-    if (is.null(x)) return(NULL)
-    if (is.matrix(x) || is.data.frame(x)) return(as.data.frame(x, stringsAsFactors = FALSE))
-
-    # Try direct coercion first (works for list-of-equal-length vectors)
-    direct <- tryCatch(as.data.frame(x, stringsAsFactors = FALSE), error = function(e) NULL)
-    if (!is.null(direct) && nrow(direct) > 0 && ncol(direct) > 0) return(direct)
-
-    leaves <- collect_tabular_leaves(x)
-    if (!length(leaves)) return(NULL)
-
-    all_cols <- unique(unlist(lapply(leaves, names), use.names = FALSE))
-    if (!length(all_cols)) return(NULL)
-
-    aligned <- lapply(leaves, function(df) {
-      miss <- setdiff(all_cols, names(df))
-      for (m in miss) df[[m]] <- NA
-      df <- df[all_cols]
-      rownames(df) <- NULL
-      df
-    })
-
-    out <- do.call(rbind, aligned)
-    rownames(out) <- NULL
-    out
-  }
-
-  get_metric_by_indicator <- function(df, indicator, metric_pattern) {
-    if (is.null(df)) return(NULL)
-
-    # Orientation A: indicators in rows, metrics in columns
-    if (!is.null(rownames(df)) && indicator %in% rownames(df)) {
-      col_name <- find_metric_col(df, metric_pattern)
-      if (!is.null(col_name)) {
-        return(to_numeric_scalar(df[indicator, col_name]))
-      }
-    }
-
-    # Orientation B: metrics in rows, indicators in columns
-    if (!is.null(colnames(df)) && indicator %in% colnames(df)) {
-      row_name <- find_metric_row(df, metric_pattern)
-      if (!is.null(row_name)) {
-        return(to_numeric_scalar(df[row_name, indicator]))
-      }
-    }
-
-    NULL
-  }
-
-  pls_df <- as_df(pls_oos)
-  lm_df <- as_df(lm_oos)
-
-  predict_items <- predict_model$items %||% list()
-  pls_oos_residuals <- pick_first_non_null(
-    predict_items$PLS_out_of_sample_residuals,
-    predict_items$pls_out_of_sample_residuals,
-    predict_model$PLS_out_of_sample_residuals,
-    predict_model$pls_out_of_sample_residuals
-  )
-  lm_oos_residuals <- pick_first_non_null(
-    predict_items$lm_out_of_sample_residuals,
-    predict_items$LM_out_of_sample_residuals,
-    predict_model$lm_out_of_sample_residuals,
-    predict_model$LM_out_of_sample_residuals
-  )
-  item_actuals <- pick_first_non_null(
-    predict_items$item_actuals,
-    predict_items$items_actuals,
-    predict_model$item_actuals,
-    predict_model$items_actuals
-  )
-
-  pls_oos_resids_df <- to_case_df(pls_oos_residuals)
-  lm_oos_resids_df <- to_case_df(lm_oos_residuals)
-  item_actuals_df <- to_case_df(item_actuals)
-
-  numeric_column <- function(df, col, n = NULL) {
-    if (is.null(df) || !(col %in% colnames(df))) return(NULL)
-    values <- suppressWarnings(as.numeric(unlist(df[[col]], use.names = FALSE)))
-    if (!is.null(n)) values <- values[seq_len(min(length(values), n))]
-    values
-  }
-
-  residual_metric <- function(residual_df, indicator, metric) {
-    res <- numeric_column(residual_df, indicator)
-    if (is.null(res)) return(NULL)
-    res <- res[is.finite(res)]
-    if (!length(res)) return(NULL)
-    if (identical(metric, "rmse")) return(sqrt(mean(res^2, na.rm = TRUE)))
-    if (identical(metric, "mae")) return(mean(abs(res), na.rm = TRUE))
-    NULL
-  }
-
-  calculate_q2_predict <- function(indicator) {
-    if (is.null(pls_oos_resids_df) || is.null(item_actuals_df)) return(NULL)
-    if (!(indicator %in% colnames(pls_oos_resids_df)) || !(indicator %in% colnames(item_actuals_df))) return(NULL)
-    n <- min(nrow(pls_oos_resids_df), nrow(item_actuals_df))
-    if (!is.finite(n) || n < 1L) return(NULL)
-
-    residuals <- numeric_column(pls_oos_resids_df, indicator, n)
-    actuals <- numeric_column(item_actuals_df, indicator, n)
-    if (is.null(residuals) || is.null(actuals)) return(NULL)
-
-    valid <- is.finite(residuals) & is.finite(actuals)
-    if (!any(valid)) return(NULL)
-
-    residuals <- residuals[valid]
-    actuals <- actuals[valid]
-    benchmark <- NULL
-    if (!is.null(model$meanData) && indicator %in% names(model$meanData)) {
-      benchmark <- suppressWarnings(as.numeric(model$meanData[[indicator]]))
-    }
-    if (is.null(benchmark) || !length(benchmark) || !is.finite(benchmark[[1]])) {
-      benchmark <- mean(actuals, na.rm = TRUE)
-    } else {
-      benchmark <- benchmark[[1]]
-    }
-
-    denom <- sum((actuals - benchmark)^2, na.rm = TRUE)
-    if (!is.finite(denom) || denom <= 0) return(NULL)
-
-    1 - (sum(residuals^2, na.rm = TRUE) / denom)
-  }
-
-  # 1. MV Predictions Summary
-  mv_rows <- list()
-  indicator_names <- character(0)
-  if (!is.null(pls_df)) {
-    row_ids <- rownames(pls_df)
-    col_ids <- colnames(pls_df)
-    if (!is.null(row_ids) && identical(row_ids, as.character(seq_len(length(row_ids))))) {
-      row_ids <- character(0)
-    }
-
-    # Prefer dimension that does NOT look like metric labels
-    row_metric_like <- !is.null(row_ids) && any(grepl("q2|rmse|mae", row_ids, ignore.case = TRUE))
-    col_metric_like <- !is.null(col_ids) && any(grepl("q2|rmse|mae", col_ids, ignore.case = TRUE))
-
-    if (row_metric_like && !col_metric_like) {
-      indicator_names <- col_ids
-    } else if (length(row_ids)) {
-      indicator_names <- row_ids
-    } else if (!col_metric_like) {
-      indicator_names <- col_ids
-    }
-  }
-
-  if (!length(indicator_names) && !is.null(pls_oos_resids_df)) {
-    indicator_names <- colnames(pls_oos_resids_df)
-  }
-  if (!length(indicator_names) && !is.null(item_actuals_df)) {
-    indicator_names <- colnames(item_actuals_df)
-  }
-
-  indicator_names <- indicator_names[!is.na(indicator_names) & nzchar(indicator_names)]
-
-  for (ind in indicator_names) {
-    q2_predict <- sanitize_scalar(get_metric_by_indicator(pls_df, ind, "q2"))
-    if (is.null(q2_predict)) q2_predict <- sanitize_scalar(calculate_q2_predict(ind))
-
-    pls_rmse <- sanitize_scalar(get_metric_by_indicator(pls_df, ind, "rmse"))
-    if (is.null(pls_rmse)) pls_rmse <- sanitize_scalar(residual_metric(pls_oos_resids_df, ind, "rmse"))
-
-    pls_mae <- sanitize_scalar(get_metric_by_indicator(pls_df, ind, "mae"))
-    if (is.null(pls_mae)) pls_mae <- sanitize_scalar(residual_metric(pls_oos_resids_df, ind, "mae"))
-
-    row <- list(
-      Indicator = ind,
-      Q2predict = q2_predict,
-      `PLS-SEM_RMSE` = pls_rmse,
-      `PLS-SEM_MAE` = pls_mae
-    )
-
-    lm_rmse <- sanitize_scalar(get_metric_by_indicator(lm_df, ind, "rmse"))
-    if (is.null(lm_rmse)) lm_rmse <- sanitize_scalar(residual_metric(lm_oos_resids_df, ind, "rmse"))
-    lm_mae <- sanitize_scalar(get_metric_by_indicator(lm_df, ind, "mae"))
-    if (is.null(lm_mae)) lm_mae <- sanitize_scalar(residual_metric(lm_oos_resids_df, ind, "mae"))
-
-    if (!is.null(lm_rmse)) row$`LM_RMSE` <- lm_rmse
-    if (!is.null(lm_mae)) row$`LM_MAE` <- lm_mae
-
-    # Final hardening to prevent any nested list/matrix/object leakage to JSON
-    row$Q2predict <- sanitize_scalar(row$Q2predict)
-    row$`PLS-SEM_RMSE` <- sanitize_scalar(row$`PLS-SEM_RMSE`)
-    row$`PLS-SEM_MAE` <- sanitize_scalar(row$`PLS-SEM_MAE`)
-    if (!is.null(row$`LM_RMSE`)) row$`LM_RMSE` <- sanitize_scalar(row$`LM_RMSE`)
-    if (!is.null(row$`LM_MAE`)) row$`LM_MAE` <- sanitize_scalar(row$`LM_MAE`)
-
-    mv_rows[[length(mv_rows) + 1]] <- row
-  }
-
-  # 2. LV Predictions Summary (Calculated manually from residuals)
-  lv_rows <- list()
-  residuals_lvs <- predict_model$residuals_LVs
-  if (is.null(residuals_lvs)) residuals_lvs <- predict_model$residuals_lvs
-
-  if (!is.null(residuals_lvs) && !is.null(core$summary$composite_scores)) {
-    lv_resids <- as.data.frame(residuals_lvs)
-    actual_lvs <- as.data.frame(core$summary$composite_scores)
-
-    for (lv in colnames(lv_resids)) {
-      if (lv %in% colnames(actual_lvs)) {
-        res <- unlist(lv_resids[[lv]])
-        act <- unlist(actual_lvs[[lv]])
-
-        rmse <- sqrt(mean(res^2, na.rm = TRUE))
-        mae <- mean(abs(res), na.rm = TRUE)
-        q2 <- 1 - (sum(res^2, na.rm = TRUE) / sum((act - mean(act, na.rm = TRUE))^2, na.rm = TRUE))
-
-        lv_rows[[length(lv_rows) + 1]] <- list(
-          Construct = lv,
-          Q2predict = sanitize_scalar(q2),
-          `PLS-SEM_RMSE` = sanitize_scalar(rmse),
-          `PLS-SEM_MAE` = sanitize_scalar(mae)
-        )
-      }
-    }
-  }
-
-  # Fallback LV predictive summary when explicit PLSpredict LV residual slots are unavailable
-  if (!length(lv_rows) && !is.null(core$summary$composite_scores) && !is.null(model$path_coef)) {
-    score_df <- as.data.frame(core$summary$composite_scores)
-    path_matrix <- model$path_coef
-
-    for (target in colnames(path_matrix)) {
-      if (!target %in% names(score_df)) next
-      preds <- rownames(path_matrix)[which(path_matrix[, target] != 0)]
-      preds <- preds[preds %in% names(score_df)]
-      if (!length(preds)) next
-
-      pred_val <- rep(0, nrow(score_df))
-      for (pred in preds) {
-        coef <- suppressWarnings(as.numeric(path_matrix[pred, target]))
-        if (is.na(coef)) coef <- 0
-        pred_val <- pred_val + coef * score_df[[pred]]
-      }
-
-      act <- score_df[[target]]
-      res <- act - pred_val
-      rmse <- sqrt(mean(res^2, na.rm = TRUE))
-      mae <- mean(abs(res), na.rm = TRUE)
-      denom <- sum((act - mean(act, na.rm = TRUE))^2, na.rm = TRUE)
-      q2 <- if (is.na(denom) || denom <= 0) NULL else 1 - (sum(res^2, na.rm = TRUE) / denom)
-
-      lv_rows[[length(lv_rows) + 1]] <- list(
-        Construct = target,
-        Q2predict = sanitize_scalar(q2),
-        `PLS-SEM_RMSE` = sanitize_scalar(rmse),
-        `PLS-SEM_MAE` = sanitize_scalar(mae)
-      )
-    }
-  }
-
-  # 3. MV predictions and errors per case (capped at 100 cases to save memory)
-  mv_pred_err <- list()
-  predicted_mvs <- pick_first_non_null(
-    predict_model$predicted_MVs,
-    predict_model$predicted_mvs,
-    predict_model$predictions_MVs,
-    predict_model$predictions_mvs,
-    predict_model$predicted_values$MVs,
-    predict_model$predicted_values$mvs,
-    predict_model$predicted_values
-  )
-  residuals_mvs <- pick_first_non_null(
-    predict_model$residuals_MVs,
-    predict_model$residuals_mvs,
-    predict_model$prediction_errors$MVs,
-    predict_model$prediction_errors$mvs,
-    predict_model$prediction_errors
-  )
-
-  preds_mv_df <- to_case_df(predicted_mvs)
-  resids_mv_df <- to_case_df(residuals_mvs)
-
-  # If residuals are missing but predictions exist, compute residuals from original indicator data when possible
-  if (is.null(resids_mv_df) && !is.null(preds_mv_df)) {
-    overlap <- intersect(colnames(preds_mv_df), colnames(data))
-    if (length(overlap)) {
-      n <- min(nrow(preds_mv_df), nrow(data))
-      resids_mv_df <- as.data.frame(matrix(NA_real_, nrow = n, ncol = length(overlap)), stringsAsFactors = FALSE)
-      names(resids_mv_df) <- overlap
-      for (col in overlap) {
-        pred_col <- suppressWarnings(as.numeric(unlist(preds_mv_df[seq_len(n), col])))
-        act_col <- suppressWarnings(as.numeric(unlist(data[seq_len(n), col])))
-        resids_mv_df[[col]] <- act_col - pred_col
-      }
-      preds_mv_df <- preds_mv_df[seq_len(n), , drop = FALSE]
-    }
-  }
-
-  if (!is.null(preds_mv_df) && !is.null(resids_mv_df)) {
-    common_cols <- intersect(colnames(preds_mv_df), colnames(resids_mv_df))
-    if (length(common_cols)) {
-      n <- min(100, nrow(preds_mv_df), nrow(resids_mv_df))
-      for (col in common_cols) {
-        for (i in seq_len(n)) {
-          mv_pred_err[[length(mv_pred_err) + 1]] <- list(
-            Case = i,
-            Indicator = col,
-            Prediction = sanitize_scalar(preds_mv_df[i, col]),
-            Error = sanitize_scalar(resids_mv_df[i, col])
-          )
-        }
-      }
-    }
-  }
-
-  # Fallback: use summary-level MV prediction error tables (version-dependent names)
-  if (!length(mv_pred_err)) {
-    mv_err_tbl <- pick_first_non_null(
-      pred_summary$PLS_MV_prediction_error,
-      pred_summary$pls_mv_prediction_error,
-      pred_summary$PLS_MV_prediction_errors,
-      pred_summary$pls_mv_prediction_errors,
-      pred_summary$MV_prediction_error,
-      pred_summary$mv_prediction_error
-    )
-    mv_err_df <- to_case_df(mv_err_tbl)
-    if (!is.null(mv_err_df) && nrow(mv_err_df) > 0) {
-      n <- min(100, nrow(mv_err_df))
-      mv_err_df <- mv_err_df[seq_len(n), , drop = FALSE]
-      for (col in names(mv_err_df)) {
-        mv_err_df[[col]] <- vapply(mv_err_df[[col]], function(v) {
-          sv <- sanitize_scalar(v)
-          if (is.null(sv)) NA_real_ else sv
-        }, numeric(1))
-      }
-      mv_err_df <- cbind(Case = seq_len(n), mv_err_df, stringsAsFactors = FALSE)
-      mv_pred_err <- as_rows(mv_err_df)
-    }
-  }
-
-  # Final fallback: baseline MV case-level errors using indicator means
-  if (!length(mv_pred_err)) {
-    indicator_names_payload <- unique(unlist(
-      lapply(payload$constructs, function(con) unlist(lapply(con$indicators, as.character), use.names = FALSE)),
-      use.names = FALSE
-    ))
-    indicator_names_payload <- indicator_names_payload[!is.na(indicator_names_payload) & nzchar(indicator_names_payload)]
-    indicator_cols <- intersect(indicator_names_payload, names(data))
-
-    if (length(indicator_cols)) {
-      n <- min(100, nrow(data))
-      for (col in indicator_cols) {
-        actual <- suppressWarnings(as.numeric(unlist(data[seq_len(n), col])))
-        mu <- mean(actual, na.rm = TRUE)
-        pred <- rep(mu, n)
-        err <- actual - pred
-        for (i in seq_len(n)) {
-          mv_pred_err[[length(mv_pred_err) + 1]] <- list(
-            Case = i,
-            Indicator = col,
-            Prediction = sanitize_scalar(pred[i]),
-            Error = sanitize_scalar(err[i])
-          )
-        }
-      }
-    }
-  }
-
-  # 4. LV predictions and errors per case
-  lv_pred_err <- list()
-  predicted_lvs <- pick_first_non_null(
-    predict_model$predicted_LVs,
-    predict_model$predicted_lvs,
-    predict_model$predictions_LVs,
-    predict_model$predictions_lvs,
-    predict_model$predicted_values$LVs,
-    predict_model$predicted_values$lvs
-  )
-
-  preds_lv_df <- to_case_df(predicted_lvs)
-  resids_lv_df <- to_case_df(residuals_lvs)
-
-  # If residuals missing, derive from actual latent scores when possible
-  if (is.null(resids_lv_df) && !is.null(preds_lv_df) && !is.null(core$summary$composite_scores)) {
-    actual_lvs <- as.data.frame(core$summary$composite_scores)
-    overlap <- intersect(colnames(preds_lv_df), colnames(actual_lvs))
-    if (length(overlap)) {
-      n <- min(nrow(preds_lv_df), nrow(actual_lvs))
-      resids_lv_df <- as.data.frame(matrix(NA_real_, nrow = n, ncol = length(overlap)), stringsAsFactors = FALSE)
-      names(resids_lv_df) <- overlap
-      for (col in overlap) {
-        pred_col <- suppressWarnings(as.numeric(unlist(preds_lv_df[seq_len(n), col])))
-        act_col <- suppressWarnings(as.numeric(unlist(actual_lvs[seq_len(n), col])))
-        resids_lv_df[[col]] <- act_col - pred_col
-      }
-      preds_lv_df <- preds_lv_df[seq_len(n), , drop = FALSE]
-    }
-  }
-
-  if (!is.null(preds_lv_df) && !is.null(resids_lv_df)) {
-    common_cols <- intersect(colnames(preds_lv_df), colnames(resids_lv_df))
-    if (length(common_cols)) {
-      n <- min(100, nrow(preds_lv_df), nrow(resids_lv_df))
-      for (col in common_cols) {
-        for (i in seq_len(n)) {
-          lv_pred_err[[length(lv_pred_err) + 1]] <- list(
-            Case = i,
-            Construct = col,
-            Prediction = sanitize_scalar(preds_lv_df[i, col]),
-            Error = sanitize_scalar(resids_lv_df[i, col])
-          )
-        }
-      }
-    }
-  }
-
-  # Fallback: use summary-level LV prediction error tables (version-dependent names)
-  if (!length(lv_pred_err)) {
-    lv_err_tbl <- pick_first_non_null(
-      pred_summary$PLS_LV_prediction_error,
-      pred_summary$pls_lv_prediction_error,
-      pred_summary$PLS_LV_prediction_errors,
-      pred_summary$pls_lv_prediction_errors,
-      pred_summary$LV_prediction_error,
-      pred_summary$lv_prediction_error
-    )
-    lv_err_df <- to_case_df(lv_err_tbl)
-    if (!is.null(lv_err_df) && nrow(lv_err_df) > 0) {
-      n <- min(100, nrow(lv_err_df))
-      lv_err_df <- lv_err_df[seq_len(n), , drop = FALSE]
-      for (col in names(lv_err_df)) {
-        lv_err_df[[col]] <- vapply(lv_err_df[[col]], function(v) {
-          sv <- sanitize_scalar(v)
-          if (is.null(sv)) NA_real_ else sv
-        }, numeric(1))
-      }
-      lv_err_df <- cbind(Case = seq_len(n), lv_err_df, stringsAsFactors = FALSE)
-      lv_pred_err <- as_rows(lv_err_df)
-    }
-  }
-
-  # Fallback LV case-level predictions/errors when PLSpredict LV slots are unavailable
-  if (!length(lv_pred_err) && !is.null(core$summary$composite_scores) && !is.null(model$path_coef)) {
-    score_df <- as.data.frame(core$summary$composite_scores)
-    path_matrix <- model$path_coef
-
-    for (target in colnames(path_matrix)) {
-      if (!target %in% names(score_df)) next
-      preds <- rownames(path_matrix)[which(path_matrix[, target] != 0)]
-      preds <- preds[preds %in% names(score_df)]
-      if (!length(preds)) next
-
-      pred_val <- rep(0, nrow(score_df))
-      for (pred in preds) {
-        coef <- suppressWarnings(as.numeric(path_matrix[pred, target]))
-        if (is.na(coef)) coef <- 0
-        pred_val <- pred_val + coef * score_df[[pred]]
-      }
-
-      obs <- score_df[[target]]
-      err <- obs - pred_val
-      n <- min(100, length(obs), length(pred_val), length(err))
-      for (i in seq_len(n)) {
-        lv_pred_err[[length(lv_pred_err) + 1]] <- list(
-          Case = i,
-          Construct = target,
-          Prediction = sanitize_scalar(pred_val[i]),
-          Error = sanitize_scalar(err[i])
-        )
-      }
-    }
-  }
-
-  list(
-    final_results = list(
-      plspredict_mv_summary = mv_rows,
-      plspredict_lv_summary = lv_rows,
-      cvpat_lv_summary = cvpat$lv_rows,
-      mv_predictions_and_errors = mv_pred_err,
-      lv_predictions_and_errors = lv_pred_err
-    ),
-    algorithm = list(
-      settings = list(
-        method = "PLSpredict (k-fold cross-validation)",
-        mode = "PLS-SEM",
-        algorithm = algorithm,
-        algorithm_label = algorithm_label,
-        folds = effective_folds,
-        repetitions = effective_reps,
-        cvpat_enabled = cvpat_enabled,
-        cvpat_status = cvpat_status
-      ),
-      execution_log = c(
-        list(list(message = "PLSpredict successfully ran out-of-sample k-fold cross-validation via seminr")),
-        cvpat$execution_log
-      )
-    ),
-    histograms = list(
-      plsem_mv_error_histogram = list(),
-      plsem_lv_error_histogram = list()
-    ),
-    model_and_data = list(
-      inner_model = as_rows(model$path_coef),
-      outer_model = as_rows(model$outer_loadings),
-      indicator_data_original = as_rows(utils::head(data, 200)),
-      indicator_data_standardized = as_rows(utils::head(standardize_data(data), 200))
-    ),
-    meta = list(
-      mode = "plspredict",
-      algorithm = algorithm,
-      algorithm_label = algorithm_label,
-      rows = nrow(data),
-      columns = ncol(data),
-      engine = "seminr",
-      analysis_settings = list(
-        plspredict = list(
-          folds = effective_folds,
-          repetitions = effective_reps,
-          cvpatEnabled = cvpat_enabled
-        )
-      ),
-      cvpat_status = cvpat_status
-    )
-  )
+plspredict_default_folds <- function() 10L
+plspredict_default_repetitions <- function() 1L
+plspredict_default_seed <- function() 123L
+
+normalize_plspredict_technique <- function(value) {
+  normalized <- toupper(trimws(as.character(value %||% "DA")))
+  if (normalized %in% c("EA", "ENTIRE ANTECEDENTS (EA)")) return(seminr::predict_EA)
+  seminr::predict_DA
 }
 
-pr$handle("GET", "/health", function(req, res) {
-  res$setHeader("Content-Type", "application/json")
-  list(status = "ok", service = "metis-plumber")
-})
+plspredict_fold_assignments <- function(model_data, folds, seed) {
+  if (is.null(model_data) || !nrow(model_data)) return(integer(0))
+  folds <- min(as.integer(folds), nrow(model_data))
+  if (is.na(folds) || folds < 2L) stop("PLSpredict requires at least two observations for cross-validation.")
+  row_ids <- rownames(model_data)
+  if (is.null(row_ids) || anyDuplicated(row_ids)) stop("PLSpredict requires unique row names to align folds and predictions.")
+  set.seed(seed)
+  order <- sample(nrow(model_data), nrow(model_data), replace = FALSE)
+  ordered_ids <- row_ids[order]
+  fold_ids <- cut(seq_len(nrow(model_data)), breaks = folds, labels = FALSE)
+  setNames(as.integer(fold_ids), ordered_ids)
+}
 
-assemble_bootstrap_response <- function(payload, data, core, boot_model, boot_summary, nboot, confidence_level, algorithm, algorithm_label, alpha = 0.05) {
-  total_indirect_matrix <- seminr:::total_indirect_effects(boot_model$path_coef)
-  if (
-    !is.null(total_indirect_matrix) &&
-    any(total_indirect_matrix != 0, na.rm = TRUE) &&
-    !is.null(boot_model$boot_total_paths) &&
-    !is.null(boot_model$boot_paths)
-  ) {
-    boot_total_indirect <- boot_model$boot_total_paths - boot_model$boot_paths
-    boot_summary$bootstrapped_total_indirect_paths <- seminr:::parse_boot_array(
-      total_indirect_matrix,
-      boot_total_indirect,
-      alpha = alpha
-    )
-    boot_summary$bootstrapped_total_indirect_paths <- add_bias_corrected_intervals(
-      boot_summary$bootstrapped_total_indirect_paths,
-      total_indirect_matrix,
-      boot_total_indirect,
-      alpha = alpha
-    )
+calculate_plspredict_q2 <- function(item_actuals, pls_oos_residuals, model_data, folds, seed, validation_mode = "K-fold") {
+  actuals <- as.data.frame(item_actuals, stringsAsFactors = FALSE)
+  residuals <- as.data.frame(pls_oos_residuals, stringsAsFactors = FALSE)
+  if (is.null(actuals) || is.null(residuals) || !nrow(actuals) || !nrow(residuals)) return(numeric(0))
+  if (is.null(rownames(actuals)) || is.null(rownames(residuals)) || is.null(rownames(model_data))) return(numeric(0))
+  if (!identical(rownames(actuals), rownames(residuals)) || !identical(rownames(actuals), rownames(model_data))) return(numeric(0))
+  common_rows <- rownames(actuals)
+  actuals <- actuals[common_rows, , drop = FALSE]
+  residuals <- residuals[common_rows, , drop = FALSE]
+  training_data <- model_data[common_rows, , drop = FALSE]
+  is_loocv <- toupper(as.character(validation_mode %||% "K-fold")) == "LOOCV"
+  fold_map <- if (is_loocv) NULL else plspredict_fold_assignments(model_data, folds, seed)[common_rows]
+  indicators <- intersect(colnames(actuals), colnames(residuals))
+  output <- setNames(numeric(length(indicators)), indicators)
+  for (indicator in indicators) {
+    actual <- suppressWarnings(as.numeric(actuals[[indicator]]))
+    pls_error <- suppressWarnings(as.numeric(residuals[[indicator]]))
+    source_values <- suppressWarnings(as.numeric(training_data[[indicator]]))
+    valid <- is.finite(actual) & is.finite(pls_error)
+    if (!any(valid)) next
+    sse_pls <- sum(pls_error[valid]^2)
+    sse_naive <- 0
+    for (i in which(valid)) {
+      training <- if (is_loocv) source_values[-i] else source_values[fold_map != fold_map[[i]]]
+      training <- training[is.finite(training)]
+      if (!length(training)) next
+      sse_naive <- sse_naive + (actual[[i]] - mean(training))^2
+    }
+    if (is.finite(sse_naive) && sse_naive > 0) output[[indicator]] <- 1 - sse_pls / sse_naive else output[[indicator]] <- NA_real_
   }
-  specific_indirect <- extract_specific_indirect_effects(payload, boot_model, alpha = alpha)
+  output
+}
 
-  boot_paths <- as_rows(boot_summary$bootstrapped_paths)
-  if (!length(boot_paths)) {
-    boot_paths <- extract_path_results(core$model, payload$paths)
+extract_plspredict_sections <- function(payload, data, core, predict_model, folds = NULL, reps = NULL, timings = NULL, prediction_representation = "Standard", prediction_core = core) {
+  model <- core$model
+  prediction_model <- prediction_core$model
+  prediction_indicator_aliases <- prediction_core$prediction_indicator_aliases %||% list()
+  items <- predict_model$items %||% list()
+  composites <- predict_model$composites %||% list()
+  validation_mode <- if (toupper(as.character(payload$validationMode %||% "K-fold")) == "LOOCV") "LOOCV" else "K-fold"
+  effective_folds <- if (validation_mode == "LOOCV") nrow(prediction_model$data) else as.integer(folds %||% payload$folds %||% plspredict_default_folds())
+  effective_reps <- as.integer(reps %||% payload$repetitions %||% plspredict_default_repetitions())
+  prediction_seed <- as.integer(payload$predictionSeed %||% payload$prediction_seed %||% plspredict_default_seed())
+  technique_label <- if (toupper(as.character(payload$technique %||% payload$predictionTechnique %||% "DA")) %in% c("EA", "ENTIRE ANTECEDENTS (EA)") || grepl("entire", as.character(payload$technique %||% ""), ignore.case = TRUE)) "Entire antecedents (EA)" else "Direct antecedents (DA)"
+  as_df <- function(value) if (is.null(value)) NULL else as.data.frame(value, stringsAsFactors = FALSE)
+  scalar <- function(value) {
+    number <- suppressWarnings(as.numeric(value))
+    if (!length(number) || !is.finite(number[[1]])) NULL else number[[1]]
+  }
+  metric <- function(values, kind) {
+    numbers <- suppressWarnings(as.numeric(values))
+    numbers <- numbers[is.finite(numbers)]
+    if (!length(numbers)) return(NULL)
+    if (kind == "rmse") sqrt(mean(numbers^2)) else mean(abs(numbers))
+  }
+  align <- function(frames) {
+    frames <- lapply(frames, as_df)
+    if (any(vapply(frames, is.null, logical(1)))) return(NULL)
+    row_sets <- lapply(frames, rownames)
+    if (any(vapply(row_sets, is.null, logical(1))) || any(vapply(row_sets, anyDuplicated, integer(1)) > 0)) return(NULL)
+    if (!all(vapply(row_sets[-1], identical, logical(1), row_sets[[1]]))) return(NULL)
+    common <- row_sets[[1]]
+    lapply(frames, function(frame) frame[common, , drop = FALSE])
+  }
+  as_rows_safe <- function(frame) {
+    if (is.null(frame) || !nrow(frame)) return(list())
+    out <- vector("list", nrow(frame))
+    for (i in seq_len(nrow(frame))) out[[i]] <- as.list(frame[i, , drop = FALSE])
+    out
   }
 
-  boot_total_indirect <- as_rows(
-    boot_summary$bootstrapped_total_indirect_effects %||%
-    boot_summary$bootstrapped_total_indirect_paths %||%
-    boot_summary$total_indirect_effects
+  pls_oos <- as_df(predict_model$items[["PLS_out_of_sample"]])
+  pls_in_sample <- as_df(predict_model$items[["PLS_in_sample"]])
+  lm_oos <- as_df(predict_model$items[["lm_out_of_sample"]])
+  lm_in_sample <- as_df(predict_model$items[["lm_in_sample"]])
+  item_actuals <- as_df(predict_model$items[["item_actuals"]])
+  pls_oos_residuals <- as_df(predict_model$items[["PLS_out_of_sample_residuals"]])
+  pls_in_sample_residuals <- as_df(predict_model$items[["PLS_in_sample_residuals"]])
+  lm_oos_residuals <- as_df(predict_model$items[["lm_out_of_sample_residuals"]])
+  lm_in_sample_residuals <- as_df(predict_model$items[["lm_in_sample_residuals"]])
+  composite_oos <- as_df(predict_model$composites[["composite_out_of_sample"]])
+  composite_in_sample <- as_df(predict_model$composites[["composite_in_sample"]])
+  actuals_star <- as_df(predict_model$composites[["actuals_star"]])
+
+  mv_aligned <- align(list(item_actuals, pls_oos, pls_oos_residuals, lm_oos, lm_oos_residuals))
+  mv_summary <- list()
+  mv_pred_err <- list()
+  mv_log <- list()
+  if (!is.null(mv_aligned)) {
+    actuals <- mv_aligned[[1]]; pls_predictions <- mv_aligned[[2]]; pls_errors <- mv_aligned[[3]]; lm_predictions <- mv_aligned[[4]]; lm_errors <- mv_aligned[[5]]
+    indicators <- Reduce(intersect, list(colnames(actuals), colnames(pls_predictions), colnames(pls_errors), colnames(lm_predictions), colnames(lm_errors)))
+    q2_values <- calculate_plspredict_q2(actuals, pls_errors, prediction_model$data, effective_folds, prediction_seed, validation_mode)
+    for (indicator in indicators) {
+      alias_details <- prediction_indicator_aliases[[indicator]]
+      indicator_label <- if (is.null(alias_details)) {
+        indicator
+      } else if (as.character(alias_details$indicator) %in% indicators) {
+        sprintf("%s (%s)", as.character(alias_details$indicator), as.character(alias_details$construct))
+      } else {
+        as.character(alias_details$indicator)
+      }
+      q2_value <- if (indicator %in% names(q2_values)) q2_values[[indicator]] else NA_real_
+      mv_summary[[length(mv_summary) + 1L]] <- list(
+        Indicator = indicator_label,
+        Q2predict = scalar(q2_value),
+        `PLS-SEM_RMSE` = scalar(metric(pls_errors[[indicator]], "rmse")),
+        `PLS-SEM_MAE` = scalar(metric(pls_errors[[indicator]], "mae")),
+        LM_RMSE = scalar(metric(lm_errors[[indicator]], "rmse")),
+        LM_MAE = scalar(metric(lm_errors[[indicator]], "mae"))
+      )
+      for (case_id in seq_len(nrow(actuals))) {
+        mv_pred_err[[length(mv_pred_err) + 1L]] <- list(
+          Case = rownames(actuals)[[case_id]], Indicator = indicator_label,
+          Actual = scalar(actuals[case_id, indicator]),
+          `PLS Prediction` = scalar(pls_predictions[case_id, indicator]),
+          `PLS Error` = scalar(pls_errors[case_id, indicator]),
+          `LM Prediction` = scalar(lm_predictions[case_id, indicator]),
+          `LM Error` = scalar(lm_errors[case_id, indicator])
+        )
+      }
+    }
+    mv_log <- list(list(message = sprintf("Extracted %s endogenous indicator predictions from SEMinR native items slots.", length(indicators))))
+  } else {
+    mv_log <- list(list(message = "MV prediction/error panels are empty because SEMinR native item prediction slots were unavailable or could not be aligned."))
+  }
+
+  sm <- as.matrix(prediction_core$model$smMatrix)
+  endogenous_constructs <- if ("target" %in% colnames(sm)) unique(as.character(sm[, "target"])) else character(0)
+  endogenous_constructs <- endogenous_constructs[!is.na(endogenous_constructs) & nzchar(endogenous_constructs)]
+  lv_aligned <- align(list(composite_oos, actuals_star))
+  lv_summary <- list(); lv_pred_err <- list(); lv_log <- list()
+  if (!is.null(lv_aligned)) {
+    lv_predictions <- lv_aligned[[1]]; lv_actuals <- lv_aligned[[2]]
+    constructs <- intersect(colnames(lv_predictions), colnames(lv_actuals))
+    constructs <- intersect(constructs, endogenous_constructs)
+    for (construct in constructs) {
+      errors <- suppressWarnings(as.numeric(lv_actuals[[construct]] - lv_predictions[[construct]]))
+      lv_summary[[length(lv_summary) + 1L]] <- list(Construct = construct, `PLS-SEM_RMSE` = scalar(metric(errors, "rmse")), `PLS-SEM_MAE` = scalar(metric(errors, "mae")))
+      for (case_id in seq_len(nrow(lv_predictions))) lv_pred_err[[length(lv_pred_err) + 1L]] <- list(Case = rownames(lv_predictions)[[case_id]], Construct = construct, Actual = scalar(lv_actuals[case_id, construct]), `PLS Prediction` = scalar(lv_predictions[case_id, construct]), `PLS Error` = scalar(errors[[case_id]]))
+    }
+    lv_log <- list(list(message = sprintf("Extracted %s endogenous construct predictions from SEMinR native composite slots.", length(constructs))))
+  } else {
+    lv_log <- list(list(message = "LV prediction/error panels are empty because SEMinR native composite prediction slots were unavailable or could not be aligned."))
+  }
+
+  cvpat_enabled <- isTRUE(payload$cvpatEnabled)
+  cvpat <- if (cvpat_enabled) timed_or_direct(timings, "plspredict cvpat assessment", run_cvpat_assessment(prediction_core, effective_folds, effective_reps, payload, prediction_seed, validation_mode), details = list(folds = effective_folds, repetitions = effective_reps, validation_mode = validation_mode)) else list(status = "disabled", lv_rows = list(), mv_rows = list(), execution_log = list())
+  algorithm <- if (tolower(as.character(payload$algorithm %||% "standard")) == "consistent") "consistent" else "standard"
+  algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
+  unsupported <- c(if (grepl("centroid", tolower(as.character(payload$algorithmSettings$innerWeighting %||% ""))) || grepl("loh", tolower(as.character(payload$algorithmSettings$initialWeights %||% ""))) || grepl("random", tolower(as.character(payload$algorithmSettings$initialWeights %||% "")))) "The installed SEMinR version does not expose centroid inner weighting or selectable initial outer weights; the request is recorded and SEMinR's supported defaults are used." else character(0))
+  mv_histogram <- lapply(mv_pred_err, function(row) list(Indicator = row$Indicator, Error = row[["PLS Error"]]))
+  mv_histogram <- Filter(function(row) !is.null(row$Error) && is.finite(row$Error), mv_histogram)
+  lv_histogram <- lapply(lv_pred_err, function(row) list(Construct = row$Construct, Error = row[["PLS Error"]]))
+  lv_histogram <- Filter(function(row) !is.null(row$Error) && is.finite(row$Error), lv_histogram)
+  execution_log <- c(list(list(message = sprintf("PLSpredict used SEMinR predict_pls with %s, %s, %s repetitions, seed %s, and %s model representation.", technique_label, validation_mode, effective_reps, prediction_seed, prediction_representation))), mv_log, lv_log, cvpat$execution_log)
+  list(
+    final_results = list(plspredict_mv_summary = mv_summary, plspredict_lv_summary = lv_summary, cvpat_lv_summary = cvpat$lv_rows, mv_predictions_and_errors = mv_pred_err, lv_predictions_and_errors = lv_pred_err),
+    algorithm = list(settings = list(method = "PLSpredict", engine = "SEMinR", mode = "PLS-SEM", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = if (has_higher_order_construct(payload)) "Repeated Indicators" else NULL, prediction_technique = technique_label, cross_validation = validation_mode, folds = effective_folds, repetitions = effective_reps, prediction_seed = prediction_seed, prediction_cores = "SEMinR default (NULL)", cvpat_enabled = cvpat_enabled, cvpat_status = cvpat$status, model_representation = prediction_representation, algorithm_settings = payload$algorithmSettings %||% list(), missing_data = payload$algorithmSettings$missingData %||% "Mean replacement", assess_syntax = isTRUE(payload$algorithmSettings$assessSyntax), missing_value_sentinel = payload$algorithmSettings$missingValue %||% "NA", initial_weights_requested = payload$algorithmSettings$initialWeights %||% "1 (uniform)", initial_weights_status = "SEMinR 2.5.0 does not expose a public initial-weights argument; SEMinR default initialization was used.", unsupported_settings = unsupported), execution_log = execution_log),
+    histograms = list(plsem_mv_error_histogram = mv_histogram, plsem_lv_error_histogram = lv_histogram),
+    model_and_data = list(inner_model = as_rows(model$path_coef), outer_model = as_rows(model$outer_loadings), indicator_data_original = as_rows(utils::head(data, 200)), indicator_data_standardized = as_rows(utils::head(standardize_data(data), 200))),
+    meta = list(mode = "plspredict", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = if (has_higher_order_construct(payload)) "Repeated Indicators" else NULL, rows = nrow(data), columns = ncol(data), engine = "seminr", analysis_settings = list(plspredict = list(folds = effective_folds, repetitions = effective_reps, technique = technique_label, predictionSeed = prediction_seed, validationMode = validation_mode, cvpatEnabled = cvpat_enabled)), cvpat_status = cvpat$status)
   )
-  if (!length(boot_total_indirect)) {
-    boot_total_indirect <- as_rows(core$summary$total_indirect_effects)
-  }
-
-  boot_total_effects <- as_rows(
-    boot_summary$bootstrapped_total_effects %||%
-    boot_summary$bootstrapped_total_paths %||%
-    boot_summary$total_effects
-  )
-  if (!length(boot_total_effects)) {
-    boot_total_effects <- as_rows(core$summary$total_effects)
-  }
-
-  boot_loadings <- as_rows(boot_summary$bootstrapped_loadings)
-  if (!length(boot_loadings)) {
-    boot_loadings <- as_rows(core$summary$loadings)
-  }
-
-  boot_weights <- as_rows(boot_summary$bootstrapped_weights)
-  if (!length(boot_weights)) {
-    boot_weights <- as_rows(core$summary$weights)
-  }
-
-  quality_criteria <- c(
-    extract_quality_criteria(payload, data, core),
-    list(htmt_confidence_intervals = as_rows(boot_summary$bootstrapped_HTMT))
-  )
-  execution_log <- list(
-    list(message = sprintf("Bootstrap completed with %s subsamples", nboot))
-  )
-
-  results <- list(
-    final_results = list(
-      path_coefficients = boot_paths,
-      total_indirect_effects = boot_total_indirect,
-      specific_indirect_effects = specific_indirect,
-      total_effects = boot_total_effects,
-      outer_loadings = boot_loadings,
-      outer_weights = boot_weights
-    ),
-    quality_criteria = quality_criteria,
-    algorithm = list(
-      settings = list(
-        mode = "PLS-SEM",
-        algorithm = algorithm,
-        algorithm_label = algorithm_label,
-        nboot = nboot,
-        ci_type = if (!is.null(payload$ciType)) as.character(payload$ciType) else "Percentile",
-        confidence_level = confidence_level
-      ),
-      execution_log = execution_log
-    ),
-    execution_log = execution_log,
-    model_and_data = list(
-      inner_model = as_rows(core$model$path_coef),
-      outer_model = as_rows(core$model$outer_loadings),
-      indicator_data_original = as_rows(utils::head(data, 200)),
-      indicator_data_standardized = as_rows(utils::head(standardize_data(data), 200)),
-      indicator_data_correlations = extract_indicator_correlations(data)
-    ),
-    meta = list(
-      mode = "bootstrap",
-      algorithm = algorithm,
-      algorithm_label = algorithm_label,
-      rows = nrow(data),
-      columns = ncol(data),
-      engine = "seminr"
-    )
-  )
-
-  list(success = TRUE, results = results)
 }
 
 micom_group_count <- function(data, grouping_variable, group_value) {
@@ -4393,6 +4523,8 @@ micom_step1_passed <- function(step1_rows) {
 }
 
 map_micom_step1_response <- function(payload, data, step1_result, timings = NULL) {
+  algorithm <- payload$algorithm %||% "standard"
+  algorithm_label <- if (identical(algorithm, "consistent")) "Consistent PLS (PLSc)" else "Standard PLS"
   step1_rows <- as_rows(step1_result %||% list())
   passed <- micom_step1_passed(step1_rows)
   status <- if (passed) "passed" else "failed"
@@ -4426,6 +4558,10 @@ map_micom_step1_response <- function(payload, data, step1_result, timings = NULL
     algorithm = list(
       settings = list(
         method = "MICOM",
+        algorithm = algorithm,
+        algorithm_label = algorithm_label,
+        hoc_method = if (has_higher_order_construct(payload)) hoc_method_label(payload$algorithmSettings, has_hoc = TRUE) else "Not applicable",
+        algorithm_settings = payload$algorithmSettings %||% list(),
         mode = "permutation-configural-precheck",
         group_var = payload$groupingVariable,
         group_a = payload$groupA,
@@ -4453,6 +4589,8 @@ map_micom_step1_response <- function(payload, data, step1_result, timings = NULL
 }
 
 map_micom_response <- function(payload, data, micom_result, timings = NULL) {
+  algorithm <- payload$algorithm %||% "standard"
+  algorithm_label <- if (identical(algorithm, "consistent")) "Consistent PLS (PLSc)" else "Standard PLS"
   step1_rows <- as_rows(micom_result$step1 %||% list())
   step2_rows <- as_rows(micom_result$step2 %||% list())
   step3_rows <- as_rows(micom_result$step3 %||% list())
@@ -4503,6 +4641,10 @@ map_micom_response <- function(payload, data, micom_result, timings = NULL) {
     algorithm = list(
       settings = list(
         method = "MICOM",
+        algorithm = algorithm,
+        algorithm_label = algorithm_label,
+        hoc_method = if (has_higher_order_construct(payload)) hoc_method_label(payload$algorithmSettings, has_hoc = TRUE) else "Not applicable",
+        algorithm_settings = payload$algorithmSettings %||% list(),
         mode = "permutation",
         group_var = payload$groupingVariable,
         group_a = payload$groupA,
@@ -4670,7 +4812,7 @@ mga_descriptive_rows <- function(group_label, payload = NULL, group_data = NULL,
 }
 
 mga_micom_overview_message <- function(mga_result) {
-  fallback <- "MICOM was not run for this analysis. Interpret results well."
+  fallback <- "MICOM was not run for this analysis. Interpret between-group differences with caution because measurement invariance was not assessed."
   micom_overview <- mga_result$micomOverview %||% mga_result$micom_overview
   if (is.null(micom_overview)) return(fallback)
 
@@ -4688,7 +4830,18 @@ mga_micom_overview_message <- function(mga_result) {
   fallback
 }
 
+mga_hoc_micom_unavailable_message <- paste0(
+  "MICOM is unavailable for HOC models; ",
+  "MGA was estimated without a MICOM invariance assessment."
+)
+
 mga_overview_setup_rows <- function(payload, data, mga_result) {
+  measurement_invariance_message <- if (has_higher_order_construct(payload)) {
+    mga_hoc_micom_unavailable_message
+  } else {
+    mga_micom_overview_message(mga_result)
+  }
+
   list(
     list("Analysis information" = "Grouping variable", Value = as.character(payload$groupingVariable)),
     list("Analysis information" = "Selected groups", Value = sprintf("%s vs %s", payload$groupA, payload$groupB)),
@@ -4705,14 +4858,28 @@ mga_overview_setup_rows <- function(payload, data, mga_result) {
       payload$alpha,
       payload$seed
     )),
-    list("Analysis information" = "Measurement invariance status", Value = mga_micom_overview_message(mga_result))
+    list("Analysis information" = "Measurement invariance status", Value = measurement_invariance_message)
   )
 }
 
-mga_boot_paths_matrix <- function(pls_boot) {
+mga_boot_paths_matrix <- function(pls_boot, sm_matrix = pls_boot$smMatrix) {
+  boot_array <- pls_boot$boot_paths
+  if (!is.null(boot_array) && length(dim(boot_array)) >= 3L && !is.null(sm_matrix)) {
+    sources <- seminr:::path_sources(sm_matrix)
+    targets <- seminr:::path_targets(sm_matrix)
+    path_names <- seminr:::to_path_labels(sm_matrix)
+    repetitions <- dim(boot_array)[3]
+    out <- matrix(NA_real_, nrow = repetitions, ncol = length(path_names))
+    for (index in seq_along(path_names)) {
+      out[, index] <- suppressWarnings(as.numeric(boot_array[sources[[index]], targets[[index]], ]))
+    }
+    colnames(out) <- path_names
+    return(out)
+  }
+
   boot_paths <- seminr:::boot_paths_df(pls_boot)
   if (is.null(dim(boot_paths))) {
-    path_names <- seminr:::to_path_labels(pls_boot$smMatrix)
+    path_names <- seminr:::to_path_labels(sm_matrix)
     boot_paths <- matrix(boot_paths, ncol = 1L)
     colnames(boot_paths) <- path_names[seq_len(ncol(boot_paths))]
   }
@@ -4746,57 +4913,105 @@ mga_ci_overlap <- function(a_ci, b_ci) {
   max(a_ci$lower, b_ci$lower) <= min(a_ci$upper, b_ci$upper)
 }
 
-mga_pls_mga_p <- function(group_a_mean, group_b_mean, group_a_boot, group_b_boot) {
-  boot_a <- mga_clean_boot_values(group_a_boot)
-  boot_b <- mga_clean_boot_values(group_b_boot)
-  j <- min(length(boot_a), length(boot_b))
-  if (j < 1L || is.null(group_a_mean) || is.null(group_b_mean)) return(NULL)
-  boot_a <- boot_a[seq_len(j)]
-  boot_b <- sort(boot_b[seq_len(j)])
-  thresholds <- boot_a + (2 * (group_b_mean - group_a_mean))
-  greater_counts <- j - findInterval(thresholds, boot_b)
-  1 - (sum(greater_counts, na.rm = TRUE) / (j ^ 2))
+mga_comparison_intervals <- function(comparison, alpha) {
+  list(
+    group_a = mga_ci_values(comparison$bootstrap_a, comparison$original_a, alpha),
+    group_b = mga_ci_values(comparison$bootstrap_b, comparison$original_b, alpha)
+  )
 }
 
-mga_parametric_stats <- function(diff, group_a_boot, group_b_boot, alpha, group_a_n, group_b_n, welch = FALSE) {
-  boot_a <- mga_clean_boot_values(group_a_boot)
-  boot_b <- mga_clean_boot_values(group_b_boot)
-  rep_a <- length(boot_a)
-  rep_b <- length(boot_b)
-  n_a <- suppressWarnings(as.numeric(group_a_n))[1]
-  n_b <- suppressWarnings(as.numeric(group_b_n))[1]
-  if (is.null(diff) || n_a < 2L || n_b < 2L) {
-    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
-  }
-  if (rep_a < 2L || rep_b < 2L) {
-    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
-  }
+mga_parameter_comparison <- function(entry, group_a_n, group_b_n) {
+  identity <- entry$identity %||% list()
+  label <- as.character(identity$path %||% paste(
+    Filter(nzchar, as.character(unlist(identity, use.names = FALSE))),
+    collapse = " :: "
+  ))
+  original_a <- mga_number(entry$estimate_a)
+  original_b <- mga_number(entry$estimate_b)
+  list(
+    identity = identity,
+    label = label,
+    original_a = original_a,
+    original_b = original_b,
+    difference = if (!is.null(original_a) && !is.null(original_b)) original_a - original_b else NULL,
+    bootstrap_a = mga_clean_boot_values(entry$boot_a),
+    bootstrap_b = mga_clean_boot_values(entry$boot_b),
+    n_a = suppressWarnings(as.numeric(group_a_n))[1],
+    n_b = suppressWarnings(as.numeric(group_b_n))[1]
+  )
+}
 
-  sd_a <- stats::sd(boot_a)
-  sd_b <- stats::sd(boot_b)
-  if (!is.finite(sd_a) || !is.finite(sd_b)) {
-    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
+mga_pls_mga_p <- function(comparison) {
+  original_a <- comparison$original_a
+  original_b <- comparison$original_b
+  bootstrap_a <- comparison$bootstrap_a
+  bootstrap_b <- comparison$bootstrap_b
+  if (is.null(original_a) || is.null(original_b) || !length(bootstrap_a) || !length(bootstrap_b)) return(NULL)
+
+  centred_a <- bootstrap_a - mean(bootstrap_a) + original_a
+  centred_b <- sort(bootstrap_b - mean(bootstrap_b) + original_b)
+  less_or_equal <- findInterval(centred_a, centred_b)
+  strictly_less <- findInterval(centred_a, centred_b, left.open = TRUE)
+  greater_counts <- length(centred_b) - less_or_equal
+  equal_counts <- less_or_equal - strictly_less
+  mean((greater_counts + (0.5 * equal_counts)) / length(centred_b))
+}
+
+mga_pls_mga_significant <- function(probability, alpha) {
+  !is.null(probability) && is.finite(probability) &&
+    (probability < alpha || probability > (1 - alpha))
+}
+
+mga_parametric_stats <- function(comparison, alpha, welch = FALSE) {
+  empty_result <- list(
+    difference = comparison$difference,
+    standard_error = NULL,
+    t_value = NULL,
+    df = NULL,
+    p_value = NULL,
+    significant = FALSE
+  )
+  difference <- comparison$difference
+  bootstrap_a <- comparison$bootstrap_a
+  bootstrap_b <- comparison$bootstrap_b
+  n_a <- comparison$n_a
+  n_b <- comparison$n_b
+  if (is.null(difference) || !is.finite(n_a) || !is.finite(n_b) || n_a < 2L || n_b < 2L) {
+    return(empty_result)
   }
+  if (length(bootstrap_a) < 2L || length(bootstrap_b) < 2L) return(empty_result)
+
+  se_a <- stats::sd(bootstrap_a)
+  se_b <- stats::sd(bootstrap_b)
+  if (!is.finite(se_a) || !is.finite(se_b)) return(empty_result)
 
   if (isTRUE(welch)) {
-    variance_a <- (sd_a ^ 2) / n_a
-    variance_b <- (sd_b ^ 2) / n_b
-    se <- sqrt(variance_a + variance_b)
-    df <- ((variance_a + variance_b) ^ 2) /
-      (((variance_a ^ 2) / (n_a - 1L)) + ((variance_b ^ 2) / (n_b - 1L)))
+    component_a <- ((n_a - 1) / n_a) * (se_a ^ 2)
+    component_b <- ((n_b - 1) / n_b) * (se_b ^ 2)
+    standard_error <- sqrt(component_a + component_b)
+    denominator <- (component_a ^ 2) / (n_a - 1) + (component_b ^ 2) / (n_b - 1)
+    df <- if (is.finite(denominator) && denominator > 0) {
+      (((component_a + component_b) ^ 2) / denominator) - 2
+    } else {
+      NA_real_
+    }
   } else {
-    df <- n_a + n_b - 2L
-    pooled <- sqrt((((n_a - 1L) * (sd_a ^ 2)) + ((n_b - 1L) * (sd_b ^ 2))) / df)
-    se <- pooled * sqrt((1 / n_a) + (1 / n_b))
+    df <- n_a + n_b - 2
+    pooled_variance <-
+      (((n_a - 1) ^ 2) / df) * (se_a ^ 2) +
+      (((n_b - 1) ^ 2) / df) * (se_b ^ 2)
+    standard_error <- sqrt(pooled_variance) * sqrt((1 / n_a) + (1 / n_b))
   }
 
-  if (!is.finite(se) || se <= 0 || !is.finite(df) || df <= 0) {
-    return(list(t_value = NULL, df = NULL, p_value = NULL, significant = FALSE))
+  if (!is.finite(standard_error) || standard_error <= 0 || !is.finite(df) || df <= 0) {
+    return(empty_result)
   }
 
-  t_value <- diff / se
+  t_value <- difference / standard_error
   p_value <- 2 * stats::pt(-abs(t_value), df = df)
   list(
+    difference = mga_number(difference),
+    standard_error = mga_number(standard_error),
     t_value = mga_number(t_value),
     df = mga_number(df),
     p_value = mga_number(p_value),
@@ -4809,27 +5024,28 @@ mga_compare_entries <- function(entries, payload, group_a_field, group_b_field, 
   ci_rows <- list()
   henseler_rows <- list()
   parametric_rows <- list()
+  welch_rows <- list()
 
   for (entry in entries) {
-    estimate_a <- mga_number(entry$estimate_a)
-    estimate_b <- mga_number(entry$estimate_b)
-    diff <- if (!is.null(estimate_a) && !is.null(estimate_b)) estimate_a - estimate_b else NULL
-    boot_a <- mga_clean_boot_values(entry$boot_a)
-    boot_b <- mga_clean_boot_values(entry$boot_b)
+    comparison <- mga_parameter_comparison(entry, group_a_n, group_b_n)
+    estimate_a <- comparison$original_a
+    estimate_b <- comparison$original_b
+    diff <- comparison$difference
+    boot_a <- comparison$bootstrap_a
+    boot_b <- comparison$bootstrap_b
     mean_a <- if (length(boot_a)) mean(boot_a) else NULL
     mean_b <- if (length(boot_b)) mean(boot_b) else NULL
-    pls_mga_p <- mga_pls_mga_p(mean_a, mean_b, boot_a, boot_b)
+    pls_mga_p <- mga_pls_mga_p(comparison)
     p_value_inverse <- if (!is.null(pls_mga_p)) 1 - pls_mga_p else NULL
-    pls_significant <- !is.null(pls_mga_p) && (
-      pls_mga_p <= alpha ||
-      (!is.null(p_value_inverse) && p_value_inverse <= alpha)
-    )
+    pls_significant <- mga_pls_mga_significant(pls_mga_p, alpha)
     direction <- mga_direction(diff, payload$groupA, payload$groupB)
-    a_ci <- mga_ci_values(boot_a, estimate_a, alpha)
-    b_ci <- mga_ci_values(boot_b, estimate_b, alpha)
+    intervals <- mga_comparison_intervals(comparison, alpha)
+    a_ci <- intervals$group_a
+    b_ci <- intervals$group_b
     ci_overlap <- mga_ci_overlap(a_ci, b_ci)
     ci_significant <- !is.null(ci_overlap) && !isTRUE(ci_overlap)
-    parametric <- mga_parametric_stats(diff, boot_a, boot_b, alpha, group_a_n, group_b_n, welch = FALSE)
+    parametric <- mga_parametric_stats(comparison, alpha, welch = FALSE)
+    welch <- mga_parametric_stats(comparison, alpha, welch = TRUE)
 
     ci_values <- list()
     ci_values[[group_a_field]] <- estimate_a
@@ -4866,10 +5082,24 @@ mga_compare_entries <- function(entries, payload, group_a_field, group_b_field, 
       entry$identity,
       base_values,
       list(
+        standard_error = parametric$standard_error,
         t_value = parametric$t_value,
+        df = parametric$df,
         p_value = parametric$p_value,
         significant = parametric$significant,
         result = mga_result_label(parametric$significant)
+      )
+    )
+    welch_rows[[length(welch_rows) + 1L]] <- c(
+      entry$identity,
+      base_values,
+      list(
+        standard_error = welch$standard_error,
+        t_value = welch$t_value,
+        df = welch$df,
+        p_value = welch$p_value,
+        significant = welch$significant,
+        result = mga_result_label(welch$significant)
       )
     )
   }
@@ -4877,41 +5107,95 @@ mga_compare_entries <- function(entries, payload, group_a_field, group_b_field, 
   list(
     biasCorrectedConfidenceIntervals = ci_rows,
     henselerPlsMga = henseler_rows,
-    parametricTest = parametric_rows
+    parametricTest = parametric_rows,
+    welchTest = welch_rows
   )
 }
 
-mga_path_entries <- function(pls_model, group1_model, group2_model, group1_boot, group2_boot) {
-  sm_matrix <- pls_model$smMatrix
-  sources <- seminr:::path_sources(sm_matrix)
-  targets <- seminr:::path_targets(sm_matrix)
-  path_names <- seminr:::to_path_labels(sm_matrix)
-  boot1_betas <- mga_boot_paths_matrix(group1_boot)
-  boot2_betas <- mga_boot_paths_matrix(group2_boot)
-  lookup_paths <- function(path_coef) {
-    mapply(function(s, t) path_coef[s, t], sources, targets)
-  }
-  group1_betas <- lookup_paths(group1_model$path_coef)
-  group2_betas <- lookup_paths(group2_model$path_coef)
-
-  lapply(seq_along(path_names), function(index) {
-    path_name <- path_names[[index]]
-    boot1_index <- match(path_name, colnames(boot1_betas))
-    boot2_index <- match(path_name, colnames(boot2_betas))
-    if (is.na(boot1_index)) boot1_index <- index
-    if (is.na(boot2_index)) boot2_index <- index
+payload_nomological_paths <- function(payload) {
+  paths <- payload$paths %||% list()
+  normalized <- lapply(paths, function(path) {
     list(
-      identity = list(
-        source = as.character(sources[[index]] %||% ""),
-        target = as.character(targets[[index]] %||% ""),
-        path = as.character(path_name %||% "")
-      ),
-      estimate_a = group1_betas[[index]],
-      estimate_b = group2_betas[[index]],
-      boot_a = boot1_betas[, boot1_index],
-      boot_b = boot2_betas[, boot2_index]
+      source = as.character(path$from %||% ""),
+      target = as.character(path$to %||% "")
     )
   })
+  normalized <- Filter(function(path) nzchar(path$source) && nzchar(path$target), normalized)
+  if (!length(normalized)) return(list())
+  keys <- vapply(normalized, function(path) paste(path$source, path$target, sep = "\r"), character(1))
+  normalized[!duplicated(keys)]
+}
+
+mga_path_value <- function(path_matrix, source, target) {
+  if (is.null(path_matrix) || is.null(rownames(path_matrix)) || is.null(colnames(path_matrix))) return(NA_real_)
+  if (!(source %in% rownames(path_matrix)) || !(target %in% colnames(path_matrix))) return(NA_real_)
+  suppressWarnings(as.numeric(path_matrix[source, target]))
+}
+
+mga_boot_path_values <- function(boot_model, source, target) {
+  boot_paths <- boot_model$boot_paths
+  if (is.null(boot_paths) || is.null(dim(boot_paths)) || length(dim(boot_paths)) < 3L) return(numeric(0))
+  if (!(source %in% rownames(boot_paths)) || !(target %in% colnames(boot_paths))) return(numeric(0))
+  suppressWarnings(as.numeric(boot_paths[source, target, ]))
+}
+
+mga_path_entries <- function(payload, group1_model, group2_model, group1_boot, group2_boot) {
+  paths <- payload_nomological_paths(payload)
+  lapply(paths, function(path) {
+    source <- path$source
+    target <- path$target
+    path_name <- sprintf("%s -> %s", source, target)
+    list(
+      identity = list(
+        source = source,
+        target = target,
+        path = path_name
+      ),
+      estimate_a = mga_path_value(group1_model$path_coef, source, target),
+      estimate_b = mga_path_value(group2_model$path_coef, source, target),
+      boot_a = mga_boot_path_values(group1_boot, source, target),
+      boot_b = mga_boot_path_values(group2_boot, source, target)
+    )
+  })
+}
+
+mga_nomological_path_matrix <- function(payload, path_coef) {
+  if (is.null(path_coef) || is.null(dim(path_coef))) return(NULL)
+  masked <- matrix(
+    0,
+    nrow = nrow(path_coef),
+    ncol = ncol(path_coef),
+    dimnames = dimnames(path_coef)
+  )
+  for (path in payload_nomological_paths(payload)) {
+    source <- path$source
+    target <- path$target
+    if (source %in% rownames(path_coef) && target %in% colnames(path_coef)) {
+      masked[source, target] <- path_coef[source, target]
+    }
+  }
+  masked
+}
+
+mga_nomological_boot_derived_array <- function(payload, boot_paths, reference, derive_matrix) {
+  if (is.null(boot_paths) || is.null(dim(boot_paths)) || length(dim(boot_paths)) < 3L ||
+      is.null(reference) || is.null(dim(reference))) return(NULL)
+  out <- array(
+    NA_real_,
+    dim = c(nrow(reference), ncol(reference), dim(boot_paths)[3]),
+    dimnames = list(rownames(reference), colnames(reference), NULL)
+  )
+  for (index in seq_len(dim(boot_paths)[3])) {
+    path_matrix <- boot_paths[, , index]
+    masked <- mga_nomological_path_matrix(payload, path_matrix)
+    derived <- derive_matrix(masked)
+    shared_rows <- intersect(rownames(reference), rownames(derived))
+    shared_columns <- intersect(colnames(reference), colnames(derived))
+    if (length(shared_rows) && length(shared_columns)) {
+      out[shared_rows, shared_columns, index] <- derived[shared_rows, shared_columns, drop = FALSE]
+    }
+  }
+  out
 }
 
 mga_measurement_entries <- function(group1_matrix, group2_matrix, group1_boot_array, group2_boot_array) {
@@ -5095,13 +5379,23 @@ mga_specific_indirect_entries <- function(payload, group1_model, group2_model, g
   entries
 }
 
-mga_group_bootstrap_sections <- function(payload, group_data, group_model, group_boot) {
+mga_group_bootstrap_sections <- function(payload, group_data, group_core, group_boot, embedded = FALSE, bypass_isolated_moderation_cache = TRUE) {
   alpha <- payload$alpha
   algorithm <- if (!is.null(payload$algorithm)) tolower(as.character(payload$algorithm)) else "standard"
   if (!(algorithm %in% c("standard", "consistent"))) algorithm <- "standard"
   algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
   confidence_level <- sprintf("%g%%", (1 - alpha) * 100)
-  group_core <- list(model = group_model, summary = summary(group_model))
+
+  if (isTRUE(embedded)) {
+    response <- assemble_embedded_bootstrap_response(
+      payload, group_data, group_core, group_boot, payload$nboot,
+      confidence_level, algorithm, algorithm_label, alpha,
+      bypass_isolated_moderation_cache = bypass_isolated_moderation_cache
+    )
+    return(response$results %||% response)
+  }
+
+  group_model <- group_core$model
   boot_summary <- summary(group_boot, alpha = alpha)
 
   boot_summary$bootstrapped_paths <- add_bias_corrected_intervals(
@@ -5139,33 +5433,61 @@ mga_group_bootstrap_sections <- function(payload, group_data, group_model, group
     confidence_level,
     algorithm,
     algorithm_label,
-    alpha = alpha
+    alpha = alpha,
+    bypass_isolated_moderation_cache = bypass_isolated_moderation_cache
   )
   group_response$results %||% group_response
 }
 
-run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
-  pls_data <- pls_model$rawdata
-  group1_data <- pls_data[condition, , drop = FALSE]
-  group2_data <- pls_data[!condition, , drop = FALSE]
+assemble_mga_bootstrap_tables <- function(
+  payload,
+  group1_data,
+  group2_data,
+  group1_core,
+  group2_core,
+  group1_boot,
+  group2_boot,
+  embedded = FALSE
+) {
+  group1_model <- group1_core$model
+  group2_model <- group2_core$model
+  group1_summary <- group1_core$summary %||% summary(group1_model)
+  group2_summary <- group2_core$summary %||% summary(group2_model)
   group1_n <- nrow(group1_data)
   group2_n <- nrow(group2_data)
-  nboot <- payload$nboot
 
-  message("Estimating and bootstrapping selected MGA groups...")
-  group1_model <- seminr:::rerun(pls_model, data = group1_data)
-  group2_model <- seminr:::rerun(pls_model, data = group2_data)
-  group1_summary <- summary(group1_model)
-  group2_summary <- summary(group2_model)
-  group1_boot <- seminr::bootstrap_model(seminr_model = group1_model, nboot = nboot, ...)
-  group2_boot <- seminr::bootstrap_model(seminr_model = group2_model, nboot = nboot, ...)
-
-  path_entries <- mga_path_entries(pls_model, group1_model, group2_model, group1_boot, group2_boot)
+  path_entries <- mga_path_entries(payload, group1_model, group2_model, group1_boot, group2_boot)
   specific_indirect_entries <- mga_specific_indirect_entries(payload, group1_model, group2_model, group1_boot, group2_boot)
-  group1_total_indirect <- seminr:::total_indirect_effects(group1_model$path_coef)
-  group2_total_indirect <- seminr:::total_indirect_effects(group2_model$path_coef)
-  group1_boot_total_indirect <- mga_boot_total_indirect_array(group1_boot)
-  group2_boot_total_indirect <- mga_boot_total_indirect_array(group2_boot)
+  group1_nomological_paths <- mga_nomological_path_matrix(payload, group1_model$path_coef)
+  group2_nomological_paths <- mga_nomological_path_matrix(payload, group2_model$path_coef)
+  group1_total_indirect <- seminr:::total_indirect_effects(group1_nomological_paths)
+  group2_total_indirect <- seminr:::total_indirect_effects(group2_nomological_paths)
+  group1_total_effects <- seminr:::total_effects(group1_nomological_paths)
+  group2_total_effects <- seminr:::total_effects(group2_nomological_paths)
+  group1_boot_total_indirect <- mga_nomological_boot_derived_array(
+    payload,
+    group1_boot$boot_paths,
+    group1_total_indirect,
+    seminr:::total_indirect_effects
+  )
+  group2_boot_total_indirect <- mga_nomological_boot_derived_array(
+    payload,
+    group2_boot$boot_paths,
+    group2_total_indirect,
+    seminr:::total_indirect_effects
+  )
+  group1_boot_total_effects <- mga_nomological_boot_derived_array(
+    payload,
+    group1_boot$boot_paths,
+    group1_total_effects,
+    seminr:::total_effects
+  )
+  group2_boot_total_effects <- mga_nomological_boot_derived_array(
+    payload,
+    group2_boot$boot_paths,
+    group2_total_effects,
+    seminr:::total_effects
+  )
   total_indirect_entries <- mga_effect_matrix_entries(
     group1_total_indirect,
     group2_total_indirect,
@@ -5173,10 +5495,10 @@ run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
     group2_boot_total_indirect
   )
   total_effect_entries <- mga_effect_matrix_entries(
-    seminr:::total_effects(group1_model$path_coef),
-    seminr:::total_effects(group2_model$path_coef),
-    group1_boot$boot_total_paths,
-    group2_boot$boot_total_paths
+    group1_total_effects,
+    group2_total_effects,
+    group1_boot_total_effects,
+    group2_boot_total_effects
   )
   loading_entries <- mga_measurement_entries(
     group1_model$outer_loadings,
@@ -5193,8 +5515,8 @@ run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
 
   list(
     groupSpecific = list(
-      groupA = mga_group_bootstrap_sections(payload, group1_data, group1_model, group1_boot),
-      groupB = mga_group_bootstrap_sections(payload, group2_data, group2_model, group2_boot)
+      groupA = mga_group_bootstrap_sections(payload, group1_data, group1_core, group1_boot, embedded),
+      groupB = mga_group_bootstrap_sections(payload, group2_data, group2_core, group2_boot, embedded)
     ),
     descriptives = c(
       mga_descriptive_rows(payload$groupA, payload, group1_data, group1_model, group1_summary),
@@ -5206,6 +5528,103 @@ run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
     totalEffects = mga_compare_entries(total_effect_entries, payload, "groupA_beta", "groupB_beta", group1_n, group2_n),
     outerLoadings = mga_compare_entries(loading_entries, payload, "groupA_loading", "groupB_loading", group1_n, group2_n),
     outerWeights = mga_compare_entries(weight_entries, payload, "groupA_weight", "groupB_weight", group1_n, group2_n)
+  )
+}
+
+run_mga_bootstrap_tables <- function(pls_model, condition, payload, ...) {
+  pls_data <- pls_model$rawdata
+  group1_data <- pls_data[condition, , drop = FALSE]
+  group2_data <- pls_data[!condition, , drop = FALSE]
+  nboot <- payload$nboot
+
+  message("Estimating and bootstrapping selected MGA groups...")
+  group1_model <- seminr:::rerun(pls_model, data = group1_data)
+  group2_model <- seminr:::rerun(pls_model, data = group2_data)
+  group1_core <- list(model = group1_model, summary = summary(group1_model))
+  group2_core <- list(model = group2_model, summary = summary(group2_model))
+  group1_boot <- seminr::bootstrap_model(seminr_model = group1_model, nboot = nboot, ...)
+  group2_boot <- seminr::bootstrap_model(seminr_model = group2_model, nboot = nboot, ...)
+
+  assemble_mga_bootstrap_tables(
+    payload, group1_data, group2_data,
+    group1_core, group2_core, group1_boot, group2_boot,
+    embedded = FALSE
+  )
+}
+
+hoc_mga_with_context <- function(expr, group_role, group_value, method, phase) {
+  tryCatch(
+    force(expr),
+    error = function(err) {
+      stop(sprintf(
+        "HOC MGA %s '%s' using %s failed during %s: %s",
+        group_role,
+        group_value,
+        method,
+        phase,
+        conditionMessage(err)
+      ), call. = FALSE)
+    }
+  )
+}
+
+run_hoc_mga_bootstrap_tables <- function(data, payload, cores = 1L, timings = NULL) {
+  condition <- mga_group_condition(data, payload$groupingVariable, payload$groupA)
+  group1_data <- data[condition, , drop = FALSE]
+  group2_data <- data[!condition, , drop = FALSE]
+  hoc_settings <- normalize_hoc_settings(payload$algorithmSettings %||% list())
+  embedded <- identical(hoc_settings$hocMethod, "Two-stage") &&
+    identical(hoc_settings$hocTwoStage, "Embedded")
+  method <- hoc_method_label(hoc_settings, has_hoc = TRUE)
+
+  group1_core <- hoc_mga_with_context(
+    timed_or_direct(timings, "fit HOC MGA group A", run_pls_core(payload, group1_data)),
+    "group A", payload$groupA, method, "fit"
+  )
+  group2_core <- hoc_mga_with_context(
+    timed_or_direct(timings, "fit HOC MGA group B", run_pls_core(payload, group2_data)),
+    "group B", payload$groupB, method, "fit"
+  )
+  if (embedded) {
+    group1_boot <- hoc_mga_with_context(
+      timed_or_direct(
+        timings,
+        "bootstrap Embedded HOC MGA group A",
+        run_embedded_hoc_bootstrap(payload, group1_data, group1_core, payload$nboot, timings = timings)
+      ),
+      "group A", payload$groupA, method, "bootstrap"
+    )
+    group2_boot <- hoc_mga_with_context(
+      timed_or_direct(
+        timings,
+        "bootstrap Embedded HOC MGA group B",
+        run_embedded_hoc_bootstrap(payload, group2_data, group2_core, payload$nboot, timings = timings)
+      ),
+      "group B", payload$groupB, method, "bootstrap"
+    )
+  } else {
+    group1_boot <- hoc_mga_with_context(
+      timed_or_direct(
+        timings,
+        "bootstrap HOC MGA group A",
+        seminr::bootstrap_model(group1_core$model, nboot = payload$nboot, cores = cores)
+      ),
+      "group A", payload$groupA, method, "bootstrap"
+    )
+    group2_boot <- hoc_mga_with_context(
+      timed_or_direct(
+        timings,
+        "bootstrap HOC MGA group B",
+        seminr::bootstrap_model(group2_core$model, nboot = payload$nboot, cores = cores)
+      ),
+      "group B", payload$groupB, method, "bootstrap"
+    )
+  }
+
+  assemble_mga_bootstrap_tables(
+    payload, group1_data, group2_data,
+    group1_core, group2_core, group1_boot, group2_boot,
+    embedded = embedded
   )
 }
 
@@ -5251,7 +5670,37 @@ map_mga_path_rows <- function(payload, mga_result) {
   })
 }
 
+mga_hoc_method_metadata <- function(payload) {
+  has_hoc <- has_higher_order_construct(payload)
+  if (!has_hoc) {
+    return(list(
+      base_hoc_method = "Not applicable",
+      mga_hoc_method = "Not applicable",
+      hoc_method_changed = FALSE
+    ))
+  }
+
+  mga_method <- hoc_method_label(payload$algorithmSettings %||% list(), has_hoc = TRUE)
+  base_method <- as.character(payload$baseHocMethod %||% mga_method)
+  list(
+    base_hoc_method = base_method,
+    mga_hoc_method = mga_method,
+    hoc_method_changed = !identical(base_method, mga_method)
+  )
+}
+
 map_mga_response <- function(payload, data, mga_result, timings = NULL) {
+  hoc_metadata <- mga_hoc_method_metadata(payload)
+  has_hoc <- has_higher_order_construct(payload)
+  algorithm <- payload$algorithm %||% "standard"
+  algorithm_label <- if (identical(algorithm, "consistent")) "Consistent PLS (PLSc)" else "Standard PLS"
+  mga_engine <- if (has_hoc && identical(hoc_metadata$mga_hoc_method, "Embedded Two-stage")) {
+    "Metis Embedded two-stage bootstrap PLS-MGA"
+  } else if (has_hoc) {
+    sprintf("seminr::bootstrap_model %s PLS-MGA", hoc_metadata$mga_hoc_method)
+  } else {
+    "seminr::bootstrap_model PLS-MGA"
+  }
   path_rows <- mga_result$pathCoefficients$henselerPlsMga %||% map_mga_path_rows(payload, mga_result)
   significant_rows <- Filter(function(row) isTRUE(row$significant), path_rows)
   execution_log <- list(list(message = sprintf(
@@ -5263,6 +5712,24 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
     payload$alpha,
     payload$seed
   )))
+  if (has_hoc) {
+    execution_log[[length(execution_log) + 1L]] <- list(message = sprintf(
+      "Each MGA group was estimated independently using %s.",
+      hoc_metadata$mga_hoc_method
+    ))
+  }
+  if (has_hoc && identical(hoc_metadata$mga_hoc_method, "Embedded Two-stage")) {
+    execution_log[[length(execution_log) + 1L]] <- list(message =
+      "Embedded HOC MGA reran Stage 1 and Stage 2 within every bootstrap resample for both groups."
+    )
+  }
+  if (isTRUE(hoc_metadata$hoc_method_changed)) {
+    execution_log[[length(execution_log) + 1L]] <- list(message = sprintf(
+      "MGA re-estimated the HOC using %s instead of the fitted PLS-SEM method %s.",
+      hoc_metadata$mga_hoc_method,
+      hoc_metadata$base_hoc_method
+    ))
+  }
 
   json_unbox_tree(list(
     method = "MGA",
@@ -5276,32 +5743,38 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
       pathCoefficients = list(
         biasCorrectedConfidenceIntervals = mga_result$pathCoefficients$biasCorrectedConfidenceIntervals %||% list(),
         henselerPlsMga = mga_result$pathCoefficients$henselerPlsMga %||% list(),
-        parametricTest = mga_result$pathCoefficients$parametricTest %||% list()
+        parametricTest = mga_result$pathCoefficients$parametricTest %||% list(),
+        welchTest = mga_result$pathCoefficients$welchTest %||% list()
       ),
       specificIndirectEffects = list(
         biasCorrectedConfidenceIntervals = mga_result$specificIndirectEffects$biasCorrectedConfidenceIntervals %||% list(),
         henselerPlsMga = mga_result$specificIndirectEffects$henselerPlsMga %||% list(),
-        parametricTest = mga_result$specificIndirectEffects$parametricTest %||% list()
+        parametricTest = mga_result$specificIndirectEffects$parametricTest %||% list(),
+        welchTest = mga_result$specificIndirectEffects$welchTest %||% list()
       ),
       totalIndirectEffects = list(
         biasCorrectedConfidenceIntervals = mga_result$totalIndirectEffects$biasCorrectedConfidenceIntervals %||% list(),
         henselerPlsMga = mga_result$totalIndirectEffects$henselerPlsMga %||% list(),
-        parametricTest = mga_result$totalIndirectEffects$parametricTest %||% list()
+        parametricTest = mga_result$totalIndirectEffects$parametricTest %||% list(),
+        welchTest = mga_result$totalIndirectEffects$welchTest %||% list()
       ),
       totalEffects = list(
         biasCorrectedConfidenceIntervals = mga_result$totalEffects$biasCorrectedConfidenceIntervals %||% list(),
         henselerPlsMga = mga_result$totalEffects$henselerPlsMga %||% list(),
-        parametricTest = mga_result$totalEffects$parametricTest %||% list()
+        parametricTest = mga_result$totalEffects$parametricTest %||% list(),
+        welchTest = mga_result$totalEffects$welchTest %||% list()
       ),
       outerLoadings = list(
         biasCorrectedConfidenceIntervals = mga_result$outerLoadings$biasCorrectedConfidenceIntervals %||% list(),
         henselerPlsMga = mga_result$outerLoadings$henselerPlsMga %||% list(),
-        parametricTest = mga_result$outerLoadings$parametricTest %||% list()
+        parametricTest = mga_result$outerLoadings$parametricTest %||% list(),
+        welchTest = mga_result$outerLoadings$welchTest %||% list()
       ),
       outerWeights = list(
         biasCorrectedConfidenceIntervals = mga_result$outerWeights$biasCorrectedConfidenceIntervals %||% list(),
         henselerPlsMga = mga_result$outerWeights$henselerPlsMga %||% list(),
-        parametricTest = mga_result$outerWeights$parametricTest %||% list()
+        parametricTest = mga_result$outerWeights$parametricTest %||% list(),
+        welchTest = mga_result$outerWeights$welchTest %||% list()
       )
     ),
     pathCoefficients = path_rows,
@@ -5320,12 +5793,22 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
     settings = list(
       nboot = payload$nboot,
       alpha = payload$alpha,
-      seed = payload$seed
+      seed = payload$seed,
+      base_hoc_method = hoc_metadata$base_hoc_method,
+      mga_hoc_method = hoc_metadata$mga_hoc_method,
+      hoc_method_changed = hoc_metadata$hoc_method_changed
     ),
     execution_log = execution_log,
     algorithm = list(
       settings = list(
         method = "MGA",
+        algorithm = algorithm,
+        algorithm_label = algorithm_label,
+        hoc_method = hoc_metadata$mga_hoc_method,
+        base_hoc_method = hoc_metadata$base_hoc_method,
+        mga_hoc_method = hoc_metadata$mga_hoc_method,
+        hoc_method_changed = hoc_metadata$hoc_method_changed,
+        algorithm_settings = payload$algorithmSettings %||% list(),
         mode = "mga",
         group_var = payload$groupingVariable,
         group_a = payload$groupA,
@@ -5338,7 +5821,7 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
     ),
     meta = list(
       mode = "mga",
-      engine = "seminr::bootstrap_model PLS-MGA",
+      engine = mga_engine,
       rows = nrow(data),
       columns = ncol(data),
       analysis_settings = list(
@@ -5348,7 +5831,10 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
           groupB = payload$groupB,
           nboot = payload$nboot,
           alpha = payload$alpha,
-          seed = payload$seed
+          seed = payload$seed,
+          base_hoc_method = hoc_metadata$base_hoc_method,
+          mga_hoc_method = hoc_metadata$mga_hoc_method,
+          hoc_method_changed = hoc_metadata$hoc_method_changed
         )
       )
     )
@@ -5357,15 +5843,11 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
 
 pr$handle("POST", "/run-pls", function(req, res) {
   res$setHeader("Content-Type", "application/json")
-
   tryCatch({
     with_analysis_timeout_for({
       prepared <- prepare_payload(req)
       payload <- prepared$payload
       data <- prepared$data
-      algorithm <- if (!is.null(payload$algorithm)) tolower(as.character(payload$algorithm)) else "standard"
-      if (!(algorithm %in% c("standard", "consistent"))) algorithm <- "standard"
-      algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
       core <- get_cached_pls_core(payload, data)
       list(success = TRUE, results = extract_pls_sections(payload, data, core))
     }, analysis_timeout_seconds)
@@ -5377,7 +5859,6 @@ pr$handle("POST", "/run-pls", function(req, res) {
 
 pr$handle("POST", "/run-bootstrap", function(req, res) {
   res$setHeader("Content-Type", "application/json")
-
   tryCatch({
     with_analysis_timeout_for({
       timings <- new_timing_collector("bootstrap")
@@ -5388,63 +5869,25 @@ pr$handle("POST", "/run-bootstrap", function(req, res) {
       if (!(algorithm %in% c("standard", "consistent"))) algorithm <- "standard"
       algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
-
-      nboot <- if (!is.null(payload$nboot)) as.integer(payload$nboot) else 500
-      if (is.na(nboot) || nboot < 50) nboot <- 50
-      confidence_level <- if (!is.null(payload$confidenceLevel)) as.character(payload$confidenceLevel) else "95%"
+      nboot <- as.integer(payload$nboot %||% 500L)
+      if (is.na(nboot) || nboot < 50L) nboot <- 50L
+      confidence_level <- as.character(payload$confidenceLevel %||% "95%")
       alpha <- parse_confidence_level_alpha(confidence_level)
-      core_plan <- analysis_core_plan()
-      cores <- core_plan$cores
+      hoc_settings <- normalize_hoc_settings(payload$algorithmSettings %||% list())
 
-      boot_model <- time_phase(
-        timings,
-        "seminr bootstrap_model",
-        seminr::bootstrap_model(core$model, nboot = nboot, cores = cores),
-        details = list(
-          nboot = nboot,
-          cores = cores,
-          detected_cores = core_plan$detected_cores,
-          reserved_cores = core_plan$reserved_cores,
-          core_policy = core_plan$policy
-        )
-      )
+      if (has_higher_order_construct(payload) && identical(hoc_settings$hocMethod, "Two-stage") && identical(hoc_settings$hocTwoStage, "Embedded")) {
+        boot <- time_phase(timings, "embedded two-stage bootstrap", run_embedded_hoc_bootstrap(payload, data, core, nboot, seed = payload$bootstrapSeed %||% NULL, timings = timings), details = list(nboot = nboot))
+        return(attach_timing_metadata(assemble_embedded_bootstrap_response(payload, data, core, boot, nboot, confidence_level, algorithm, algorithm_label, alpha), timings))
+      }
+
+      core_plan <- analysis_core_plan()
+      boot_model <- time_phase(timings, "seminr bootstrap_model", seminr::bootstrap_model(core$model, nboot = nboot, cores = core_plan$cores), details = list(nboot = nboot, cores = core_plan$cores, detected_cores = core_plan$detected_cores, reserved_cores = core_plan$reserved_cores, core_policy = core_plan$policy))
       boot_summary <- time_phase(timings, "summary boot_model", summary(boot_model, alpha = alpha))
-      boot_summary$bootstrapped_paths <- time_phase(timings, "bias-corrected path intervals", add_bias_corrected_intervals(
-        boot_summary$bootstrapped_paths,
-        boot_model$path_coef,
-        boot_model$boot_paths,
-        alpha = alpha
-      ))
-      boot_summary$bootstrapped_loadings <- time_phase(timings, "bias-corrected loading intervals", add_bias_corrected_intervals(
-        boot_summary$bootstrapped_loadings,
-        boot_model$outer_loadings,
-        boot_model$boot_loadings,
-        alpha = alpha
-      ))
-      boot_summary$bootstrapped_weights <- time_phase(timings, "bias-corrected weight intervals", add_bias_corrected_intervals(
-        boot_summary$bootstrapped_weights,
-        boot_model$outer_weights,
-        boot_model$boot_weights,
-        alpha = alpha
-      ))
-      boot_summary$bootstrapped_total_paths <- time_phase(timings, "bias-corrected total-effect intervals", add_bias_corrected_intervals(
-        boot_summary$bootstrapped_total_paths,
-        seminr:::total_effects(boot_model$path_coef),
-        boot_model$boot_total_paths,
-        alpha = alpha
-      ))
-      response <- time_phase(timings, "assemble bootstrap response", assemble_bootstrap_response(
-        payload,
-        data,
-        core,
-        boot_model,
-        boot_summary,
-        nboot,
-        confidence_level,
-        algorithm,
-        algorithm_label,
-        alpha = alpha
-      ))
+      boot_summary$bootstrapped_paths <- time_phase(timings, "bias-corrected path intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_paths, boot_model$path_coef, boot_model$boot_paths, alpha = alpha))
+      boot_summary$bootstrapped_loadings <- time_phase(timings, "bias-corrected loading intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_loadings, boot_model$outer_loadings, boot_model$boot_loadings, alpha = alpha))
+      boot_summary$bootstrapped_weights <- time_phase(timings, "bias-corrected weight intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_weights, boot_model$outer_weights, boot_model$boot_weights, alpha = alpha))
+      boot_summary$bootstrapped_total_paths <- time_phase(timings, "bias-corrected total-effect intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_total_paths, seminr:::total_effects(boot_model$path_coef), boot_model$boot_total_paths, alpha = alpha))
+      response <- time_phase(timings, "assemble bootstrap response", assemble_bootstrap_response(payload, data, core, boot_model, boot_summary, nboot, confidence_level, algorithm, algorithm_label, alpha = alpha))
       attach_timing_metadata(response, timings)
     }, bootstrap_timeout_seconds)
   }, error = function(err) {
@@ -5455,7 +5898,6 @@ pr$handle("POST", "/run-bootstrap", function(req, res) {
 
 pr$handle("POST", "/run-isolated-moderation-r2", function(req, res) {
   res$setHeader("Content-Type", "application/json")
-
   tryCatch({
     with_analysis_timeout_for({
       timings <- new_timing_collector("isolated_moderation_r2")
@@ -5463,8 +5905,7 @@ pr$handle("POST", "/run-isolated-moderation-r2", function(req, res) {
       payload <- prepared$payload
       data <- prepared$data
       rows <- time_phase(timings, "compute isolated moderation r2", compute_isolated_moderation_r2(payload, data, timings = timings))
-      response <- list(success = TRUE, results = list(r_square_change_isolated = rows))
-      attach_timing_metadata(response, timings)
+      attach_timing_metadata(list(success = TRUE, results = list(r_square_change_isolated = rows)), timings)
     }, analysis_timeout_seconds)
   }, error = function(err) {
     res$status <- 500
@@ -5483,41 +5924,52 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
       data <- prepared$data
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
 
-      # seminr::predict_pls() has no published solution for two-stage higher-order
-      # models and returns NULL for them. When the model has a HOC, build a
-      # prediction-only core that represents each HOC with the repeated-indicators
-      # approach so out-of-sample prediction can actually run.
       uses_hoc <- has_higher_order_construct(payload)
+      hoc_settings <- normalize_hoc_settings(payload$algorithmSettings %||% list())
+      if (
+        uses_hoc &&
+        identical(hoc_settings$hocMethod, "Two-stage")
+      ) {
+        stop("PLSpredict is not available for Embedded or Disjoint two-stage higher-order constructs. Run PLS-SEM and Bootstrap instead.")
+      }
       predict_core <- core
-      predict_note <- NULL
-      if (uses_hoc) {
-        predict_core <- time_phase(timings, "build prediction (repeated-indicators) model",
-          run_pls_core(payload, data, for_prediction = TRUE))
-        hoc_names <- vapply(
-          Filter(function(con) isTRUE(con$is_higher_order), payload$constructs %||% list()),
-          function(con) as.character(con$name), character(1), USE.NAMES = FALSE
-        )
-        predict_note <- sprintf(
-          "PLSpredict used the repeated-indicators representation of higher-order construct(s) %s because seminr has no published method for predicting two-stage higher-order models.",
-          paste(hoc_names, collapse = ", ")
-        )
+      if (uses_hoc) predict_core <- build_repeated_indicator_prediction_core(payload, core)
+      prediction_representation <- if (uses_hoc) {
+        "HOC repeated indicators with internal duplicate-column aliases"
+      } else {
+        "Standard"
       }
 
       # Use defaults if not provided by the frontend
-      folds <- if (!is.null(payload$folds)) as.integer(payload$folds) else 5
-      reps <- if (!is.null(payload$repetitions)) as.integer(payload$repetitions) else 3
-      if (is.na(folds) || folds < 2) folds <- 2
+      folds <- if (!is.null(payload$folds)) as.integer(payload$folds) else plspredict_default_folds()
+      reps <- if (!is.null(payload$repetitions)) as.integer(payload$repetitions) else plspredict_default_repetitions()
+      prediction_seed <- as.integer(payload$predictionSeed %||% plspredict_default_seed())
+      technique <- normalize_plspredict_technique(payload$technique %||% "DA")
+      validation_mode <- if (toupper(as.character(payload$validationMode %||% "K-fold")) == "LOOCV") "LOOCV" else "K-fold"
+      prediction_n <- nrow(predict_core$model$data)
+      if (prediction_n < 2L) stop("PLSpredict requires at least two usable observations after missing-data processing.")
+      prediction_no_folds <- if (validation_mode == "LOOCV") {
+        NULL
+      } else {
+        if (is.na(folds) || folds < 2L) folds <- 2L
+        folds <- min(folds, prediction_n)
+        if (folds < 2L) stop("PLSpredict k-fold validation requires at least two usable observations.")
+        folds
+      }
+      effective_folds <- if (is.null(prediction_no_folds)) prediction_n else prediction_no_folds
       if (is.na(reps) || reps < 1) reps <- 1
-      if (folds > max_predict_folds) folds <- max_predict_folds
       if (reps > max_predict_repetitions) reps <- max_predict_repetitions
 
-      # Execute ACTUAL k-fold out-of-sample prediction
+      # Execute ACTUAL k-fold out-of-sample prediction. The seed is set immediately
+      # before predict_pls so the extractor can reproduce SEMinR's fold shuffle.
+      set.seed(prediction_seed)
       predict_model <- time_phase(timings, "seminr predict_pls", seminr::predict_pls(
         model = predict_core$model,
-        technique = seminr::predict_DA,
-        noFolds = folds,
-        reps = reps
-      ), details = list(folds = folds, repetitions = reps))
+        technique = technique,
+        noFolds = prediction_no_folds,
+        reps = reps,
+        cores = NULL
+      ), details = list(folds = effective_folds, validation_mode = validation_mode, repetitions = reps, prediction_seed = prediction_seed))
 
       if (is.null(predict_model)) {
         # predict_pls returns NULL for model shapes it cannot handle. Surface a clear
@@ -5532,7 +5984,18 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
             lv_predictions_and_errors = list()
           ),
           algorithm = list(
-            settings = list(method = "PLSpredict (k-fold cross-validation)", mode = "PLS-SEM"),
+            settings = list(
+              method = "PLSpredict",
+              mode = "PLS-SEM",
+              algorithm = payload$algorithm %||% "standard",
+              algorithm_settings = payload$algorithmSettings %||% list(),
+              prediction_technique = if (identical(technique, seminr::predict_EA)) "Entire antecedents (EA)" else "Direct antecedents (DA)",
+              cross_validation = validation_mode,
+              folds = effective_folds,
+              repetitions = reps,
+              prediction_seed = prediction_seed,
+              model_representation = prediction_representation
+            ),
             execution_log = list(list(message = unavailable_note))
           ),
           meta = list(mode = "plspredict", engine = "seminr", rows = nrow(data), columns = ncol(data))
@@ -5543,14 +6006,8 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
         results <- time_phase(
           timings,
           "extract plspredict response sections",
-          extract_plspredict_sections(payload, data, predict_core, predict_model, folds, reps, timings = timings)
+          extract_plspredict_sections(payload, data, core, predict_model, effective_folds, reps, timings = timings, prediction_representation = prediction_representation, prediction_core = predict_core)
         )
-        if (!is.null(predict_note)) {
-          results$algorithm$execution_log <- c(
-            list(list(message = predict_note)),
-            results$algorithm$execution_log %||% list()
-          )
-        }
         attach_timing_metadata(list(success = TRUE, results = results), timings)
       }
     }, plspredict_timeout_seconds)
@@ -5591,10 +6048,11 @@ pr$handle("POST", "/run-permutation-configural-precheck", function(req, res) {
   tryCatch({
     with_analysis_timeout_for({
       timings <- new_timing_collector("permutation configural precheck")
-      ensure_micom_loaded()
       prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
       payload <- prepared$payload
       data <- prepared$data
+      assert_micom_payload_supported(payload)
+      ensure_micom_loaded()
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
 
       step1_result <- time_phase(timings, "metis_micom_step1", metis_micom_step1(
@@ -5623,10 +6081,11 @@ pr$handle("POST", "/run-permutation-analysis", function(req, res) {
   tryCatch({
     with_analysis_timeout_for({
       timings <- new_timing_collector("permutation")
-      ensure_micom_loaded()
       prepared <- time_phase(timings, "prepare payload and read dataset", prepare_payload(req))
       payload <- prepared$payload
       data <- prepared$data
+      assert_micom_payload_supported(payload)
+      ensure_micom_loaded()
       core <- time_phase(timings, "get cached/base pls model", get_cached_pls_core(payload, data))
       core_plan <- analysis_core_plan()
       cores <- core_plan$cores
@@ -5685,29 +6144,45 @@ pr$handle("POST", "/run-multi-group-analysis", function(req, res) {
         stop("Multi-group analysis requires at least two observations in each selected group.")
       }
 
-      mga_core <- time_phase(timings, "estimate selected-group pls model", run_pls_core(payload, mga_data))
-      mga_condition <- mga_group_condition(mga_data, payload$groupingVariable, payload$groupA)
       core_plan <- analysis_core_plan()
       cores <- core_plan$cores
       set.seed(payload$seed)
 
-      mga_result <- time_phase(
-        timings,
-        "seminr bootstrap MGA tables",
-        run_mga_bootstrap_tables(
-          pls_model = mga_core$model,
-          condition = mga_condition,
-          payload = payload,
-          cores = cores
-        ),
-        details = list(
-          nboot = payload$nboot,
-          cores = cores,
-          detected_cores = core_plan$detected_cores,
-          reserved_cores = core_plan$reserved_cores,
-          core_policy = core_plan$policy
+      if (has_higher_order_construct(payload)) {
+        mga_result <- time_phase(
+          timings,
+          "group-first HOC bootstrap MGA tables",
+          run_hoc_mga_bootstrap_tables(mga_data, payload, cores = cores, timings = timings),
+          details = list(
+            nboot = payload$nboot,
+            hoc_method = hoc_method_label(payload$algorithmSettings, TRUE),
+            cores = cores,
+            detected_cores = core_plan$detected_cores,
+            reserved_cores = core_plan$reserved_cores,
+            core_policy = core_plan$policy
+          )
         )
-      )
+      } else {
+        mga_core <- time_phase(timings, "estimate selected-group pls model", run_pls_core(payload, mga_data))
+        mga_condition <- mga_group_condition(mga_data, payload$groupingVariable, payload$groupA)
+        mga_result <- time_phase(
+          timings,
+          "seminr bootstrap MGA tables",
+          run_mga_bootstrap_tables(
+            pls_model = mga_core$model,
+            condition = mga_condition,
+            payload = payload,
+            cores = cores
+          ),
+          details = list(
+            nboot = payload$nboot,
+            cores = cores,
+            detected_cores = core_plan$detected_cores,
+            reserved_cores = core_plan$reserved_cores,
+            core_policy = core_plan$policy
+          )
+        )
+      }
 
       response <- time_phase(timings, "assemble MGA response", list(
         success = TRUE,

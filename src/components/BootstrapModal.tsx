@@ -24,11 +24,13 @@ interface BootstrapSettings {
   signChanges: 'none' | 'individual' | 'construct'
   maxIterations: number
   stopCriterion: string
+  seed?: number
 }
 
 interface BootstrapModalProps {
   onClose: () => void
   onRun: (settings: BootstrapSettings) => void
+  initialSettings?: Partial<BootstrapSettings>
   isRunning?: boolean
 }
 
@@ -185,7 +187,7 @@ const SIGN_CHANGE_OPTIONS = [
   { value: 'individual', label: 'Individual sign changes' },
 ] as const
 
-export default function BootstrapModal({ onClose, onRun, isRunning = false }: BootstrapModalProps) {
+export default function BootstrapModal({ onClose, onRun, initialSettings, isRunning = false }: BootstrapModalProps) {
   const [settings, setSettings] = useState<BootstrapSettings>({
     subsamples: 500,
     resampling: 'Individual',
@@ -195,6 +197,7 @@ export default function BootstrapModal({ onClose, onRun, isRunning = false }: Bo
     signChanges: 'none',
     maxIterations: 300,
     stopCriterion: '1e-7',
+    ...initialSettings,
   })
   const [showAdvanced, setShowAdvanced] = useState(false)
 

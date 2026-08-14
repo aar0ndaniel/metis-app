@@ -9,6 +9,7 @@ import {
 
 const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
   'pls-sem': {
+    'algorithm-settings': 'algorithm.settings',
     'path-coef': 'final_results.path_coefficients',
     'total-indirect': 'final_results.total_indirect_effects',
     'specific-indirect': 'final_results.specific_indirect_effects',
@@ -34,6 +35,7 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'execution-log': 'algorithm.execution_log',
   },
   bootstrap: {
+    'algorithm-settings': 'algorithm.settings',
     'path-coef': 'final_results.path_coefficients',
     'total-indirect': 'final_results.total_indirect_effects',
     'specific-indirect': 'final_results.specific_indirect_effects',
@@ -51,6 +53,7 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'execution-log': 'execution_log',
   },
   plspredict: {
+    'algorithm-settings': 'algorithm.settings',
     'plspredict-mv-summary': 'final_results.plspredict_mv_summary',
     'plspredict-lv-summary': 'final_results.plspredict_lv_summary',
     'pls-lm-comparison': 'final_results.plspredict_mv_summary',
@@ -63,6 +66,7 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'execution-log': 'algorithm.execution_log',
   },
   advanced: {
+    'algorithm-settings': 'algorithm.settings',
     'path-coef': 'final_results.path_coefficients',
     'outer-loadings': 'final_results.outer_loadings',
     'model-fit': 'quality_criteria.model_fit',
@@ -75,11 +79,14 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'execution-log': 'algorithm.execution_log',
   },
   permutation: {
+    'algorithm-settings': 'algorithm.settings',
     'compositional-invariance': 'compositionalInvariance',
     'invariance-classification': 'invarianceClassification',
     'execution-log': 'execution_log',
   },
-  mga: {},
+  mga: {
+    'algorithm-settings': 'algorithm.settings',
+  },
 }
 
 const BOOTSTRAP_BASE_MODEL_REFERENCE_PANELS = new Set([
@@ -131,6 +138,30 @@ function getOwnValue(obj: any, candidates: string[]): any {
     if (normalizedCandidates.has(normalizeKey(key))) return value
   }
   return undefined
+}
+
+function getAlgorithmSettingsRows(results: any): Array<Record<string, unknown>> {
+  const settings = getByPath(results, 'algorithm.settings')
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return []
+
+  const rows: Array<Record<string, unknown>> = []
+  const visit = (value: unknown, prefix: string) => {
+    if (value == null) return
+    if (Array.isArray(value)) {
+      rows.push({ Setting: prefix, Value: value.join(', ') })
+      return
+    }
+    if (typeof value === 'object') {
+      Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
+        visit(child, prefix ? `${prefix}.${key}` : key)
+      })
+      return
+    }
+    rows.push({ Setting: prefix, Value: value })
+  }
+
+  visit(settings, '')
+  return rows
 }
 
 function formatCiOverlap(value: unknown): string {
@@ -452,6 +483,8 @@ export function getMgaGroupPanelBaseId(panelId: string): string {
 
 export function getMgaGroupSpecificResultsSource(panelId: string, analysisResults: any): any {
   const results = unwrapAnalysisResults(analysisResults)
+
+  if (panelId === 'algorithm-settings') return getAlgorithmSettingsRows(results)
   const groupKey = panelId.includes('mga-group-a-') ? 'groupA' : panelId.includes('mga-group-b-') ? 'groupB' : ''
   if (!groupKey) return null
   const groupSpecific = results?.groupSpecific ?? results?.group_specific ?? {}
@@ -526,6 +559,18 @@ function mapMgaPathComparisonRows(rows: any[], method: string, labels: { groupA:
       Result: row.result,
     }))
   }
+  if (method === 'welchTest') {
+    return rows.map((row) => ({
+      Path: row.path ?? row.Path,
+      [`${labels.groupA} β`]: row.groupA_beta,
+      [`${labels.groupB} β`]: row.groupB_beta,
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      't-value': row.t_value,
+      df: row.df,
+      'p-value': row.p_value,
+      Result: row.result,
+    }))
+  }
   return rows.map((row) => ({
     Path: row.path ?? row.Path,
     [`${labels.groupA} β`]: row.groupA_beta,
@@ -566,6 +611,19 @@ function mapMgaMeasurementComparisonRows(
       [`${labels.groupB} ${metric}`]: row[groupBKey],
       [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
       't-value': row.t_value,
+      'p-value': row.p_value,
+      Result: row.result,
+    }))
+  }
+  if (method === 'welchTest') {
+    return rows.map((row) => ({
+      Construct: row.construct,
+      Indicator: row.indicator,
+      [`${labels.groupA} ${metric}`]: row[groupAKey],
+      [`${labels.groupB} ${metric}`]: row[groupBKey],
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      't-value': row.t_value,
+      df: row.df,
       'p-value': row.p_value,
       Result: row.result,
     }))
@@ -822,6 +880,19 @@ function mapMgaModerationComparisonRow(
     }
   }
 
+  if (method === 'welchTest') {
+    return {
+      ...base,
+      [`${labels.groupA} β`]: getOwnValue(row, ['groupA_beta', 'group1_beta']),
+      [`${labels.groupB} β`]: getOwnValue(row, ['groupB_beta', 'group2_beta']),
+      [`Difference (${labels.groupA} − ${labels.groupB})`]: row.diff ?? row.difference,
+      't-value': row.t_value,
+      df: row.df,
+      'p-value': row.p_value,
+      Result: row.result,
+    }
+  }
+
   return {
     ...base,
     [`${labels.groupA} β`]: getOwnValue(row, ['groupA_beta', 'group1_beta']),
@@ -887,7 +958,32 @@ function getHocStructuralRole(hocName: string, savedModel: any): string {
   return roles.size ? Array.from(roles).join('; ') : 'Measurement model only'
 }
 
-function normalizeHocResultRows(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+function getHocAnalysisHandling(results: any): string {
+  const method = textValue(
+    getByPath(results, 'settings.mga_hoc_method') ??
+    getByPath(results, 'algorithm.settings.mga_hoc_method') ??
+    getByPath(results, 'algorithm.settings.hoc_method'),
+  )
+  const baseMethod = textValue(
+    getByPath(results, 'settings.base_hoc_method') ??
+    getByPath(results, 'algorithm.settings.base_hoc_method'),
+  )
+  const changed = Boolean(
+    getByPath(results, 'settings.hoc_method_changed') ??
+    getByPath(results, 'algorithm.settings.hoc_method_changed'),
+  )
+
+  if (String(results?.method ?? '').toUpperCase() === 'MGA' && method && method !== 'Not applicable') {
+    const base = `MGA re-estimated each group independently using ${method}.`
+    return changed && baseMethod && baseMethod !== 'Not applicable'
+      ? `${base} This differs from the fitted PLS-SEM method ${baseMethod}.`
+      : base
+  }
+
+  return 'Uses fitted HOC construct scores from the same SEMinR model specification.'
+}
+
+function normalizeHocResultRows(results: any, rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
   return rows
     .map((row) => {
       const hocName = textValue(getOwnValue(row, [
@@ -921,7 +1017,7 @@ function normalizeHocResultRows(rows: Array<Record<string, unknown>>): Array<Rec
         Loading: getOwnValue(row, ['loading', 'outer_loading', 'outerLoading']),
         Weight: getOwnValue(row, ['weight', 'outer_weight', 'outerWeight']),
         VIF: getOwnValue(row, ['vif']),
-        'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+        'MICOM/MGA handling': getHocAnalysisHandling(results),
       }
     })
     .filter((row) => textValue(row['Higher-order construct']))
@@ -940,7 +1036,7 @@ function getHocContextRows(results: any, savedModel: any): Array<Record<string, 
     results?.final_results?.hoc_results ??
     results?.finalResults?.hocResults
   )
-  if (finalHocRows.length) return normalizeHocResultRows(finalHocRows)
+  if (finalHocRows.length) return normalizeHocResultRows(results, finalHocRows)
 
   const hocs = hocRowsFromModel(savedModel)
   if (!hocs.length) return null
@@ -951,7 +1047,7 @@ function getHocContextRows(results: any, savedModel: any): Array<Record<string, 
     Dimensions: hoc.dimensions.length ? hoc.dimensions.join(', ') : 'Not specified',
     'Dimension count': hoc.dimensions.length,
     'Structural role': getHocStructuralRole(hoc.name, savedModel),
-    'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+    'MICOM/MGA handling': getHocAnalysisHandling(results),
   }))
 }
 
@@ -969,33 +1065,12 @@ const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, str
   plspredict: {
     'plspredict-mv-summary': [
       'final_results.plspredict_mv_summary',
-      'final_results.plspredict_summary',
-      'final_results.mv_summary',
-      'final_results.prediction_summary',
-      'plspredict_mv_summary',
-      'plspredict_summary',
-      'mv_summary',
-      'prediction_summary',
     ],
     'pls-lm-comparison': [
       'final_results.plspredict_mv_summary',
-      'final_results.plspredict_summary',
-      'final_results.mv_summary',
-      'final_results.prediction_summary',
-      'plspredict_mv_summary',
-      'plspredict_summary',
-      'mv_summary',
-      'prediction_summary',
     ],
     'q2-predict': [
       'final_results.plspredict_mv_summary',
-      'final_results.plspredict_summary',
-      'final_results.mv_summary',
-      'final_results.prediction_summary',
-      'plspredict_mv_summary',
-      'plspredict_summary',
-      'mv_summary',
-      'prediction_summary',
     ],
     'plsem-mv-error-hist': [
       'histograms.plsem_mv_error_histogram',
@@ -1015,6 +1090,8 @@ export function getPanelDataFromResults(
   options: PanelDataOptions = {},
 ): any {
   const results = unwrapAnalysisResults(analysisResults)
+
+  if (panelId === 'algorithm-settings') return getAlgorithmSettingsRows(results)
 
   if (mode === 'pls-sem' || mode === 'bootstrap') {
     if (panelId === 'moderation-summary') return deriveModerationSummaryRows(options.savedModel, results)

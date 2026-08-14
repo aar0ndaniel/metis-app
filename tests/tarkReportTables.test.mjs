@@ -142,6 +142,16 @@ const bootstrapResults = {
         'X97.5..CI': 0.701,
       },
     ],
+    specific_indirect_effects: [
+      {
+        path: 'PEOU -> Attitude -> Loyalty',
+        'Original Est.': 0.123,
+        STDEV: 0.041,
+        'T Stat.': 3.0,
+        '2.5% CI': 0.051,
+        '97.5% CI': 0.208,
+      },
+    ],
   },
 }
 
@@ -193,6 +203,10 @@ assert.deepEqual(
   structural.rows[0],
   ['\u200B', 'Perceived Ease of Use → Attitude', '0.561', '0.552', '0.080', '7.013', '<.001', '[0.404, 0.701]', '0.123', 'Small', 'Supported'],
 )
+
+const specificIndirect = byTitle.get('Specific indirect effects')
+assert.deepEqual(specificIndirect.headers, ['Path', 'β', 'STDEV', 't-value', '2.5% CI', '97.5% CI'])
+assert.deepEqual(specificIndirect.rows, [['Perceived Ease of Use → Attitude → Loyalty', '0.123', '0.041', '3.000', '0.051', '0.208']])
 
 const power = byTitle.get('Explanatory and predictive power')
 assert.deepEqual(
@@ -371,6 +385,17 @@ const mgaResults = {
           result: 'Significant',
         },
       ],
+      welchTest: [
+        {
+          path: 'Image -> Satisfaction',
+          groupA_beta: 0.51,
+          groupB_beta: 0.31,
+          diff: 0.2,
+          p_value: 0.025,
+          df: 46.5,
+          result: 'Significant',
+        },
+      ],
     },
     outerLoadings: {
       biasCorrectedConfidenceIntervals: [
@@ -407,6 +432,18 @@ const mgaResults = {
           result: 'Significant',
         },
       ],
+      welchTest: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_loading: 0.82,
+          groupB_loading: 0.79,
+          diff: 0.03,
+          p_value: 0.045,
+          df: 44.2,
+          result: 'Significant',
+        },
+      ],
     },
     outerWeights: {
       biasCorrectedConfidenceIntervals: [
@@ -440,6 +477,18 @@ const mgaResults = {
           groupB_weight: 0.27,
           diff: 0.04,
           p_value: 0.04,
+          result: 'Significant',
+        },
+      ],
+      welchTest: [
+        {
+          construct: 'Image',
+          indicator: 'IMAG1',
+          groupA_weight: 0.31,
+          groupB_weight: 0.27,
+          diff: 0.04,
+          p_value: 0.035,
+          df: 45.1,
           result: 'Significant',
         },
       ],
@@ -554,15 +603,15 @@ assert.deepEqual(mgaGroupSpecific.headers, ['Path', 'Group A β', 'Group A t-val
 assert.deepEqual(mgaGroupSpecific.rows[0], ['Image → Satisfaction', '0.510', '6.380', '0.001', '0.310', '3.440', '0.002'])
 
 const mgaComparison = advancedByTitle.get('Multi-group comparison of path coefficients')
-assert.deepEqual(mgaComparison.headers, ['Path', 'Group A β', 'Group B β', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision'])
-assert.deepEqual(mgaComparison.rows[0], ['Image → Satisfaction', '0.510', '0.310', '0.200', '[0.200, 0.700]', '0.010', '0.020', 'Significant difference'])
+assert.deepEqual(mgaComparison.headers, ['Path', 'Group A β', 'Group B β', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Welch p-value', 'Welch df', 'Decision'])
+assert.deepEqual(mgaComparison.rows[0], ['Image → Satisfaction', '0.510', '0.310', '0.200', '[0.200, 0.700]', '0.010', '0.020', '0.025', '46.500', 'Significant difference'])
 
 const mgaOuterLoadings = advancedByTitle.get('Multi-group comparison of outer loadings')
-assert.deepEqual(mgaOuterLoadings.headers, ['Construct', 'Indicator', 'Group A loading', 'Group B loading', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision'])
-assert.deepEqual(mgaOuterLoadings.rows[0], ['Image', 'IMAG1', '0.820', '0.790', '0.030', '[0.010, 0.050]', '0.030', '0.040', 'Significant difference'])
+assert.deepEqual(mgaOuterLoadings.headers, ['Construct', 'Indicator', 'Group A loading', 'Group B loading', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Welch p-value', 'Welch df', 'Decision'])
+assert.deepEqual(mgaOuterLoadings.rows[0], ['Image', 'IMAG1', '0.820', '0.790', '0.030', '[0.010, 0.050]', '0.030', '0.040', '0.045', '44.200', 'Significant difference'])
 
 const mgaOuterWeights = advancedByTitle.get('Multi-group comparison of outer weights')
-assert.deepEqual(mgaOuterWeights.rows[0], ['Image', 'IMAG1', '0.310', '0.270', '0.040', '[0.020, 0.060]', '0.030', '0.040', 'Significant difference'])
+assert.deepEqual(mgaOuterWeights.rows[0], ['Image', 'IMAG1', '0.310', '0.270', '0.040', '[0.020, 0.060]', '0.030', '0.040', '0.035', '45.100', 'Significant difference'])
 
 const mgaHocContext = advancedByTitle.get('Higher-order construct context in multi-group analysis')
 assert.deepEqual(mgaHocContext.headers, ['Higher-order construct', 'Dimensions', 'Role', 'Compared path', 'Group A estimate', 'Group B estimate', 'Difference', 'Decision'])

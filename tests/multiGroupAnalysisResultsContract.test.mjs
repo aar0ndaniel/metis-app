@@ -64,6 +64,7 @@ assert.deepEqual(
   mgaSections.find((section) => section.id === 'multi-group-results')?.items.map(simplifyItem),
   [
     { id: 'overview', label: 'Overview' },
+    { id: 'algorithm-settings', label: 'Algorithm settings' },
     {
       id: 'mga-comparisons',
       label: 'MULTI GROUP COMPARISON',
@@ -160,6 +161,7 @@ const mgaComparisonIds = mgaSections
 assert.ok(!mgaComparisonIds.some((panelId) => panelId.includes('indirect') || panelId === 'mga-total-effects'), 'MGA comparison sidebar should only expose path coefficients, outer loadings, and outer weights.')
 assert.deepEqual(mgaPanelIds, [
   'overview',
+  'algorithm-settings',
   'mga-path-coefficients',
   'mga-outer-loadings',
   'mga-outer-weights',
@@ -188,7 +190,7 @@ assert.deepEqual(mgaPanelIds, [
   'mga-group-b-specific-indirect',
   'mga-group-b-total-effects',
 ])
-assert.ok(!mgaPanelIds.some((panelId) => panelId.toLowerCase().includes('welch')), 'MGA comparisons should not expose Welch panels.')
+assert.ok(!mgaPanelIds.some((panelId) => panelId.toLowerCase().includes('welch')), 'Welch should be a comparison-method tab rather than a duplicate sidebar panel.')
 assert.ok(
   ['mga-group-a-path-coef', 'mga-group-a-total-indirect', 'mga-group-a-specific-indirect', 'mga-group-a-total-effects', 'mga-group-b-path-coef', 'mga-group-b-total-indirect', 'mga-group-b-specific-indirect', 'mga-group-b-total-effects']
     .every((panelId) => mgaPanelIds.includes(panelId)),
@@ -339,6 +341,18 @@ const sampleResults = {
           result: 'Significant',
         },
       ],
+      welchTest: [
+        {
+          path: 'Image -> Satisfaction',
+          groupA_beta: 0.51,
+          groupB_beta: 0.31,
+          diff: 0.2,
+          t_value: 1.98,
+          df: 47.5,
+          p_value: 0.053,
+          result: 'Not significant',
+        },
+      ],
     },
     specificIndirectEffects: {
       biasCorrectedConfidenceIntervals: [
@@ -424,6 +438,12 @@ const sampleResults = {
 
 const moderatedHocMgaResults = {
   ...sampleResults,
+  settings: {
+    ...sampleResults.settings,
+    base_hoc_method: 'Embedded Two-stage',
+    mga_hoc_method: 'Repeated Indicators',
+    hoc_method_changed: true,
+  },
   bootstrapMGA: {
     ...sampleResults.bootstrapMGA,
     pathCoefficients: {
@@ -632,6 +652,18 @@ assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-path-coefficients
     Result: 'Significant',
   },
 ])
+assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-path-coefficients', sampleResults, { mgaComparisonMethod: 'welchTest' }), [
+  {
+    Path: 'Image -> Satisfaction',
+    'Male β': 0.51,
+    'Female β': 0.31,
+    'Difference (Male − Female)': 0.2,
+    't-value': 1.98,
+    df: 47.5,
+    'p-value': 0.053,
+    Result: 'Not significant',
+  },
+])
 assert.equal(panelData.getPanelDataFromResults('mga', 'mga-path-welch', sampleResults), null)
 assert.equal(panelData.getPanelDataFromResults('mga', 'mga-specific-indirect-ci', sampleResults), null)
 assert.deepEqual(panelData.getPanelDataFromResults('mga', 'mga-outer-loadings', sampleResults), [
@@ -733,7 +765,7 @@ assert.deepEqual(
       Dimensions: 'Social Interaction, Content Sharing',
       'Dimension count': 2,
       'Structural role': 'Moderator in Image*Engagement HOC -> Loyalty',
-      'MICOM/MGA handling': 'Uses fitted HOC construct scores from the same SEMinR model specification.',
+      'MICOM/MGA handling': 'MGA re-estimated each group independently using Repeated Indicators. This differs from the fitted PLS-SEM method Embedded Two-stage.',
     },
   ],
   'MGA should report HOC context instead of hiding HOC participation inside generic path rows.',
@@ -921,7 +953,12 @@ assert.match(
 assert.match(
   resultsViewSource,
   /showMgaComparisonMethodTabs[\s\S]*mgaComparisonMethodOptions[\s\S]*onMgaComparisonMethodChange/,
-  'ResultsView should render bias-corrected, Henseler, and parametric choices as table-side tabs.',
+  'ResultsView should render MGA comparison methods as table-side tabs.',
+)
+assert.match(
+  resultsViewSource,
+  /type MgaComparisonMethod[\s\S]*'welchTest'[\s\S]*value:\s*'welchTest',\s*label:\s*'Welch'/,
+  'ResultsView should expose Welch as a first-class MGA comparison-method tab.',
 )
 assert.match(
   resultsViewSource,

@@ -107,6 +107,7 @@ interface PathDiagramProps {
   constructMode?:    string
   className?:        string
   interactive?:      boolean
+  resultsReadable?:  boolean
   selectedConstructIds?: string[]
   selectedIndicatorKeys?: string[]
   hoveredConstructId?: string | null
@@ -617,6 +618,7 @@ export default function PathDiagram({
   constructMode   = 'Blank',
   className = '',
   interactive = false,
+  resultsReadable = false,
   selectedConstructIds = [],
   selectedIndicatorKeys = [],
   hoveredConstructId = null,
@@ -889,8 +891,8 @@ export default function PathDiagram({
               >
                 <text
                   x={labelSplit.x} y={labelSplit.y}
-                  fill={measurementTextColor}
-                  fontSize={8} fontWeight="700"
+                  fill={resultsReadable ? '#000000' : measurementTextColor}
+                  fontSize={resultsReadable ? 12 : 8} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle"
                   style={{ userSelect: 'none' }}
@@ -963,8 +965,8 @@ export default function PathDiagram({
               >
                 <text
                   x={split.x} y={split.y}
-                  fill={useColor ? lineColor : 'var(--color-text-secondary)'}
-                  fontSize={9} fontWeight="700"
+                  fill={resultsReadable ? '#000000' : (useColor ? lineColor : 'var(--color-text-secondary)')}
+                  fontSize={resultsReadable ? 12 : 9} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle"
                   style={{ userSelect: 'none' }}
@@ -1026,8 +1028,8 @@ export default function PathDiagram({
               >
                 <text
                   x={mid.mx} y={mid.my}
-                  fill={useColor ? lineColor : 'var(--color-text-secondary)'}
-                  fontSize={9} fontWeight="700"
+                  fill={resultsReadable ? '#000000' : (useColor ? lineColor : 'var(--color-text-secondary)')}
+                  fontSize={resultsReadable ? 12 : 9} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle"
                   style={{ userSelect: 'none' }}
@@ -1080,8 +1082,8 @@ export default function PathDiagram({
             textLength={Math.max(8, ind.labelW - 10)}
             lengthAdjust="spacingAndGlyphs"
             style={{
-              fontSize: 11,
-              fill: 'var(--color-text-secondary)',
+              fontSize: resultsReadable ? 13 : 11,
+              fill: resultsReadable ? '#000000' : 'var(--color-text-secondary)',
               fontFamily: 'DM Sans, sans-serif',
               pointerEvents: 'none',
             }}
@@ -1109,7 +1111,7 @@ export default function PathDiagram({
           rx,
           ry: constructLabelAvailableRy,
           shapeKind: normalizedShape,
-          maxFontSize: hasScore ? 8.5 : 13,
+          maxFontSize: resultsReadable ? (hasScore ? 11 : 16) : (hasScore ? 8.5 : 13),
         })
         const tooltipItems: Array<{ label: string; value?: number }> = [
           { label: 'R-Square', value: incoming ? scores.r2 : undefined },
@@ -1159,13 +1161,13 @@ export default function PathDiagram({
               /* Score mode: big number + small label */
               <>
                 <text x={c.x} y={c.y - 6}
-                  fill={c.color} fontSize={12} fontWeight="700"
+                  fill={resultsReadable ? '#000000' : c.color} fontSize={resultsReadable ? 15 : 12} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
                   {scoreVal.toFixed(getDecimals())}
                 </text>
                 <text x={c.x} y={c.y + 9}
-                  fill={c.color + 'AA'} fontSize={constructLabelLayout.fontSize}
+                  fill={resultsReadable ? '#000000' : c.color + 'AA'} fontSize={constructLabelLayout.fontSize}
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
                   {constructLabelLayout.lines.map((line, index) => (
@@ -1179,7 +1181,7 @@ export default function PathDiagram({
               /* Default mode: name + type */
               <>
                 <text x={c.x} y={c.y - 5}
-                  fill={c.color}
+                  fill={resultsReadable ? '#000000' : c.color}
                   fontSize={constructLabelLayout.fontSize} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
@@ -1190,7 +1192,7 @@ export default function PathDiagram({
                   ))}
                 </text>
                 <text x={c.x} y={c.y + 10}
-                  fill={c.color + 'AA'} fontSize={7.5}
+                  fill={resultsReadable ? '#000000' : c.color + 'AA'} fontSize={resultsReadable ? 11 : 7.5}
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
                   {c.type}

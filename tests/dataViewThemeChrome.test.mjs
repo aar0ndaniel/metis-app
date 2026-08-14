@@ -166,6 +166,42 @@ assert.match(
 
 assert.match(
   dataView,
+  /Missing values[\s\S]*Find previous[\s\S]*Find next/,
+  'DataView should expose an expandable missing-values navigator with previous and next controls.'
+)
+
+assert.match(
+  dataView,
+  /scrollTo\(\{[\s\S]*behavior:\s*['"]smooth['"]/,
+  'Missing-value navigation should move the DataView viewport smoothly to the target cell.'
+)
+
+assert.match(
+  dataView,
+  /missingValueLocation[\s\S]*boxShadow[\s\S]*var\(--color-accent\)/,
+  'The active missing cell should render an accent edge highlight tied to its row and column.'
+)
+
+assert.match(
+  dataView,
+  /MISSING_VALUE_GUIDE_WIDTH\s*=\s*1[\s\S]*data-view-missing-column-guide[\s\S]*data-view-missing-row-guide/,
+  'Missing-value crosshair guides should use dedicated one-pixel full-column and full-row overlays.'
+)
+
+assert.doesNotMatch(
+  dataView,
+  /isMissingTargetColumn\s*\?\s*MISSING_VALUE_FILL|isMissingTargetRow\s*\?\s*MISSING_VALUE_FILL|isMissingTargetColumn\s*\|\|\s*isMissingTargetRow\s*\?\s*MISSING_VALUE_FILL/,
+  'Missing-value navigation should not fill every cell in the selected row or column.'
+)
+
+assert.match(
+  dataView,
+  /isMissingTargetCell[\s\S]*background:\s*isMissingTargetCell\s*\?\s*MISSING_VALUE_FILL/,
+  'Only the missing cell at the row/column intersection should receive the fill.'
+)
+
+assert.match(
+  dataView,
   /onDoubleClick=\{\(\) => \{\s*if \(!editMode\) return\s*setEditingCell\(\{ rowIndex, columnIndex \}\)/,
   'Cell double-click editing should be gated behind edit mode.'
 )

@@ -11,6 +11,7 @@ async function readSource(relativePath) {
 }
 
 const modalSource = await readSource('src/components/MultiGroupAnalysisModal.tsx')
+const hocSettingsSource = await readSource('src/utils/hocSettings.ts')
 const modelCanvasSource = await readSource('src/pages/ModelCanvas.tsx')
 const resultsViewSource = await readSource('src/pages/ResultsView.tsx')
 
@@ -114,7 +115,7 @@ assert.doesNotMatch(
 
 assert.match(
   modalSource,
-  /className="w-\[520px\][\s\S]*height: 410[\s\S]*maxHeight: 'calc\(100vh - 32px\)'/,
+  /className="w-\[520px\][\s\S]*height: hasHigherOrderConstructs \? 486 : 410[\s\S]*maxHeight: 'calc\(100vh - 32px\)'/,
   'MGA modal should use the same approved compact shell size as the MICOM modal.',
 )
 
@@ -126,8 +127,39 @@ assert.match(
 
 assert.match(
   modalSource,
-  /gridTemplateColumns: '1fr 1fr 1fr'[\s\S]*gap: 8[\s\S]*paddingTop: 40[\s\S]*label: 'Bootstrap subsamples'/,
+  /gridTemplateColumns: '1fr 1fr 1fr'[\s\S]*gap: 8[\s\S]*paddingTop: hasHigherOrderConstructs \? 12 : 40[\s\S]*label: 'Bootstrap subsamples'/,
   'MGA settings row should sit closer to the Calculate footer by moving the bootstrap row lower.',
+)
+
+assert.match(
+  modalSource,
+  /hasHigherOrderConstructs\?:\s*boolean[\s\S]*initialHocSettings\?:\s*HocSettings/,
+  'MGA modal should receive HOC availability and the fitted/current HOC settings.',
+)
+assert.match(
+  hocSettingsSource,
+  /HOC_ESTIMATION_METHODS[\s\S]*Repeated Indicators[\s\S]*Embedded Two-stage[\s\S]*Disjoint Two-stage/,
+  'HOC MGA should expose exactly the three approved estimators.',
+)
+assert.match(
+  modalSource,
+  /HOC estimation method[\s\S]*HOC_ESTIMATION_METHODS\.map/,
+  'The modal should render every estimator from the shared approved list.',
+)
+assert.match(
+  modalSource,
+  /hasHigherOrderConstructs\s*&&[\s\S]*role="radiogroup"/,
+  'The HOC estimator control should render only for HOC models.',
+)
+assert.match(
+  modalSource,
+  /Defaults to the method used for the fitted PLS-SEM model\. Changing it re-estimates the model for MGA using the selected method\./,
+  'The selector should explain that changing the fitted method re-estimates MGA.',
+)
+assert.match(
+  modalSource,
+  /hasHigherOrderConstructs \? \{[\s\S]*baseHocMethod,[\s\S]*hocMethod: selectedHocSettings\.method,[\s\S]*hocTwoStage: selectedHocSettings\.twoStage/,
+  'MGA settings should return both provenance and selected normalized settings.',
 )
 
 assert.doesNotMatch(

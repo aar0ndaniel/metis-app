@@ -55,7 +55,7 @@ assert.doesNotMatch(canvasSource, /estimatedSeconds:\s*estimateBootstrapSeconds\
 assert.match(canvasSource, /type: 'plspredict'[\s\S]*progressMode: 'indeterminate'/, 'PLSpredict should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /type: 'advanced'[\s\S]*progressMode: 'indeterminate'/, 'Advanced analysis should use indeterminate modal progress while the blocking backend call runs.')
 assert.match(canvasSource, /formatUserFriendlyAnalysisError\(rawError\)/, 'ModelCanvas should route backend failures through the shared friendly formatter.')
-assert.match(friendlyErrorsSource, /Backend detail:/, 'Unexpected backend failures should show the real backend detail instead of only the generic model error.')
+assert.match(friendlyErrorsSource, /Technical detail:/, 'Unexpected backend failures should show a concise technical detail instead of only the generic model error.')
 assert.match(canvasSource, /AbortController/, 'ModelCanvas should keep an AbortController for bootstrap cancellation.')
 assert.match(canvasSource, /type: 'start'[\s\S]*type: 'pls'/, 'PLS-SEM should start a context-backed calculation.')
 assert.match(canvasSource, /type: 'start'[\s\S]*type: 'bootstrap'/, 'Bootstrap should start a context-backed calculation.')

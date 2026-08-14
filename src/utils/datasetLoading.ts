@@ -7,7 +7,7 @@ import {
 
 interface DatasetFileBridge {
   readFile?: (filePath: string) => Promise<any>
-  extractDataset?: (payload: string | { adaFilePath: string; datasetId?: string }) => Promise<any>
+  extractDataset?: (payload: string | { workspacePath: string; datasetId?: string }) => Promise<any>
 }
 
 export interface DatasetLoadRequest {
@@ -45,7 +45,15 @@ function isAbsoluteDatasetPath(value: string): boolean {
 }
 
 function isWorkspaceArchivePath(value: string): boolean {
-  return /\.(ada|metis|metisws)$/i.test(value.replace(/\\/g, '/'))
+  return /\.metisws$/i.test(value.replace(/\\/g, '/'))
+}
+
+function materializedDatasetPath(candidate: unknown, workspacePath: string): string {
+  if (!isUsablePath(candidate)) return ''
+  const trimmed = candidate.trim()
+  if (isAbsoluteDatasetPath(trimmed)) return trimmed
+  if (!workspacePath || isWorkspaceArchivePath(workspacePath)) return ''
+  return `${workspacePath.replace(/\\/g, '/')}/${trimmed.replace(/^\/+/, '')}`
 }
 
 function getBridge(api?: DatasetFileBridge): DatasetFileBridge | undefined {
@@ -87,6 +95,7 @@ export function resolveDatasetFilePathFromRequest(
   request: DatasetLoadRequest,
   cached?: any,
 ): string {
+  const workspacePath = String(request.workspacePath || cached?.workspacePath || '').trim()
   const candidatePaths = [
     request.datasetTempPath,
     cached?.datasetTempPath,
@@ -94,9 +103,8 @@ export function resolveDatasetFilePathFromRequest(
   ]
 
   for (const candidate of candidatePaths) {
-    if (isUsablePath(candidate)) {
-      return candidate.trim()
-    }
+    const materialized = materializedDatasetPath(candidate, workspacePath)
+    if (materialized) return materialized
   }
 
   const filePath = String(request.filePath || cached?.filePath || '').trim()
@@ -106,7 +114,6 @@ export function resolveDatasetFilePathFromRequest(
     return filePath
   }
 
-  const workspacePath = String(request.workspacePath || cached?.workspacePath || '').trim()
   if (!workspacePath) return filePath
 
   const normalizedWorkspacePath = workspacePath.replace(/\\/g, '/')
@@ -135,7 +142,7 @@ export async function loadDatasetSnapshot(request: DatasetLoadRequest): Promise<
   let datasetTempPath = resolveDatasetFilePathFromRequest(request, cached)
 
   if (!datasetTempPath && workspacePath && api.extractDataset) {
-    const extraction = await api.extractDataset({ adaFilePath: workspacePath, datasetId })
+    const extraction = await api.extractDataset({ workspacePath, datasetId })
     if (extraction?.success && extraction.datasetTempPath) {
       datasetTempPath = String(extraction.datasetTempPath)
     }

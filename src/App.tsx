@@ -79,6 +79,12 @@ interface DatasetImportState {
   saveMode?: 'replace' | 'save-as-new'
 }
 
+type PreferencesReturnLocation = {
+  pathname: string
+  search: string
+  hash: string
+}
+
 const METIS_PREF_THEME_KEY = 'metis:prefs:theme'
 const LEGACY_PREF_THEME_KEY = 'pls:prefs:theme'
 const INSTALLER_PREF_THEME_KEY = 'metis:installer:theme'
@@ -336,6 +342,37 @@ function AppShell() {
   const [workspaceLoadAttempted, setWorkspaceLoadAttempted] = useState(false)
   const hasNotifiedAppReadyRef = useRef(false)
   const lastCanvasPathRef = useRef<string>('')
+  const preferencesReturnLocationRef = useRef<PreferencesReturnLocation | null>(null)
+  const openPreferences = useCallback((initialTab: 'general' | 'updates') => {
+    if (!preferencesReturnLocationRef.current) {
+      preferencesReturnLocationRef.current = {
+        pathname: location.pathname,
+        search: location.search,
+        hash: location.hash,
+      }
+    }
+    setPrefsInitialTab(initialTab)
+    setPrefsOpen(true)
+  }, [location.hash, location.pathname, location.search])
+  const closePreferences = useCallback(() => {
+    const returnLocation = preferencesReturnLocationRef.current
+    const currentLocation = {
+      pathname: location.pathname,
+      search: location.search,
+      hash: location.hash,
+    }
+
+    setPrefsOpen(false)
+    preferencesReturnLocationRef.current = null
+
+    if (returnLocation && (
+      returnLocation.pathname !== currentLocation.pathname
+      || returnLocation.search !== currentLocation.search
+      || returnLocation.hash !== currentLocation.hash
+    )) {
+      navigate(returnLocation)
+    }
+  }, [location.hash, location.pathname, location.search, navigate])
   const currentCanvasModelId = location.pathname.startsWith('/canvas/')
     ? decodeURIComponent(location.pathname.split('/')[2] ?? '')
     : ''
@@ -1086,9 +1123,9 @@ function AppShell() {
       const action = e.detail?.action
       if (!action) return
 
-      if (action === 'open-preferences') { setPrefsInitialTab('general'); setPrefsOpen(true); return }
+      if (action === 'open-preferences') { openPreferences('general'); return }
       if (action === 'open-tark')        { setTarkOpen(true); return }
-      if (action === 'open-about')       { setPrefsInitialTab('updates'); setPrefsOpen(true); return }
+      if (action === 'open-about')       { openPreferences('updates'); return }
       if (action === 'open-docs')        { openMetisExternal(METIS_DOCS_URL); return }
       if (action === 'open-rate-metis')   { setShowRateMetis(true); return }
       if (action === 'open-feedback')    { openMetisExternal(METIS_FEEDBACK_URL); return }
@@ -1180,7 +1217,7 @@ function AppShell() {
       if (action === 'open-workspace') {
         const result = await (window as any).electronAPI?.openFile?.({
           title: 'Open Workspace',
-          filters: [{ name: 'metis Workspace', extensions: ['metisws', 'ada'] }],
+          filters: [{ name: 'metis Workspace', extensions: ['metisws'] }],
           properties: ['openFile'],
         })
         if (result && !result.canceled && result.filePaths?.length > 0) {
@@ -1192,7 +1229,7 @@ function AppShell() {
 
     window.addEventListener('pls:action', handler)
     return () => window.removeEventListener('pls:action', handler)
-  }, [navigate, workspaces, activeWorkspaceId, openDatasetFilePicker, openRScriptFilePicker, currentScreen, location.pathname, requestQuit, openModelInCanvas, openWorkspaceFromFilePath, currentCanvasModelId])
+  }, [navigate, workspaces, activeWorkspaceId, openDatasetFilePicker, openRScriptFilePicker, currentScreen, location.pathname, requestQuit, openModelInCanvas, openWorkspaceFromFilePath, currentCanvasModelId, openPreferences])
 
   useEffect(() => {
     const unsubscribe = (window as any).electronAPI?.onNativeMenuAction?.((action: string) => {
@@ -1444,7 +1481,7 @@ function AppShell() {
         />
       )}
 
-      {prefsOpen && <PreferencesModal initialTab={prefsInitialTab} onClose={() => setPrefsOpen(false)} />}
+      {prefsOpen && <PreferencesModal initialTab={prefsInitialTab} onClose={closePreferences} />}
 
       {tarkOpen && (
         <TarkModal

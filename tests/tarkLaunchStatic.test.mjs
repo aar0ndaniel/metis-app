@@ -82,13 +82,13 @@ assert.doesNotMatch(tarkModal, /<SectionTitle>Readiness<\/SectionTitle>|<Section
 assert.doesNotMatch(tarkModal, /Open model|Preview report/, 'Tark modal should not show old footer actions.')
 assert.doesNotMatch(tarkModal, /function RequirementPill|REQUIRED_RESULTS/, 'Tark modal should not render the old readiness pills.')
 
-assert.match(resultsView, /import\s*\{\s*ResultChart\s*\}\s*from\s*'\.\.\/components\/ResultsCharts'/, 'ResultsView should use charts only for the approved results panels.')
+assert.match(resultsView, /import\s*\{\s*ResultChart(?:\s*,\s*buildChartSvgForPanel)?\s*\}\s*from\s*'\.\.\/components\/ResultsCharts'/, 'ResultsView should use charts only for the approved results panels.')
 assert.match(resultsView, /analysisMode === 'advanced'/, 'ResultsView should keep inline charts scoped to Advanced Analysis.')
 assert.match(resultsView, /PLSPREDICT_ERROR_HISTOGRAM_PANELS = \['plsem-mv-error-hist', 'plsem-lv-error-hist'\]/, 'ResultsView should keep the PLSpredict error histogram charts.')
 assert.match(resultsView, /isPlsPredictErrorHistogram\(selectedPanel\)/, 'ResultsView should keep histogram chart rendering scoped through the histogram helper.')
-assert.doesNotMatch(resultsView, /chartRegistry/, 'ResultsView should not import chart registry.')
+assert.match(resultsView, /DOWNLOADABLE_RESULT_CHART_PANELS/, 'ResultsView should expose export controls for the supported result charts.')
 assert.doesNotMatch(resultsView, /resultsChartPreferences/, 'ResultsView should not keep chart preference state.')
-assert.doesNotMatch(resultsView, /Show chart|Hide chart|buildChartSvgForPanel|shouldExportChart|supportsChart|getChartConfig/, 'ResultsView should not expose chart toggles or chart export.')
+assert.match(resultsView, /buildChartSvgForPanel[\s\S]*navigator\.clipboard[\s\S]*image\/svg\+xml/, 'ResultsView should expose copy and download actions for chart SVGs.')
 assert.doesNotMatch(preferences, /Include charts in report/, 'Preferences should not expose chart export settings for launch.')
 
 assert.match(whatsNewModal, /title: 'Tark reports'/, 'The 0.3.0 update carousel should introduce Tark before the action-led walkthrough.')

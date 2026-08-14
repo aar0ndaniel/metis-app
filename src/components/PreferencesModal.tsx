@@ -28,6 +28,7 @@ import {
   FolderOpen,
 } from '@phosphor-icons/react'
 import { APP_BASE_RELEASE_LABEL, APP_BRAND_NAME, APP_EDITION } from '../config/appBranding'
+import { translateUiText } from '../i18n/uiLanguage'
 import {
   ACCENT_OPTIONS,
   DEFAULT_DARK_ACCENT_COLOR,
@@ -190,6 +191,10 @@ function openMetisExternal(url: string) {
     return
   }
   window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+function getSavedHocTwoStageSetting(): 'Embedded' | 'Disjoint two-stage' {
+  return String(getSavedSetting('hocTwoStage', 'Disjoint two-stage')) === 'Embedded' ? 'Embedded' : 'Disjoint two-stage'
 }
 
 // ─── Slightly-darker surface colour (replaces #1E1E28 everywhere) ─────────────
@@ -427,6 +432,42 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const [innerWeighting, setInnerWeighting]       = useState(getSavedSetting('innerWeighting', 'Path weighting scheme'))
   const [defaultSubsamples, setDefaultSubsamples] = useState(getSavedSetting('defaultSubsamples', 500))
   const [defaultSeed, setDefaultSeed]             = useState(getSavedSetting('defaultSeed', 'Auto'))
+  const [missingData, setMissingData]             = useState(getSavedSetting('missingData', 'Mean replacement'))
+  const [missingValue, setMissingValue]           = useState(getSavedSetting('missingValue', 'NA'))
+  const [assessSyntax, setAssessSyntax]           = useState(getSavedSetting('assessSyntax', false))
+  const [plsAlgorithm, setPlsAlgorithm]           = useState(getSavedSetting('plsAlgorithm', 'Standard PLS'))
+  const [hocMethod, setHocMethod]                 = useState(getSavedSetting('hocMethod', 'Two-stage'))
+  const [hocTwoStage, setHocTwoStage]             = useState(getSavedHocTwoStageSetting)
+  const [openAlgorithmCards, setOpenAlgorithmCards] = useState<Set<string>>(
+    () => new Set(['pls-sem']),
+  )
+  const [bootstrapConfidence, setBootstrapConfidence] = useState(getSavedSetting('bootstrapConfidence', '95%'))
+  const [bootstrapCiType, setBootstrapCiType]     = useState(getSavedSetting('bootstrapCiType', 'Percentile'))
+  const [bootstrapTails, setBootstrapTails]       = useState(getSavedSetting('bootstrapTails', 'Two-tailed'))
+  const [bootstrapResampling, setBootstrapResampling] = useState(getSavedSetting('bootstrapResampling', 'Individual'))
+  const [bootstrapSignChanges, setBootstrapSignChanges] = useState(getSavedSetting('bootstrapSignChanges', 'None'))
+  const [bootstrapMaxIterations, setBootstrapMaxIterations] = useState(getSavedSetting('bootstrapMaxIterations', 300))
+  const [bootstrapStopCriterion, setBootstrapStopCriterion] = useState(getSavedSetting('bootstrapStopCriterion', '1e-7'))
+  const [predictFolds, setPredictFolds]           = useState(getSavedSetting('predictFolds', 10))
+  const [predictRepetitions, setPredictRepetitions] = useState(getSavedSetting('predictRepetitions', 1))
+  const [predictTechnique, setPredictTechnique]   = useState(getSavedSetting('predictTechnique', 'Direct antecedents (DA)'))
+  const [predictAlgorithm, setPredictAlgorithm]   = useState(getSavedSetting('predictAlgorithm', 'Standard PLS'))
+  const [predictSeed, setPredictSeed]             = useState(getSavedSetting('predictSeed', 123))
+  const [cvpatEnabled, setCvpatEnabled]           = useState(getSavedSetting('cvpatEnabled', false))
+  const [ncaRunDepth, setNcaRunDepth]             = useState(getSavedSetting('ncaRunDepth', 500))
+  const [ncaStepSize, setNcaStepSize]             = useState(getSavedSetting('ncaStepSize', 'Auto'))
+  const [ncaPredecessorScope, setNcaPredecessorScope] = useState(getSavedSetting('ncaPredecessorScope', 'All predecessors'))
+  const [ipmaScaleRange, setIpmaScaleRange]       = useState(getSavedSetting('ipmaScaleRange', '1–7'))
+  const [ncaCeilingMethods, setNcaCeilingMethods] = useState(getSavedSetting('ncaCeilingMethods', 'CE-FDH + CR-FDH'))
+  const [advancedRandomSeed, setAdvancedRandomSeed] = useState(getSavedSetting('advancedRandomSeed', '123'))
+  const [micomPermutations, setMicomPermutations] = useState(getSavedSetting('micomPermutations', 5000))
+  const [micomSeed, setMicomSeed]                 = useState(getSavedSetting('micomSeed', 'Auto'))
+  const [micomSignificance, setMicomSignificance] = useState(getSavedSetting('micomSignificance', '0.05'))
+  const [mgaBootstrapSamples, setMgaBootstrapSamples] = useState(getSavedSetting('mgaBootstrapSamples', 500))
+  const [mgaSeed, setMgaSeed]                     = useState(getSavedSetting('mgaSeed', 'Auto'))
+  const [mgaSignificance, setMgaSignificance]     = useState(getSavedSetting('mgaSignificance', '0.05'))
+  const [moderationBootstrapSamples, setModerationBootstrapSamples] = useState(getSavedSetting('moderationBootstrapSamples', 500))
+  const [moderationModelComparison, setModerationModelComparison] = useState(getSavedSetting('moderationModelComparison', 'Joint model'))
 
   // Export
   const [exportFormat, setExportFormat]   = useState('HTML (.html)') // Locked
@@ -472,6 +513,39 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     innerWeighting: getSavedSetting('innerWeighting', 'Path weighting scheme'),
     defaultSubsamples: getSavedSetting('defaultSubsamples', 500),
     defaultSeed: getSavedSetting('defaultSeed', 'Auto'),
+    missingData: getSavedSetting('missingData', 'Mean replacement'),
+    missingValue: getSavedSetting('missingValue', 'NA'),
+    assessSyntax: getSavedSetting('assessSyntax', false),
+    plsAlgorithm: getSavedSetting('plsAlgorithm', 'Standard PLS'),
+    hocMethod: getSavedSetting('hocMethod', 'Two-stage'),
+    hocTwoStage: getSavedHocTwoStageSetting(),
+    bootstrapConfidence: getSavedSetting('bootstrapConfidence', '95%'),
+    bootstrapCiType: getSavedSetting('bootstrapCiType', 'Percentile'),
+    bootstrapTails: getSavedSetting('bootstrapTails', 'Two-tailed'),
+    bootstrapResampling: getSavedSetting('bootstrapResampling', 'Individual'),
+    bootstrapSignChanges: getSavedSetting('bootstrapSignChanges', 'None'),
+    bootstrapMaxIterations: getSavedSetting('bootstrapMaxIterations', 300),
+    bootstrapStopCriterion: getSavedSetting('bootstrapStopCriterion', '1e-7'),
+    predictFolds: getSavedSetting('predictFolds', 10),
+    predictRepetitions: getSavedSetting('predictRepetitions', 1),
+    predictTechnique: getSavedSetting('predictTechnique', 'Direct antecedents (DA)'),
+    predictAlgorithm: getSavedSetting('predictAlgorithm', 'Standard PLS'),
+    predictSeed: getSavedSetting('predictSeed', 123),
+    cvpatEnabled: getSavedSetting('cvpatEnabled', false),
+    ncaRunDepth: getSavedSetting('ncaRunDepth', 500),
+    ncaStepSize: getSavedSetting('ncaStepSize', 'Auto'),
+    ncaPredecessorScope: getSavedSetting('ncaPredecessorScope', 'All predecessors'),
+    ipmaScaleRange: getSavedSetting('ipmaScaleRange', '1–7'),
+    ncaCeilingMethods: getSavedSetting('ncaCeilingMethods', 'CE-FDH + CR-FDH'),
+    advancedRandomSeed: getSavedSetting('advancedRandomSeed', '123'),
+    micomPermutations: getSavedSetting('micomPermutations', 5000),
+    micomSeed: getSavedSetting('micomSeed', 'Auto'),
+    micomSignificance: getSavedSetting('micomSignificance', '0.05'),
+    mgaBootstrapSamples: getSavedSetting('mgaBootstrapSamples', 500),
+    mgaSeed: getSavedSetting('mgaSeed', 'Auto'),
+    mgaSignificance: getSavedSetting('mgaSignificance', '0.05'),
+    moderationBootstrapSamples: getSavedSetting('moderationBootstrapSamples', 500),
+    moderationModelComparison: getSavedSetting('moderationModelComparison', 'Joint model'),
     exportFormat: 'HTML (.html)',
     decimalPlaces: getSavedSetting('decimalPlaces', 3),
   }))
@@ -495,6 +569,39 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     innerWeighting,
     defaultSubsamples,
     defaultSeed,
+    missingData,
+    missingValue,
+    assessSyntax,
+    plsAlgorithm,
+    hocMethod,
+    hocTwoStage,
+    bootstrapConfidence,
+    bootstrapCiType,
+    bootstrapTails,
+    bootstrapResampling,
+    bootstrapSignChanges,
+    bootstrapMaxIterations,
+    bootstrapStopCriterion,
+    predictFolds,
+    predictRepetitions,
+    predictTechnique,
+    predictAlgorithm,
+    predictSeed,
+    cvpatEnabled,
+    ncaRunDepth,
+    ncaStepSize,
+    ncaPredecessorScope,
+    ipmaScaleRange,
+    ncaCeilingMethods,
+    advancedRandomSeed,
+    micomPermutations,
+    micomSeed,
+    micomSignificance,
+    mgaBootstrapSamples,
+    mgaSeed,
+    mgaSignificance,
+    moderationBootstrapSamples,
+    moderationModelComparison,
     exportFormat,
     decimalPlaces,
   })
@@ -551,6 +658,39 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     localStorage.setItem('pls:prefs:innerWeighting', innerWeighting)
     localStorage.setItem('pls:prefs:defaultSubsamples', String(defaultSubsamples))
     localStorage.setItem('pls:prefs:defaultSeed', defaultSeed)
+    localStorage.setItem('pls:prefs:missingData', missingData)
+    localStorage.setItem('pls:prefs:missingValue', missingValue)
+    localStorage.setItem('pls:prefs:assessSyntax', String(assessSyntax))
+    localStorage.setItem('pls:prefs:plsAlgorithm', plsAlgorithm)
+    localStorage.setItem('pls:prefs:hocMethod', hocMethod)
+    localStorage.setItem('pls:prefs:hocTwoStage', hocTwoStage)
+    localStorage.setItem('pls:prefs:bootstrapConfidence', bootstrapConfidence)
+    localStorage.setItem('pls:prefs:bootstrapCiType', bootstrapCiType)
+    localStorage.setItem('pls:prefs:bootstrapTails', bootstrapTails)
+    localStorage.setItem('pls:prefs:bootstrapResampling', bootstrapResampling)
+    localStorage.setItem('pls:prefs:bootstrapSignChanges', bootstrapSignChanges)
+    localStorage.setItem('pls:prefs:bootstrapMaxIterations', String(bootstrapMaxIterations))
+    localStorage.setItem('pls:prefs:bootstrapStopCriterion', bootstrapStopCriterion)
+    localStorage.setItem('pls:prefs:predictFolds', String(predictFolds))
+    localStorage.setItem('pls:prefs:predictRepetitions', String(predictRepetitions))
+    localStorage.setItem('pls:prefs:predictTechnique', predictTechnique)
+    localStorage.setItem('pls:prefs:predictAlgorithm', predictAlgorithm)
+    localStorage.setItem('pls:prefs:predictSeed', String(predictSeed))
+    localStorage.setItem('pls:prefs:cvpatEnabled', String(cvpatEnabled))
+    localStorage.setItem('pls:prefs:ncaRunDepth', String(ncaRunDepth))
+    localStorage.setItem('pls:prefs:ncaStepSize', ncaStepSize)
+    localStorage.setItem('pls:prefs:ncaPredecessorScope', ncaPredecessorScope)
+    localStorage.setItem('pls:prefs:ipmaScaleRange', ipmaScaleRange)
+    localStorage.setItem('pls:prefs:ncaCeilingMethods', ncaCeilingMethods)
+    localStorage.setItem('pls:prefs:advancedRandomSeed', advancedRandomSeed)
+    localStorage.setItem('pls:prefs:micomPermutations', String(micomPermutations))
+    localStorage.setItem('pls:prefs:micomSeed', micomSeed)
+    localStorage.setItem('pls:prefs:micomSignificance', micomSignificance)
+    localStorage.setItem('pls:prefs:mgaBootstrapSamples', String(mgaBootstrapSamples))
+    localStorage.setItem('pls:prefs:mgaSeed', mgaSeed)
+    localStorage.setItem('pls:prefs:mgaSignificance', mgaSignificance)
+    localStorage.setItem('pls:prefs:moderationBootstrapSamples', String(moderationBootstrapSamples))
+    localStorage.setItem('pls:prefs:moderationModelComparison', moderationModelComparison)
     localStorage.setItem('pls:prefs:exportFormat', exportFormat)
     localStorage.setItem('pls:prefs:decimalPlaces', String(decimalPlaces))
     await persistStoragePaths()
@@ -753,11 +893,11 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
 
   const labelBlock = (label: string, description: string, labelWeight: React.CSSProperties['fontWeight'] = 500) => (
     <div className="flex flex-col" style={{ gap: 4, flex: 1, minWidth: 0 }}>
-      <span style={{ color: preferenceColors.text, fontFamily: 'DM Sans, sans-serif', fontSize: 18, fontWeight: labelWeight, lineHeight: '23px' }}>
-        {label}
+      <span style={{ color: preferenceColors.text, fontFamily: 'DM Sans, sans-serif', fontSize: 18, fontWeight: labelWeight, lineHeight: '23px', overflowWrap: 'anywhere' }}>
+        {translateUiText(label, language)}
       </span>
-      <span style={{ color: preferenceColors.description, fontFamily: 'DM Sans, sans-serif', fontSize: 16, fontWeight: 400, lineHeight: '21px' }}>
-        {description}
+      <span style={{ color: preferenceColors.description, fontFamily: 'DM Sans, sans-serif', fontSize: 16, fontWeight: 400, lineHeight: '21px', overflowWrap: 'anywhere' }}>
+        {translateUiText(description, language)}
       </span>
     </div>
   )
@@ -766,6 +906,12 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     <div className="flex flex-col" style={{ padding: '20px 24px', gap: 6, width: '100%' }}>
       <span style={{ color: preferenceColors.text, fontSize: 20, fontWeight: titleWeight, lineHeight: '26px' }}>{title}</span>
       <span style={{ color: preferenceColors.description, fontSize: 17, fontWeight: 400, lineHeight: '22px' }}>{description}</span>
+    </div>
+  )
+
+  const algorithmCardHeader = (title: string, titleWeight: React.CSSProperties['fontWeight'] = 500) => (
+    <div className="flex flex-col" style={{ padding: '20px 24px', gap: 6, width: '100%', background: 'transparent', border: 'none' }}>
+      <span style={{ color: preferenceColors.text, fontSize: 20, fontWeight: titleWeight, lineHeight: '26px' }}>{title}</span>
     </div>
   )
 
@@ -801,9 +947,9 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   )
 
   const settingRow = (label: string, description: string, control: React.ReactNode, controlWidth: number, height = 78, labelWeight: React.CSSProperties['fontWeight'] = 500) => (
-    <div className="flex items-center" style={{ height, padding: '0 24px', gap: 18, width: '100%' }}>
+    <div className="flex items-center" style={{ height: 'auto', minHeight: height, padding: '14px 24px', gap: 18, width: '100%' }}>
       {labelBlock(label, description, labelWeight)}
-      <div className="flex items-center justify-center" style={{ width: 'max-content', minWidth: controlWidth, gap: 10, flexShrink: 0 }}>
+      <div className="flex items-center justify-end" style={{ width: 'max-content', minWidth: controlWidth, maxWidth: '52%', gap: 10, flexShrink: 1, justifyContent: 'flex-end' }}>
         {control}
       </div>
     </div>
@@ -871,16 +1017,17 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   }
 
   const segmentedControl = (
-    options: readonly { label: string; value: string; width: number; fontWeight?: React.CSSProperties['fontWeight'] }[],
+    options: readonly { label: string; value: string; width: number; fontWeight?: React.CSSProperties['fontWeight']; disabled?: boolean }[],
     selectedValue: string,
     onSelect: (value: string) => void,
     minWidth?: number,
     height = 44,
     padding = 4,
+    fillAvailable = false,
   ) => (
     <div
       className="flex items-center"
-      style={{ width: 'max-content', minWidth, height, borderRadius: 14, background: preferenceColors.segment, border: `1px solid ${preferenceColors.border}`, padding, gap: 4 }}
+      style={{ width: fillAvailable ? '100%' : 'max-content', minWidth, height, borderRadius: 14, background: preferenceColors.segment, border: `1px solid ${preferenceColors.border}`, padding, gap: 4, flexWrap: 'nowrap' }}
     >
       {options.map((option) => {
         const selected = selectedValue === option.value
@@ -888,25 +1035,30 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           <button
             key={option.value}
             type="button"
-            onClick={() => onSelect(option.value)}
+            onClick={() => {
+              if (!option.disabled) onSelect(option.value)
+            }}
             className="flex items-center justify-center"
             style={{
               ...controlButtonBase,
-              width: 'max-content',
+              width: fillAvailable ? 'auto' : 'max-content',
               minWidth: option.width,
               height: height - (padding * 2),
               padding: '0 16px',
               borderRadius: 10,
               background: selected ? selectedPillBackground : preferenceColors.segment,
               color: selected ? selectedPillText : preferenceColors.muted,
+              opacity: option.disabled ? 0.38 : 1,
+              cursor: option.disabled ? 'not-allowed' : 'pointer',
               fontSize: 16,
-              fontWeight: selected ? 500 : option.fontWeight ?? 500,
+              fontWeight: 400,
               whiteSpace: 'nowrap',
               flexShrink: 0,
+              flex: fillAvailable ? 1 : undefined,
               transition: 'background 180ms ease-in-out, color 180ms ease-in-out, transform 180ms ease-in-out',
             }}
           >
-            {option.label}
+            {translateUiText(option.label, language)}
           </button>
         )
       })}
@@ -944,7 +1096,9 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
         }}
         style={{
           position: 'relative',
-          width,
+          width: 'max-content',
+          minWidth: width,
+          maxWidth: '100%',
           height: 42,
           borderRadius: 12,
           background,
@@ -953,11 +1107,11 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           gap: 10,
           flexShrink: 0,
           cursor: hasMenu ? 'pointer' : 'default',
-          zIndex: isOpen ? 30 : 1,
+          zIndex: isOpen ? 100 : 1,
         }}
       >
-        <span style={{ color: preferenceColors.text, fontSize: 17, fontWeight: locked ? 400 : 800, lineHeight: '22px', whiteSpace: 'nowrap' }}>
-          {value}
+          <span style={{ color: preferenceColors.text, fontSize: 17, fontWeight: 400, lineHeight: '22px', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+          {translateUiText(value, language)}
         </span>
         <span style={{ flex: 1, minWidth: 1 }} />
         {locked && <LockIcon size={18} color={preferenceColors.muted} />}
@@ -978,7 +1132,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
               display: 'flex',
               flexDirection: 'column',
               gap: 3,
-              zIndex: 60,
+              zIndex: 110,
             }}
           >
             {options.map((option) => {
@@ -1006,7 +1160,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
                     transition: 'background 140ms ease-in-out, color 140ms ease-in-out',
                   }}
                 >
-                  <span>{option}</span>
+                  <span style={{ whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'left' }}>{translateUiText(option, language)}</span>
                   {selected && <Check size={13} color={preferenceColors.text} />}
                 </button>
               )
@@ -1428,9 +1582,50 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     </>
   )
 
-  const renderAlgorithmCard = (includeLanguage = true) => (
-    <div className="flex flex-col" style={{ width: 990, background: preferenceColors.card, border: `1px solid ${preferenceColors.border}`, borderRadius: 18 }}>
-      {cardHeaderBlock('PLS-SEM Algorithm', 'These defaults are applied when estimating a new model.')}
+  const staticValue = (value: string, width = 220) => (
+    <div
+      className="flex items-center justify-end"
+      style={{ width, minHeight: 42, borderRadius: 12, background: preferenceColors.fieldAlt, border: `1px solid ${preferenceColors.border}`, padding: '0 14px', flexShrink: 0 }}
+    >
+      <span style={{ color: preferenceColors.muted, fontSize: 17, fontWeight: 500, lineHeight: '22px', whiteSpace: 'nowrap' }}>{value}</span>
+    </div>
+  )
+
+  const toggleAlgorithmCard = (id: string) => {
+    setOpenAlgorithmCards((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const algorithmCard = (id: string, title: string, children: React.ReactNode) => {
+    const expanded = openAlgorithmCards.has(id)
+    return (
+    <div
+      className="flex flex-col"
+      style={{ width: 990, background: 'transparent', border: 'none', borderRadius: 0, overflow: 'visible' }}
+    >
+      <button
+        type="button"
+        aria-expanded={expanded}
+          onClick={() => toggleAlgorithmCard(id)}
+        className="flex items-center justify-between"
+        style={{ ...controlButtonBase, width: '100%', padding: '20px 24px', background: 'transparent', color: preferenceColors.text, textAlign: 'left' }}
+      >
+          <span style={{ color: preferenceColors.text, fontSize: 20, fontWeight: 500, lineHeight: '26px', overflowWrap: 'anywhere' }}>{translateUiText(title, language)}</span>
+        <CaretDown size={18} color={preferenceColors.muted} style={{ transform: expanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 180ms ease-in-out' }} />
+      </button>
+      {expanded && <div className="flex flex-col" style={{ width: '100%', background: preferenceColors.card, border: `1px solid ${preferenceColors.border}`, borderRadius: 18, overflow: 'visible' }}>{children}</div>}
+    </div>
+    )
+  }
+
+  const renderAlgorithmCard = () => algorithmCard(
+    'pls-sem',
+    'PLS-SEM Algorithm Defaults',
+    <>
       {rowDivider()}
       {settingRow(
         'Inner weighting scheme',
@@ -1449,7 +1644,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       {rowDivider()}
       {settingRow(
         'Initial outer weights',
-        'Starting weights used before the iterative algorithm converges.',
+        'Starting weights used before iterative estimation.',
         segmentedControl(
           [
             { label: '1 (uniform)', value: '1 (uniform)', width: 120 },
@@ -1466,28 +1661,173 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       {settingRow('Max iterations', 'Upper limit for the iterative estimation loop.', stepperControl(maxIterations, setMaxIterations, 50, 10000), 310)}
       {rowDivider()}
       {settingRow('Stop criterion', 'Convergence threshold used to finish estimation.', selectShell(stopCriterion, 160, ['1e-5', '1e-6', '1e-7', '1e-8', '1e-10'], setStopCriterion, true, false, preferenceColors.field, 'stop-criterion'), 190)}
-      {includeLanguage && settingRow('Language', 'Interface language used across Metis.', selectShell(language, 180, [...LANGUAGE_OPTIONS], (value) => setLanguage(normalizeLanguagePreference(value)), true, false, preferenceColors.field, 'algorithm-language'), 220)}
-    </div>
+      {rowDivider()}
+      {settingRow('Missing data', 'Treatment applied before model estimation.', selectShell(missingData, 220, ['Mean replacement', 'Listwise deletion', 'Median replacement'], setMissingData, true, false, preferenceColors.field, 'missing-data'), 220)}
+      {rowDivider()}
+      {settingRow('Missing value sentinel', 'Value SEMinR treats as missing before the selected replacement strategy.', selectShell(missingValue, 160, ['NA'], setMissingValue, true, false, preferenceColors.field, 'missing-value'), 210)}
+      {rowDivider()}
+      {settingRow('Assess model syntax', 'Ask SEMinR to validate the model specification during estimation.', selectShell(assessSyntax ? 'On' : 'Off', 160, ['Off', 'On'], (value) => setAssessSyntax(value === 'On'), true, false, preferenceColors.field, 'assess-syntax'), 190)}
+      {rowDivider()}
+      {settingRow('PLS Algorithm', 'Reflective-consistent or standard composite model.', selectShell(plsAlgorithm, 220, ['Standard PLS', 'Consistent PLS (PLSc)'], setPlsAlgorithm, true, false, preferenceColors.field, 'pls-algorithm'), 220)}
+    </>,
   )
 
-  const renderBootstrapCard = () => (
-    <div className="flex flex-col" style={{ width: 990, background: preferenceColors.card, border: `1px solid ${preferenceColors.border}`, borderRadius: 18, overflow: 'visible' }}>
-      {cardHeaderBlock('Bootstrap Defaults', 'Starting values for resampling workflows and reproducible results.')}
+  const renderHigherOrderCard = () => algorithmCard(
+    'higher-order',
+    'Higher-order Defaults',
+    <>
+      {settingRow(
+        'Higher-order method',
+        'Select how higher-order constructs are estimated.',
+        segmentedControl(
+          [
+            { label: 'Repeated indicators', value: 'Repeated indicators', width: 190 },
+            { label: 'Two-stage', value: 'Two-stage', width: 120 },
+          ],
+          hocMethod,
+          (value) => {
+            setHocMethod(value)
+          },
+          395,
+          44,
+          4,
+          true,
+        ),
+        395,
+      )}
+      {rowDivider()}
+      {settingRow(
+        'Two-stage approach',
+        'Choose how stage 1 is specified.',
+        segmentedControl(
+          [
+            { label: 'Embedded', value: 'Embedded', width: 120, disabled: hocMethod !== 'Two-stage' },
+            { label: 'Disjoint', value: 'Disjoint two-stage', width: 120, disabled: hocMethod !== 'Two-stage' },
+          ],
+          hocTwoStage,
+          (value) => setHocTwoStage(value === 'Disjoint two-stage' ? 'Disjoint two-stage' : 'Embedded'),
+          259,
+        ),
+        380,
+      )}
+    </>,
+  )
+
+  const renderBootstrapCard = () => algorithmCard(
+    'bootstrap',
+    'Bootstrap Defaults',
+    <>
       {rowDivider()}
       {settingRow('Default subsamples', 'Number of bootstrap samples used for new analyses.', stepperControl(defaultSubsamples, setDefaultSubsamples, 100, 10000, 100), 210)}
       {rowDivider()}
-      {settingRow('Default random seed', 'Use Auto for convenience or set a fixed seed when needed.', selectShell(defaultSeed, 160, ['Auto'], setDefaultSeed, true, false, preferenceColors.field, 'default-seed', 'up'), 190)}
-    </div>
+      {settingRow('Default random seed', 'Use Auto for convenience or set a fixed seed when needed.', selectShell(defaultSeed, 160, ['Auto', '123', '42', '2024'], setDefaultSeed, true, false, preferenceColors.field, 'default-seed', 'up'), 190)}
+      {rowDivider()}
+      {settingRow('Confidence level', 'Confidence level for bootstrap intervals.', segmentedControl([{ label: '90%', value: '90%', width: 78 }, { label: '95%', value: '95%', width: 78 }, { label: '99%', value: '99%', width: 78 }], bootstrapConfidence, setBootstrapConfidence, 260), 270)}
+      {rowDivider()}
+      {settingRow('CI type', 'Interval method reported for bootstrap results.', selectShell(bootstrapCiType, 160, ['Percentile', 'Basic', 'BCa'], setBootstrapCiType, true, false, preferenceColors.field, 'bootstrap-ci-type'), 190)}
+      {rowDivider()}
+      {settingRow('Tails', 'Tail selection for significance testing.', segmentedControl([{ label: 'Two-tailed', value: 'Two-tailed', width: 120 }, { label: 'One-tailed', value: 'One-tailed', width: 120 }], bootstrapTails, setBootstrapTails, 260), 270)}
+      {rowDivider()}
+      {settingRow('Resampling', 'Bootstrap resampling scope for inference.', selectShell(bootstrapResampling, 220, ['Individual', 'Case-wise'], setBootstrapResampling, true, false, preferenceColors.field, 'bootstrap-resampling'), 220)}
+      {rowDivider()}
+      {settingRow('Sign-change handling', 'Sign-change correction applied during bootstrap.', selectShell(bootstrapSignChanges, 220, ['None', 'Construct-level', 'Indicator-level'], setBootstrapSignChanges, true, false, preferenceColors.field, 'bootstrap-sign-changes'), 220)}
+      {rowDivider()}
+      {settingRow('Max iterations', 'Iteration limit used by the estimation routine.', stepperControl(bootstrapMaxIterations, setBootstrapMaxIterations, 50, 10000), 310, 78, 500)}
+      {rowDivider()}
+      {settingRow('Stop criterion', 'Convergence threshold used by the estimation routine.', selectShell(bootstrapStopCriterion, 160, ['1e-5', '1e-6', '1e-7', '1e-8', '1e-10'], setBootstrapStopCriterion, true, false, preferenceColors.field, 'bootstrap-stop-criterion'), 190)}
+    </>,
+  )
+
+  const renderPredictCard = () => algorithmCard(
+    'pls-predict',
+    'PLS Predict Defaults',
+    <>
+      {rowDivider()}
+      {settingRow('Number of folds', 'Cross-validation folds used for new predictions.', stepperControl(predictFolds, setPredictFolds, 2, 20), 210)}
+      {rowDivider()}
+      {settingRow('Repetitions', 'Number of repeated cross-validation runs.', stepperControl(predictRepetitions, setPredictRepetitions, 1, 50), 260)}
+      {rowDivider()}
+      {settingRow('Prediction technique', 'SEMinR technique used for out-of-sample prediction.', selectShell(predictTechnique, 260, ['Direct antecedents (DA)', 'Entire antecedents (EA)'], setPredictTechnique, true, false, preferenceColors.field, 'predict-technique'), 280, 78, 500)}
+      {rowDivider()}
+      {settingRow('PLS algorithm', 'Algorithm used to estimate the prediction model.', selectShell(predictAlgorithm, 220, ['Standard PLS', 'Consistent PLS (PLSc)'], setPredictAlgorithm, true, false, preferenceColors.field, 'predict-algorithm'), 240, 78, 500)}
+      {rowDivider()}
+      {settingRow('Prediction seed', 'Fixed seed used to reproduce SEMinR fold assignment and predictions.', stepperControl(predictSeed, setPredictSeed, 1, 2147483647), 260, 78, 500)}
+      {rowDivider()}
+      {settingRow('CVPAT', 'Cross-validated predictive ability assessment.', selectShell(cvpatEnabled ? 'On' : 'Off', 160, ['Off', 'On'], (value) => setCvpatEnabled(value === 'On'), true, false, preferenceColors.field, 'cvpat'), 190, 78, 500)}
+      {rowDivider()}
+      {settingRow('Validation plan', 'Configured folds and repeated cross-validation runs.', staticValue(`${predictFolds} folds × ${predictRepetitions} repetition${predictRepetitions === 1 ? '' : 's'}`, 220), 260, 78, 500)}
+    </>,
+  )
+
+  const renderNcaIpmaCard = () => algorithmCard(
+    'nca-ipma',
+    'NCA and IPMA Defaults',
+    <>
+      {settingRow('NCA run depth', 'Number of bottleneck depths to evaluate.', stepperControl(ncaRunDepth, setNcaRunDepth, 100, 5000, 100), 210)}
+      {rowDivider()}
+      {settingRow('Bottleneck step size', 'Increment used between bottleneck levels.', selectShell(ncaStepSize, 160, ['Auto', '1', '5', '10'], setNcaStepSize, true, false, preferenceColors.field, 'nca-step-size'), 190)}
+      {rowDivider()}
+      {settingRow('Predecessor scope', 'Predictors included in NCA and IPMA.', selectShell(ncaPredecessorScope, 210, ['All predecessors', 'Selected predictors'], setNcaPredecessorScope, true, false, preferenceColors.field, 'nca-predecessor-scope'), 240)}
+      {rowDivider()}
+      {settingRow('IPMA scale range', 'User-defined measurement scale minimum and maximum for 0–100 rescaling.', selectShell(ipmaScaleRange, 150, ['1–5', '1–7', '1–10'], setIpmaScaleRange, true, false, preferenceColors.field, 'ipma-scale-range'), 190)}
+      {rowDivider()}
+      {settingRow('NCA ceiling methods', 'Select the ceiling techniques used for necessity analysis.', selectShell(ncaCeilingMethods, 250, ['CE-FDH + CR-FDH', 'CE-FDH', 'CR-FDH'], setNcaCeilingMethods, true, false, preferenceColors.field, 'nca-ceiling-methods'), 250)}
+      {rowDivider()}
+      {settingRow('Random seed', 'User-defined seed for reproducible IPMA and NCA results.', selectShell(advancedRandomSeed, 160, ['123', '42', '2024', 'Auto'], setAdvancedRandomSeed, true, false, preferenceColors.field, 'advanced-analysis-seed'), 190)}
+    </>,
+  )
+
+  const renderMicomCard = () => algorithmCard(
+    'micom',
+    'Permutation Analysis (MICOM) Defaults',
+    <>
+      {rowDivider()}
+      {settingRow('Permutations', 'Number of permutations used for MICOM.', stepperControl(micomPermutations, setMicomPermutations, 1000, 20000, 500), 210)}
+      {rowDivider()}
+      {settingRow('Default random seed', 'Use Auto for convenience or set a fixed seed when needed.', selectShell(micomSeed, 160, ['Auto', '123', '42', '2024'], setMicomSeed, true, false, preferenceColors.field, 'micom-seed'), 190)}
+      {rowDivider()}
+      {settingRow('Significance level', 'Alpha threshold for invariance decisions.', selectShell(micomSignificance, 160, ['0.01', '0.05', '0.10'], setMicomSignificance, true, false, preferenceColors.field, 'micom-significance'), 190)}
+    </>,
+  )
+
+  const renderMgaCard = () => algorithmCard(
+    'mga',
+    'Multi Group Analysis (MGA) Defaults',
+    <>
+      {rowDivider()}
+      {settingRow('Bootstrap samples', 'Bootstrap samples for group estimates.', stepperControl(mgaBootstrapSamples, setMgaBootstrapSamples, 100, 10000, 100), 210)}
+      {rowDivider()}
+      {settingRow('Default random seed', 'Use Auto for convenience or set a fixed seed when needed.', selectShell(mgaSeed, 160, ['Auto', '123', '42', '2024'], setMgaSeed, true, false, preferenceColors.field, 'mga-seed'), 190)}
+      {rowDivider()}
+      {settingRow('Significance level', 'Alpha threshold for group comparisons.', selectShell(mgaSignificance, 160, ['0.01', '0.05', '0.10'], setMgaSignificance, true, false, preferenceColors.field, 'mga-significance'), 190)}
+    </>,
+  )
+
+  const renderModerationCard = () => algorithmCard(
+    'moderation',
+    'Moderation Defaults',
+    <>
+      {rowDivider()}
+      {settingRow('Bootstrap samples', 'Samples used for moderation inference.', stepperControl(moderationBootstrapSamples, setModerationBootstrapSamples, 100, 10000, 100), 210)}
+      {rowDivider()}
+      {settingRow('Moderation model comparison', 'Evaluate all interactions together or one at a time.', segmentedControl([{ label: 'Joint model', value: 'Joint model', width: 120 }, { label: 'Isolated', value: 'Isolated', width: 100 }], moderationModelComparison, setModerationModelComparison, 260, 44, 4, true), 270)}
+    </>,
   )
 
   const renderAlgorithmPage = () => (
     <>
       <h1 style={{ margin: 0, color: preferenceColors.text, fontFamily: 'DM Sans, sans-serif', fontSize: 32, fontWeight: 800, lineHeight: '42px' }}>
-        Algorithm Defaults
+        {translateUiText('Algorithm Defaults', language)}
       </h1>
       <div className="flex flex-col" style={{ width: 1010, background: preferenceColors.panel, borderRadius: 22, padding: 10, gap: 10, overflow: 'visible' }}>
         {renderAlgorithmCard()}
+        {renderHigherOrderCard()}
         {renderBootstrapCard()}
+        {renderPredictCard()}
+        {renderNcaIpmaCard()}
+        {renderMicomCard()}
+        {renderMgaCard()}
+        {renderModerationCard()}
       </div>
     </>
   )
@@ -1765,18 +2105,18 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           >
             <div style={{ height: 78, borderBottom: `1px solid ${preferenceColors.border}`, background: preferenceColors.topbar, flexShrink: 0 }} />
             <div
-              className={`flex ${activePreferenceTab === 'updates' ? 'metis-preferences-scroll' : ''}`}
+              className={`flex ${activePreferenceTab === 'updates' || activePreferenceTab === 'algorithm' ? 'metis-preferences-scroll' : ''}`}
               style={{
                 flex: 1,
                 minHeight: 0,
                 padding: '84px 0 0 0',
                 background: preferenceColors.main,
-                overflowY: activePreferenceTab === 'updates' ? 'auto' : 'hidden',
+                overflowY: activePreferenceTab === 'updates' || activePreferenceTab === 'algorithm' ? 'auto' : 'hidden',
                 overflowX: 'hidden',
               }}
             >
               <div style={{ width: 210, flexShrink: 0 }} />
-              <section className="flex flex-col" style={{ width: 1010, gap: 28, flexShrink: 0, paddingBottom: activePreferenceTab === 'updates' ? 84 : 0 }}>
+              <section className="flex flex-col" style={{ width: 1010, gap: 28, flexShrink: 0, paddingBottom: activePreferenceTab === 'updates' || activePreferenceTab === 'algorithm' ? 84 : 0 }}>
                 {renderFullPreferenceContent(activePreferenceTab)}
               </section>
               <div style={{ width: 250, flex: 1, minWidth: 0 }} />

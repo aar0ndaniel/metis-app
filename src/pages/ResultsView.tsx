@@ -68,7 +68,7 @@ import PermutationAnalysisModal, {
   type PermutationConfiguralStatus,
 } from '../components/PermutationAnalysisModal'
 import MultiGroupAnalysisModal, { type MultiGroupAnalysisSettings } from '../components/MultiGroupAnalysisModal'
-import { ResultChart } from '../components/ResultsCharts'
+import { ResultChart, buildChartSvgForPanel } from '../components/ResultsCharts'
 import { APP_BRAND_NAME } from '../config/appBranding'
 import { stripModelDisplayName } from '../utils/displayNames'
 import { buildAnalysisGraphSignature } from '../utils/analysisGraphSignature'
@@ -77,6 +77,7 @@ import {
   resolveMicomOverviewForMgaCache,
   attachMicomOverviewToMgaResults,
   putMicomCacheInWorkspaceList,
+  MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW,
   type MicomCacheEntry,
 } from '../utils/micomCache'
 import { getPanelSectionsForMode, type AnalysisMode, type PanelIconKey } from '../results/panelCatalog'
@@ -129,6 +130,8 @@ import {
 } from '../utils/plsPredictSettings'
 import { formatUserFriendlyAnalysisError } from '../utils/userFriendlyErrors'
 import { buildPlsModelPayloadParts, type HocPathRole } from '../utils/plsModelPayload'
+import { MICOM_HOC_UNAVAILABLE_MESSAGE, containsHigherOrderConstruct } from '../utils/micomAvailability'
+import { normalizeHocSettings, readBaseHocSettingsFromAnalysisResults } from '../utils/hocSettings'
 import { useCalculationDispatch, useIsCalculating, type CalcPhase } from '../state/calculationContext'
 
 // ─── Display mode option lists (from Pencil ui.pen spec) ─────────────────────
@@ -192,6 +195,7 @@ interface ReliabilityRow {
 interface HOCResultRow {
   hoc_construct: string
   loc_construct: string
+  indicator: string
   hoc_type: string
   loc_type: string
   loading: number | null
@@ -262,6 +266,7 @@ const SIDEBAR_ICON_MAP: Record<PanelIconKey, ElementType> = {
   'check-circle': CheckCircle,
   info: Info,
   folders: Folders,
+  settings: SlidersHorizontal,
 }
 
 const PANEL_ICON_OVERRIDES: Record<string, ElementType> = {
@@ -323,7 +328,7 @@ const PANEL_ICON_OVERRIDES: Record<string, ElementType> = {
   'mga-outer-weights': Gauge,
 }
 
-type MgaComparisonMethod = 'biasCorrectedConfidenceIntervals' | 'henselerPlsMga' | 'parametricTest'
+type MgaComparisonMethod = 'biasCorrectedConfidenceIntervals' | 'henselerPlsMga' | 'parametricTest' | 'welchTest'
 
 interface MgaGroupLabels {
   groupA: string
@@ -1852,7 +1857,7 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
-const EXPORT_DIAGRAM_TEXT_COLOR = '#1A1F2B'
+const EXPORT_DIAGRAM_TEXT_COLOR = '#000000'
 const EXPORT_DIAGRAM_MUTED_COLOR = '#5F6978'
 const EXPORT_DIAGRAM_BORDER_COLOR = '#D7DDE6'
 const EXPORT_DIAGRAM_SURFACE_COLOR = '#FFFFFF'
@@ -2060,7 +2065,7 @@ function buildPathDiagramSvg(
     const path1 = `M${startX},${startY} L${seg1X},${seg1Y}`
     const path2 = `M${seg2X},${seg2Y} L${ix},${iy}`
     const val = measurementMap[`${c.name}::${ind.name}`]?.loading
-    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="9" fill="${exportAccent.color}">${(val as number).toFixed(getDecimals())}</text>` : ''
+    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="14" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(val as number).toFixed(getDecimals())}</text>` : ''
     return `<g><path d="${path1}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none"></path><path d="${path2}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none" marker-end="url(#exp-arr-measure)"></path>${txt}</g>`
   }).join('')
 
@@ -2096,7 +2101,7 @@ function buildPathDiagramSvg(
       const interactionName = `${iv.name}*${moderator.name}`
       const pathVal = diagramResults.pathResults?.[`${interactionName}-${dv.name}`]?.coef
       const txt = Number.isFinite(pathVal as number)
-        ? `<text x="${split.x}" y="${split.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${exportAccent.color}">${(pathVal as number).toFixed(getDecimals())}</text>`
+        ? `<text x="${split.x}" y="${split.y}" text-anchor="middle" font-size="14" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(pathVal as number).toFixed(getDecimals())}</text>`
         : ''
       return `<g><path d="${split.path1}" stroke="${exportAccent.color}" stroke-width="1.8" stroke-dasharray="5 4" fill="none"></path><path d="${split.path2}" stroke="${exportAccent.color}" stroke-width="1.8" stroke-dasharray="5 4" fill="none" marker-end="url(#exp-arr-mod)"></path><circle cx="${targetMid.x}" cy="${targetMid.y}" r="3.4" fill="${exportAccent.color}"></circle>${txt}</g>`
     }
@@ -2106,7 +2111,7 @@ function buildPathDiagramSvg(
     if (!from || !to) return ''
     const [path1, path2, mid] = arrowPathSplit(from, to, 40, p.labelT)
     const pathVal = diagramResults.pathResults?.[`${from.name}-${to.name}`]?.coef
-    const txt = Number.isFinite(pathVal as number) ? `<text x="${mid.x}" y="${mid.y}" text-anchor="middle" font-size="11" font-weight="700" fill="${exportAccent.color}">${(pathVal as number).toFixed(getDecimals())}</text>` : ''
+    const txt = Number.isFinite(pathVal as number) ? `<text x="${mid.x}" y="${mid.y}" text-anchor="middle" font-size="14" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(pathVal as number).toFixed(getDecimals())}</text>` : ''
     return `<g><path d="${path1}" stroke="${exportAccent.color}" stroke-width="1.8" fill="none"></path><path d="${path2}" stroke="${exportAccent.color}" stroke-width="1.8" fill="none" marker-end="url(#exp-arr)"></path>${txt}</g>`
   }).join('')
 
@@ -2121,13 +2126,13 @@ function buildPathDiagramSvg(
         ? `<ellipse cx="${c.x}" cy="${c.y}" rx="${rx}" ry="${ry}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></ellipse>`
         : `<circle cx="${c.x}" cy="${c.y}" r="${c.radius}" fill="${exportAccent.color}" stroke="${exportAccent.color}" stroke-width="2"></circle>`
     const r2Text = hasIncoming && Number.isFinite(r2 as number)
-      ? `<text x="${c.x}" y="${c.y + 6}" text-anchor="middle" font-size="13" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(r2 as number).toFixed(getDecimals())}</text>`
+      ? `<text x="${c.x}" y="${c.y + 6}" text-anchor="middle" font-size="15" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(r2 as number).toFixed(getDecimals())}</text>`
       : ''
     return `
       <g>
         ${shapeSvg}
         ${r2Text}
-        <text x="${c.x}" y="${c.y + ry + 18}" text-anchor="middle" font-size="12" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(c.name)}</text>
+        <text x="${c.x}" y="${c.y + ry + 18}" text-anchor="middle" font-size="15" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${escapeHtml(c.name)}</text>
       </g>
     `
   }).join('')
@@ -2622,6 +2627,7 @@ function DiagramCanvas({
   structuralMode, measurementMode, constructMode,
   canvasConstructs, canvasPaths,
   results,
+  resultsReadable,
   onModelChange,
 }: {
   zoom: number
@@ -2635,6 +2641,7 @@ function DiagramCanvas({
   canvasConstructs?: CanvasConstruct[]
   canvasPaths?: CanvasPath[]
   results?: any
+  resultsReadable?: boolean
   onModelChange?: (next: { constructs: CanvasConstruct[]; paths: CanvasPath[] }) => void
 }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -3221,6 +3228,7 @@ function DiagramCanvas({
           measurementMode={measurementMode}
           constructMode={constructMode}
           results={results}
+          resultsReadable={resultsReadable}
           interactive
           selectedConstructIds={selectedConstructIds}
           selectedIndicatorKeys={selectedIndicatorKeys}
@@ -3540,10 +3548,7 @@ function HOCResultsTable({ rows }: { rows: HOCResultRow[] }) {
               Lower-Order Dimension
             </th>
             <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
-              HOC Type
-            </th>
-            <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
-              LOC Type
+              Indicator
             </th>
             <th className="px-4 py-2.5 text-right text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
               Loading
@@ -3566,22 +3571,7 @@ function HOCResultsTable({ rows }: { rows: HOCResultRow[] }) {
                 {row.loc_construct}
               </td>
               <td className="px-4 py-2 text-text-secondary border-b border-border/40">
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${
-                  row.hoc_type === 'formative'
-                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                    : 'bg-primary/10 text-primary border border-primary/20'
-                }`}>
-                  {row.hoc_type}
-                </span>
-              </td>
-              <td className="px-4 py-2 text-text-secondary border-b border-border/40">
-                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium uppercase tracking-wide ${
-                  row.loc_type === 'formative'
-                    ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
-                    : 'bg-primary/10 text-primary border border-primary/20'
-                }`}>
-                  {row.loc_type}
-                </span>
+                {row.indicator}
               </td>
               <td className="px-4 py-2 text-right border-b border-border/40 tabular-nums">
                 {row.loading != null && !isNaN(row.loading) ? (
@@ -4543,6 +4533,63 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary)
 }
 
+const DOWNLOADABLE_RESULT_CHART_PANELS = new Set([
+  'priority-map',
+  'cipma-priorities',
+  'necessity-check',
+  'ceiling-lines',
+])
+
+function ResultChartExportActions({
+  selectedPanel,
+  analysisMode,
+  analysisResults,
+}: {
+  selectedPanel: string
+  analysisMode: AnalysisMode
+  analysisResults: any
+}) {
+  if (!DOWNLOADABLE_RESULT_CHART_PANELS.has(selectedPanel)) return null
+  const chartSvg = buildChartSvgForPanel(selectedPanel, analysisMode, analysisResults)
+  if (!chartSvg) return null
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(chartSvg)
+      dispatchToast('success', 'Chart SVG copied', 'Paste the SVG into Word or a design tool.')
+    } catch (error: any) {
+      dispatchToast('error', 'Copy failed', error?.message || 'Could not copy chart SVG.')
+    }
+  }
+
+  const handleDownload = () => {
+    try {
+      const url = URL.createObjectURL(new Blob([chartSvg], { type: 'image/svg+xml' }))
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = `${selectedPanel}.svg`
+      anchor.click()
+      URL.revokeObjectURL(url)
+      dispatchToast('success', 'Chart SVG downloaded', anchor.download)
+    } catch (error: any) {
+      dispatchToast('error', 'Download failed', error?.message || 'Could not download chart SVG.')
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-2 px-3 pt-2">
+      <button onClick={handleCopy} className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-border/70 bg-card hover:bg-hover text-text-secondary" title="Copy chart SVG">
+        <Copy size={13} />
+        <span>Copy SVG</span>
+      </button>
+      <button onClick={handleDownload} className="flex items-center gap-1.5 px-2 py-1 text-xs rounded border border-border/70 bg-card hover:bg-hover text-text-secondary" title="Download chart SVG">
+        <Download size={13} />
+        <span>Download SVG</span>
+      </button>
+    </div>
+  )
+}
+
 function TablePanel({
   selectedPanel, diagramHeight, onDiagramHeightChange, diagramCollapsed, analysisMode, panelData, analysisResults, savedModel, tableView, tableViewOptions, onTableViewChange, mgaComparisonMethod = 'biasCorrectedConfidenceIntervals', onMgaComparisonMethodChange
 }: {
@@ -4587,6 +4634,7 @@ function TablePanel({
     { value: 'biasCorrectedConfidenceIntervals', label: 'Bias corrected' },
     { value: 'henselerPlsMga', label: 'Henseler' },
     { value: 'parametricTest', label: 'Parametric' },
+    { value: 'welchTest', label: 'Welch' },
   ]
   const indicatorConstructMap = new Map<string, string>()
   if (savedModel?.constructs) {
@@ -5015,6 +5063,11 @@ function TablePanel({
         )}
         {shouldRenderInlineChart && (
           <div className="mb-3">
+            <ResultChartExportActions
+              selectedPanel={selectedPanel}
+              analysisMode={analysisMode}
+              analysisResults={analysisResults}
+            />
             <ResultChart
               selectedPanel={selectedPanel}
               analysisMode={analysisMode}
@@ -5267,6 +5320,12 @@ export default function ResultsView() {
     () => modelHasHigherOrderConstructs(savedModel, analysisResults),
     [savedModel, analysisResults],
   )
+  const showMicomHocUnavailable = useCallback(() => {
+    dispatchToast('warning', 'MICOM unavailable', MICOM_HOC_UNAVAILABLE_MESSAGE)
+  }, [])
+  const initialMgaHocSettings = useMemo(() => {
+    return readBaseHocSettingsFromAnalysisResults(analysisResults)
+  }, [analysisResults])
   const mgaGroupLabels = useMemo(() => getMgaGroupLabels(analysisResults), [analysisResults])
   const sidebarData = useMemo(
     () => buildSidebarSections(analysisMode, moderationAvailable, mgaGroupLabels, hasHigherOrderConstructs),
@@ -5443,6 +5502,10 @@ export default function ResultsView() {
     }
 
     const algorithm = (getByPath(analysisResults, 'meta.algorithm') || getByPath(analysisResults, 'algorithm.settings.algorithm') || 'standard') as 'standard' | 'consistent'
+    const recordedAlgorithmSettings = getByPath(analysisResults, 'algorithm.settings.algorithm_settings')
+    const algorithmSettings = recordedAlgorithmSettings && typeof recordedAlgorithmSettings === 'object'
+      ? recordedAlgorithmSettings as RunPlsRequest['algorithmSettings']
+      : undefined
 
     return {
       datasetPath,
@@ -5450,6 +5513,7 @@ export default function ResultsView() {
       paths,
       interactions: payloadParts.interactions,
       algorithm: algorithm === 'consistent' ? 'consistent' : 'standard',
+      algorithmSettings,
     }
   }, [analysisResults, modelId, resolveWorkspaceContext, savedModel])
 
@@ -5496,9 +5560,18 @@ export default function ResultsView() {
       calcDispatch({ type: 'setPhase', phaseId: 'resample' })
       const bootstrapPayload = {
         ...payload,
+        algorithmSettings: {
+          ...payload.algorithmSettings,
+          maxIterations: Number(settings?.maxIterations) || payload.algorithmSettings?.maxIterations,
+          stopCriterion: settings?.stopCriterion || payload.algorithmSettings?.stopCriterion,
+        },
         nboot,
         ciType: settings?.ciType || 'Percentile',
         confidenceLevel: settings?.confidenceLevel || '95%',
+        bootstrapSeed: Number(settings?.seed) || undefined,
+        bootstrapTails: settings?.tails,
+        bootstrapResampling: settings?.resampling,
+        bootstrapSignChanges: settings?.signChanges,
       }
       const result = await runBootstrapModel(bootstrapPayload)
 
@@ -5559,6 +5632,9 @@ export default function ResultsView() {
         ...payload,
         folds: normalizedSettings.folds,
         repetitions: normalizedSettings.repetitions,
+        technique: normalizedSettings.technique,
+        predictionSeed: normalizedSettings.predictionSeed,
+        validationMode: normalizedSettings.validationMode,
         cvpatEnabled: normalizedSettings.cvpatEnabled,
       })
 
@@ -5706,6 +5782,12 @@ export default function ResultsView() {
   }, [tableViewKey])
 
   const handlePermutationConfiguralPrecheckFromResults = useCallback(async (settings: PermutationAnalysisSettings) => {
+    if (hasHigherOrderConstructs) {
+      showMicomHocUnavailable()
+      setPermutationConfiguralStatus('failed')
+      return { success: false, error: MICOM_HOC_UNAVAILABLE_MESSAGE }
+    }
+
     const payload = resolveRunPayload()
     if (!payload) {
       setPermutationConfiguralStatus('failed')
@@ -5747,10 +5829,14 @@ export default function ResultsView() {
       setPermutationConfiguralStatus('failed')
       return { success: false, error: error?.message || 'Configural precheck failed.' }
     }
-  }, [persistMicomCacheToWorkspace, resolveRunPayload, savedModel])
+  }, [hasHigherOrderConstructs, persistMicomCacheToWorkspace, resolveRunPayload, savedModel, showMicomHocUnavailable])
 
   const handleRunPermutationFromResults = useCallback(async (settings: PermutationAnalysisSettings) => {
     if (isAnalysisRunning) return
+    if (hasHigherOrderConstructs) {
+      showMicomHocUnavailable()
+      return
+    }
 
     const payload = resolveRunPayload()
     if (!payload) return
@@ -5831,13 +5917,28 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, savedModel, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, hasHigherOrderConstructs, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, savedModel, showMicomHocUnavailable, startResultsCalculation])
 
   const handleRunMultiGroupFromResults = useCallback(async (settings: MultiGroupAnalysisSettings) => {
     if (isAnalysisRunning) return
 
     const payload = resolveRunPayload()
     if (!payload) return
+
+    const selectedHocSettings = hasHigherOrderConstructs
+      ? normalizeHocSettings(settings.hocMethod, settings.hocTwoStage)
+      : undefined
+    const mgaPayload = {
+      ...payload,
+      ...(selectedHocSettings ? {
+        algorithmSettings: {
+          ...(payload.algorithmSettings ?? {}),
+          hocMethod: selectedHocSettings.method,
+          hocTwoStage: selectedHocSettings.twoStage,
+        },
+        baseHocMethod: settings.baseHocMethod,
+      } : {}),
+    }
 
     setMultiGroupOpen(false)
     setAnalysisBusy(true)
@@ -5855,7 +5956,7 @@ export default function ResultsView() {
       const { modelChild } = resolveWorkspaceContext()
       const cachedMicom = (modelChild?.state?.micomCache as MicomCacheEntry | undefined) ?? null
       const micomValidationPayload = {
-        ...payload,
+        ...mgaPayload,
         groupingVariable: settings.groupingVariable,
         groupA: settings.groupA,
         groupB: settings.groupB,
@@ -5863,15 +5964,18 @@ export default function ResultsView() {
         alpha: cachedMicom?.settings.alpha ?? settings.alpha,
         seed: cachedMicom?.settings.seed ?? settings.seed,
       }
-      const micomOverview = await resolveMicomOverviewForMgaCache({
-        cache: cachedMicom,
-        payload: micomValidationPayload,
-        graphSignature: savedModel ? buildAnalysisGraphSignature(savedModel) : undefined,
-        runConfiguralPrecheck: runPermutationConfiguralPrecheck,
-      })
+      const payloadHasHoc = containsHigherOrderConstruct(mgaPayload.constructs)
+      const micomOverview = payloadHasHoc
+        ? MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW
+        : await resolveMicomOverviewForMgaCache({
+            cache: cachedMicom,
+            payload: micomValidationPayload,
+            graphSignature: savedModel ? buildAnalysisGraphSignature(savedModel) : undefined,
+            runConfiguralPrecheck: runPermutationConfiguralPrecheck,
+          })
       calcDispatch({ type: 'setPhase', phaseId: 'bootstrap' })
       const result = await runMultiGroupAnalysisModel({
-        ...payload,
+        ...mgaPayload,
         groupingVariable: settings.groupingVariable,
         groupA: settings.groupA,
         groupB: settings.groupB,
@@ -5917,16 +6021,61 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, resolveWorkspaceContext, savedModel, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, hasHigherOrderConstructs, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, resolveWorkspaceContext, savedModel, startResultsCalculation])
 
   const generateRScript = useCallback(() => {
     if (!savedModel?.constructs?.length) {
       return '# No model available to export'
     }
+    const runSettings = (getByPath(analysisResults, 'algorithm.settings') ?? {}) as Record<string, unknown>
+    const recordedMode = String(getByPath(analysisResults, 'meta.mode') ?? '').trim().toLowerCase()
+    const rawRunMode = recordedMode || String(analysisMode).trim().toLowerCase()
+    const runAnalysisMode = rawRunMode.includes('advanced')
+      ? 'advanced'
+      : rawRunMode.includes('bootstrap')
+        ? 'bootstrap'
+        : rawRunMode.includes('predict')
+          ? 'plspredict'
+          : rawRunMode.includes('permutation') || rawRunMode.includes('micom')
+            ? 'permutation'
+            : rawRunMode.includes('multi') || rawRunMode === 'mga'
+              ? 'mga'
+              : 'pls-sem'
+    const algorithm = String(runSettings.algorithm ?? getByPath(analysisResults, 'meta.algorithm') ?? 'standard')
+    const algorithmLabel = String(runSettings.algorithm_label ?? getByPath(analysisResults, 'meta.algorithm_label') ?? algorithm)
+    const runMode = String(runSettings.mode ?? getByPath(analysisResults, 'meta.mode') ?? analysisMode)
+    const runAlgorithmSettings = runSettings.algorithm_settings ?? runSettings.algorithmSettings
+    const algorithmSettings = (runAlgorithmSettings && typeof runAlgorithmSettings === 'object'
+      ? runAlgorithmSettings
+      : {}) as Record<string, unknown>
+    const rString = (value: unknown) => `'${String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+    const innerWeighting = String(algorithmSettings.innerWeighting ?? 'Path weighting scheme')
+    const innerWeightsExpression = innerWeighting.toLowerCase().includes('factor')
+      ? 'path_factorial'
+      : innerWeighting.toLowerCase().includes('centroid')
+        ? 'unit_weights'
+        : 'path_weighting'
+    const maxIterations = Number(algorithmSettings.maxIterations) || 300
+    const stopCriterionValue = Number(algorithmSettings.stopCriterion)
+    const stopCriterion = Number.isFinite(stopCriterionValue) && stopCriterionValue > 0 && stopCriterionValue < 1
+      ? Math.max(1, Math.round(-Math.log10(stopCriterionValue)))
+      : Number.isFinite(stopCriterionValue) && stopCriterionValue >= 1
+        ? Math.round(stopCriterionValue)
+        : 7
+    const settingComments = Object.entries(runSettings)
+      .filter(([key, value]) => !['algorithm_label', 'algorithm_settings', 'algorithmSettings'].includes(key) && value !== undefined && value !== null && typeof value !== 'object')
+      .map(([key, value]) => `# ${key}: ${String(value)}`)
+    if (runAlgorithmSettings && typeof runAlgorithmSettings === 'object') {
+      Object.entries(algorithmSettings)
+        .filter(([, value]) => value !== undefined && value !== null)
+        .forEach(([key, value]) => settingComments.push(`# algorithm_settings.${key}: ${String(value)}`))
+    }
+    const algorithmIsConsistent = algorithm.toLowerCase().includes('consistent')
     const constructBlocks = savedModel.constructs.map((construct) => {
-      const fn = construct.type === 'Formative' ? 'composite' : 'reflective'
+      const fn = construct.type === 'Formative' ? 'composite' : algorithmIsConsistent ? 'reflective' : 'composite'
       const indicators = construct.indicators.map((indicator) => `'${indicator.name}'`).join(', ')
-      return `  ${fn}('${construct.name}', c(${indicators}))`
+      const weights = construct.type === 'Formative' ? ', weights = mode_B' : algorithmIsConsistent ? '' : ', weights = mode_A'
+      return `  ${fn}('${construct.name}', c(${indicators})${weights})`
     })
 
     const constructNameById = new Map(savedModel.constructs.map((construct) => [construct.id, construct.name]))
@@ -5936,8 +6085,84 @@ export default function ResultsView() {
       return `  paths(from='${fromName}', to='${toName}')`
     })
 
+    const targetConstruct = String(runSettings.target_construct ?? runSettings.targetConstruct ?? savedModel.constructs[savedModel.constructs.length - 1]?.name ?? '')
+    const directTargetPredecessors = savedModel.paths
+      .filter((path) => (constructNameById.get(path.to) || path.to) === targetConstruct)
+      .map((path) => constructNameById.get(path.from) || path.from)
+    const allTargetPredecessors = (() => {
+      const discovered = new Set(directTargetPredecessors)
+      const pending = [...directTargetPredecessors]
+      while (pending.length) {
+        const current = pending.shift()
+        savedModel.paths
+          .filter((path) => (constructNameById.get(path.to) || path.to) === current)
+          .map((path) => constructNameById.get(path.from) || path.from)
+          .forEach((predecessor) => {
+            if (discovered.has(predecessor)) return
+            discovered.add(predecessor)
+            pending.push(predecessor)
+          })
+      }
+      return Array.from(discovered)
+    })()
+    const predecessorScope = String(runSettings.predecessor_scope ?? runSettings.predecessorScope ?? 'all').toLowerCase()
+    const targetPredecessors = predecessorScope === 'direct' ? directTargetPredecessors : allTargetPredecessors
+    const predecessorExpression = `c(${targetPredecessors.map((name) => rString(name)).join(', ')})`
+    const analyses = Array.isArray(runSettings.analyses) ? runSettings.analyses.map(String) : []
+    const analysisFlags = runSettings.analyses && typeof runSettings.analyses === 'object' && !Array.isArray(runSettings.analyses)
+      ? runSettings.analyses as Record<string, unknown>
+      : null
+    const shouldRunAnalysis = (name: string) => analysisFlags
+      ? Boolean(analysisFlags[name] ?? analysisFlags[name.replace('-', '')])
+      : !analyses.length || analyses.some((item) => item.toLowerCase().includes(name))
+    const includeCipma = shouldRunAnalysis('cipma') || shouldRunAnalysis('c-ipma')
+    const includeNca = shouldRunAnalysis('nca') || includeCipma
+    const analysisBlocks = runAnalysisMode === 'bootstrap'
+      ? [
+          `boot_model <- bootstrap_model(model, nboot = ${Number(runSettings.nboot) || 500}, seed = ${Number(runSettings.seed) || 123})`,
+          'summary(boot_model)',
+        ]
+      : runAnalysisMode === 'plspredict'
+        ? [
+            `prediction <- predict_pls(model, technique = predict_DA, noFolds = ${Number(runSettings.folds) || 10}, reps = ${Number(runSettings.repetitions) || 1})`,
+            'summary(prediction)',
+          ]
+        : runAnalysisMode === 'advanced'
+          ? [
+              'library(seminrExtras)',
+              ...(shouldRunAnalysis('ipma') ? [`ipma_result <- assess_ipma(seminr_model = model, target = ${rString(targetConstruct)}, scale_min = 1, scale_max = 7, seed = 123)`, 'summary(ipma_result)'] : []),
+              ...(includeNca ? [`nca_result <- assess_nca(seminr_model = model, target = ${rString(targetConstruct)}, predictors = ${predecessorExpression}, test.rep = ${Number(runSettings.run_depth) || 1000}, steps = ${Number(runSettings.bottleneck_step_size) || 10}, seed = 123)`, 'summary(nca_result)'] : []),
+              ...(includeCipma ? [`cipma_result <- assess_cipma(seminr_model = model, target = ${rString(targetConstruct)}, scale_min = 1, scale_max = 7, nca = nca_result, nca_ceilings = c('ce_fdh', 'cr_fdh'), nca_test.rep = ${Number(runSettings.run_depth) || 1000}, nca_steps = ${Number(runSettings.bottleneck_step_size) || 10})`, 'summary(cipma_result)'] : []),
+            '# Advanced analysis outputs above use the recorded Results settings.',
+          ]
+          : runAnalysisMode === 'permutation'
+              ? [
+                '# Use the repository helper when available; otherwise place micom.R beside this script.',
+                'micom_helper <- if (file.exists("r-api/micom.R")) "r-api/micom.R" else "micom.R"',
+                'source(micom_helper)',
+                `micom_result <- metis_micom(model = model, data = survey_data, group_var = ${rString(runSettings.group_var ?? runSettings.groupingVariable)}, group_a = ${rString(runSettings.group_a ?? runSettings.groupA)}, group_b = ${rString(runSettings.group_b ?? runSettings.groupB)}, permutations = ${Number(runSettings.permutations) || 500}, alpha = ${Number(runSettings.alpha) || 0.05}, seed = ${Number(runSettings.seed) || 123})`,
+                'print(micom_result)',
+              ]
+            : runAnalysisMode === 'mga'
+              ? [
+                  '# Fit both recorded groups so the exported script reproduces the MGA run.',
+                  `group_a_data <- survey_data[survey_data[[${rString(runSettings.groupingVariable ?? runSettings.group_var)}]] == ${rString(runSettings.groupA ?? runSettings.group_a)}, , drop = FALSE]`,
+                  `group_b_data <- survey_data[survey_data[[${rString(runSettings.groupingVariable ?? runSettings.group_var)}]] == ${rString(runSettings.groupB ?? runSettings.group_b)}, , drop = FALSE]`,
+                  'group_a_model <- estimate_pls(data = group_a_data, measurement_model = mm, structural_model = sm, inner_weights = inner_weights, maxIt = max_iterations, stopCriterion = stop_criterion)',
+                  'group_b_model <- estimate_pls(data = group_b_data, measurement_model = mm, structural_model = sm, inner_weights = inner_weights, maxIt = max_iterations, stopCriterion = stop_criterion)',
+                  `group_a_boot <- bootstrap_model(group_a_model, nboot = ${Number(runSettings.nboot) || 500}, seed = ${Number(runSettings.seed) || 123})`,
+                  `group_b_boot <- bootstrap_model(group_b_model, nboot = ${Number(runSettings.nboot) || 500}, seed = ${Number(runSettings.seed) || 123})`,
+                  'summary(group_a_boot)',
+                  'summary(group_b_boot)',
+                ]
+              : ['summary(model)']
+
     return [
       'library(seminr)',
+      '',
+      `# Analysis run: ${runMode}`,
+      `# Algorithm: ${algorithmLabel} (${algorithm})`,
+      ...settingComments,
       '',
       'mm <- constructs(',
       constructBlocks.join(',\n'),
@@ -5947,10 +6172,13 @@ export default function ResultsView() {
       pathBlocks.join(',\n'),
       ')',
       '',
-      "model <- estimate_pls(data = survey_data, measurement_model = mm, structural_model = sm)",
-      'summary(model)',
+      `inner_weights <- ${innerWeightsExpression}`,
+      `max_iterations <- ${maxIterations}`,
+      `stop_criterion <- ${stopCriterion}`,
+      'model <- estimate_pls(data = survey_data, measurement_model = mm, structural_model = sm, inner_weights = inner_weights, maxIt = max_iterations, stopCriterion = stop_criterion)',
+      ...analysisBlocks,
     ].join('\n')
-  }, [savedModel])
+  }, [analysisMode, analysisResults, savedModel])
 
   const handleCopyRScript = useCallback(async () => {
     try {
@@ -6017,8 +6245,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     <tr>
       <td>${escapeHtml(row.hoc_construct)}</td>
       <td>${escapeHtml(row.loc_construct)}</td>
-      <td><span class="badge ${row.hoc_type}">${escapeHtml(row.hoc_type)}</span></td>
-      <td><span class="badge ${row.loc_type}">${escapeHtml(row.loc_type)}</span></td>
+      <td>${escapeHtml(row.indicator)}</td>
       <td style="text-align: right;">${row.loading != null && !isNaN(row.loading) ? fmtNum(row.loading) : '—'}</td>
       <td style="text-align: right;">${row.weight != null && !isNaN(row.weight) ? fmtNum(row.weight) : '—'}</td>
       <td style="text-align: right;">${row.vif != null && !isNaN(row.vif) ? fmtNum(row.vif) : '—'}</td>
@@ -6033,8 +6260,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           <tr>
             <th style="text-align: left;">Higher-Order Construct</th>
             <th style="text-align: left;">Lower-Order Dimension</th>
-            <th style="text-align: left;">HOC Type</th>
-            <th style="text-align: left;">LOC Type</th>
+            <th style="text-align: left;">Indicator</th>
             <th style="text-align: right;">Loading</th>
             <th style="text-align: right;">Weight</th>
             <th style="text-align: right;">VIF</th>
@@ -6622,13 +6848,16 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
       if (action === 'run-bootstrap' && !isAnalysisRunning) setBootstrapOpen(true)
       if (action === 'run-pls-predict' && !isAnalysisRunning) setPlsPredictOpen(true)
       if (action === 'run-advanced-analysis' && canRunAdvancedAnalysis && !isAnalysisRunning) setAdvancedOpen(true)
-      if (action === 'run-permutation-analysis' && !isAnalysisRunning) setPermutationOpen(true)
+      if (action === 'run-permutation-analysis' && !isAnalysisRunning) {
+        if (hasHigherOrderConstructs) showMicomHocUnavailable()
+        else setPermutationOpen(true)
+      }
       if (action === 'run-multi-group-analysis' && !isAnalysisRunning) setMultiGroupOpen(true)
       if (action === 'results:export-r-script') void handleExportRScript()
     }
     window.addEventListener('pls:action', handler)
     return () => window.removeEventListener('pls:action', handler)
-  }, [canRunAdvancedAnalysis, handleExportRScript, isAnalysisRunning])
+  }, [canRunAdvancedAnalysis, handleExportRScript, hasHigherOrderConstructs, isAnalysisRunning, showMicomHocUnavailable])
 
   return (
     <div id="tour-results-view" className="metis-results-view h-full w-full flex flex-col overflow-hidden select-none" style={{ backgroundColor: 'var(--color-sidebar-bg)' }}>
@@ -6873,6 +7102,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
                   savedModel?.paths,
                   analysisMode === 'bootstrap' ? (plsResultsForDiagram ?? undefined) : undefined,
                 ) : undefined}
+                resultsReadable
                 onModelChange={setSavedModel}
               />
             </div>
@@ -6905,6 +7135,14 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
             setBootstrapOpen(false)
           }}
           onRun={handleRunBootstrapFromResults}
+          initialSettings={{
+            subsamples: Number(readSharedStorageValue('prefs:defaultSubsamples') || '') || 500,
+            ciType: (readSharedStorageValue('prefs:bootstrapCiType') || 'Percentile') as 'Percentile' | 'BCa' | 't-statistic',
+            confidenceLevel: (readSharedStorageValue('prefs:bootstrapConfidence') || '95%') as '90%' | '95%' | '99%',
+            maxIterations: Number(readSharedStorageValue('prefs:bootstrapMaxIterations') || '') || 300,
+            stopCriterion: readSharedStorageValue('prefs:bootstrapStopCriterion') || '1e-7',
+            seed: Number(readSharedStorageValue('prefs:defaultSeed') || '') || undefined,
+          }}
           isRunning={isAnalysisRunning}
         />
       )}
@@ -6930,7 +7168,11 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
             setAdvancedOpen(false)
           }}
           onRun={handleRunAdvancedFromResults}
-          initialSettings={(resolveWorkspaceContext().modelChild?.state?.analysisSettings?.advanced ?? undefined) as Partial<AdvancedAnalysisSettings> | undefined}
+          initialSettings={{
+            ...(resolveWorkspaceContext().modelChild?.state?.analysisSettings?.advanced ?? {}),
+            runDepth: Number(readSharedStorageValue('prefs:ncaRunDepth') || '') || 500,
+            bottleneckStepSize: Number(readSharedStorageValue('prefs:ncaStepSize') || '') || 10,
+          } as Partial<AdvancedAnalysisSettings>}
           isRunning={isAnalysisRunning}
         />
       )}
@@ -6957,6 +7199,8 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           modelName={stripModelDisplayName(modelId || '')}
           groupingOptions={resultsGroupingData.groupingOptions}
           datasetRows={resultsGroupingData.datasetRows}
+          hasHigherOrderConstructs={hasHigherOrderConstructs}
+          initialHocSettings={initialMgaHocSettings}
           onClose={() => {
             if (isAnalysisRunning) return
             setMultiGroupOpen(false)

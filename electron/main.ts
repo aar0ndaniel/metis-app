@@ -59,8 +59,6 @@ const allowedRendererReadExtensions = new Set([...allowedDatasetReadExtensions, 
 const allowedRendererWriteExtensions = new Set(['.csv', '.png', '.xlsx', '.html', '.htm', '.json', '.r', '.docx'])
 const allowedRendererOpenExtensions = new Set(['.html', '.htm', '.docx'])
 const WORKSPACE_FILE_EXTENSION = '.metisws'
-const LEGACY_WORKSPACE_FILE_EXTENSION = '.ada'
-const WORKSPACE_FILE_EXTENSIONS = [WORKSPACE_FILE_EXTENSION, LEGACY_WORKSPACE_FILE_EXTENSION]
 const sampleDatasetFileName = 'sample dataset.csv'
 const missingValueTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
 const sessionTempDirName = `session-${randomBytes(8).toString('hex')}`
@@ -217,7 +215,7 @@ function installApplicationMenu() {
 
 function hasWorkspaceFileExtension(targetPath: string): boolean {
   const fileName = path.basename(String(targetPath ?? '').trim()).toLowerCase()
-  return WORKSPACE_FILE_EXTENSIONS.some((extension) => fileName.endsWith(extension))
+  return fileName.endsWith(WORKSPACE_FILE_EXTENSION)
 }
 
 function rememberPlumberLog(level: 'stdout' | 'stderr' | 'system', text: string) {
@@ -2447,8 +2445,10 @@ function hasAllowedExtension(targetPath: string, allowedExtensions: Set<string>)
 
 function isWorkspacePathAllowed(targetPath: string): boolean {
   return (
-    isWorkspaceTargetPathAllowed(targetPath) ||
-    hasApprovedPath(approvedWorkspacePaths, targetPath)
+    isWorkspaceFileLikePath(targetPath) && (
+      isWorkspaceTargetPathAllowed(targetPath) ||
+      hasApprovedPath(approvedWorkspacePaths, targetPath)
+    )
   )
 }
 
@@ -2458,21 +2458,21 @@ function rememberApprovedWorkspacePath(targetPath: string): void {
   rememberApprovedPath(approvedWorkspacePaths, resolved)
 }
 
-function validateWorkspaceFilePath(targetPath: string, allowDirectory = true): string {
+function validateWorkspaceFilePath(targetPath: string): string {
   const resolved = path.resolve(String(targetPath ?? '').trim())
   if (!resolved) {
     throw new Error('Workspace path is required.')
   }
   if (!isWorkspaceFileLikePath(resolved)) {
-    throw new Error('Workspace path must point to a .metisws workspace file or legacy .ada workspace.')
+    throw new Error('Workspace path must point to a .metisws workspace file.')
   }
   if (!isWorkspacePathAllowed(resolved)) {
     throw new Error('Workspace path is not approved for this action.')
   }
   if (fs.existsSync(resolved)) {
     const stat = fs.statSync(resolved)
-    if (stat.isDirectory() && !allowDirectory) {
-      throw new Error('Workspace save target must be a .metisws file, not a directory.')
+    if (stat.isDirectory()) {
+      throw new Error('Workspace path must point to a .metisws file, not a directory.')
     }
   }
   return resolved
@@ -3218,7 +3218,6 @@ ipcMain.handle('app:welcomeContext', async () => {
 // fully self-contained — double-clicking opens metis via the OS file
 // association registered in the installer.
 //
-// Backward compatibility: old `.ada` file/folder workspaces are still read.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface WorkspaceManifest {
@@ -3231,35 +3230,10 @@ interface WorkspaceManifest {
   children: any[]
 }
 
-interface AdaFileV2 extends WorkspaceManifest {
-  _metis: true
-  _version: '2.0'
-  datasetEmbedded?: string       // base64-encoded dataset file
-  datasetOriginalName?: string   // original filename (for extension detection)
-}
-
-interface EmbeddedDatasetV3 {
-  datasetId: string
-  base64Data: string
-  originalName: string
-  internalName: string
-}
-
-interface AdaFileV3 extends WorkspaceManifest {
-  _metis: true
-  _version: '3.0'
-  embeddedDatasets?: EmbeddedDatasetV3[]
-  datasetEmbedded?: string
-  datasetOriginalName?: string
-}
-
-type AdaWorkspaceFile = AdaFileV2 | AdaFileV3
-
 /** Sanitises a name to a safe filename base (no extension). */
 function sanitizeFileName(name: string): string {
   return name
     .replace(/\.metisws$/i, '')
-    .replace(/\.ada$/i, '')
     .replace(/[^\w\s\-]/g, '_')
     .trim() || 'workspace'
 }
@@ -3293,25 +3267,6 @@ function cleanLegacyTempDatasetDirectories(): void {
     console.warn('[main] Failed to clean legacy temp directories:', err.message)
   }
 }
-/**
- * Writes the embedded base64 dataset to a temp file and returns its path.
- * The temp file is re-created on every app startup so it stays current.
- */
-async function extractEmbeddedDataset(wsId: string, datasetId: string, base64Data: string, originalName = 'dataset.csv'): Promise<string> {
-  const dir = getTempDatasetsDir()
-  await fs.promises.mkdir(dir, { recursive: true })
-  const safeOriginalName = path.basename(originalName)
-  const ext = path.extname(safeOriginalName) || '.csv'
-  const safeWorkspaceId = sanitizePathComponent(wsId, 'workspace')
-  const safeDatasetId = sanitizePathComponent(datasetId, 'dataset')
-  const tempPath = path.join(dir, `${safeWorkspaceId}__${safeDatasetId}${ext}`)
-  if (!isPathWithinRoot(tempPath, dir)) {
-    throw new Error('Security Error: Directory traversal detected in extraction target path.')
-  }
-  await fs.promises.writeFile(tempPath, Buffer.from(base64Data, 'base64'))
-  return tempPath
-}
-
 function getManifestDatasetChildren(manifest: WorkspaceManifest): any[] {
   return Array.isArray(manifest.children)
     ? manifest.children.filter((child: any) => child?.type === 'dataset')
@@ -3325,34 +3280,6 @@ function resolveWorkspaceDefaultDatasetId(manifest: WorkspaceManifest): string |
     return defaultDatasetId
   }
   return datasetChildren[0]?.id
-}
-
-function normalizeEmbeddedDatasets(data: AdaWorkspaceFile): EmbeddedDatasetV3[] {
-  if (Array.isArray((data as AdaFileV3).embeddedDatasets)) {
-    return (data as AdaFileV3).embeddedDatasets!
-      .filter((entry) => entry?.datasetId && entry?.base64Data)
-      .map((entry) => ({
-        datasetId: String(entry.datasetId),
-        base64Data: String(entry.base64Data),
-        originalName: String(entry.originalName || 'dataset.csv'),
-        internalName: String(entry.internalName || `${entry.datasetId}${path.extname(entry.originalName || 'dataset.csv') || '.csv'}`),
-      }))
-  }
-
-  if ((data as AdaFileV2).datasetEmbedded) {
-    const datasetId = resolveWorkspaceDefaultDatasetId(data)
-      || getManifestDatasetChildren(data)[0]?.id
-      || `ds-${data.id}`
-    const originalName = (data as AdaFileV2).datasetOriginalName || 'dataset.csv'
-    return [{
-      datasetId,
-      base64Data: (data as AdaFileV2).datasetEmbedded!,
-      originalName,
-      internalName: `${datasetId}${path.extname(originalName) || '.csv'}`,
-    }]
-  }
-
-  return []
 }
 
 function hydrateWorkspaceManifest(manifest: WorkspaceManifest, datasetTempPaths = new Map<string, string>()): WorkspaceManifest {
@@ -3388,13 +3315,6 @@ function hydrateWorkspaceManifest(manifest: WorkspaceManifest, datasetTempPaths 
   }
 }
 
-function resolveLegacyDatasetInternalPath(workspacePath: string, datasetId: string, originalName = 'dataset.csv'): string {
-  const dir = path.join(workspacePath, 'datasets')
-  const ext = path.extname(originalName) || '.csv'
-  const safeDatasetId = sanitizePathComponent(datasetId, 'dataset')
-  return path.join(dir, `${safeDatasetId}${ext}`)
-}
-
 async function writeDatasetBufferIntoWorkspace(
   workspacePath: string,
   datasetId: string,
@@ -3406,38 +3326,31 @@ async function writeDatasetBufferIntoWorkspace(
   path: string
   datasetTempPath?: string
 }> {
-  const stat = fs.existsSync(workspacePath) ? fs.statSync(workspacePath) : null
+  if (!fs.existsSync(workspacePath)) {
+    throw new Error('Workspace file not found.')
+  }
+  const stat = fs.statSync(workspacePath)
+  if (!stat.isFile()) {
+    throw new Error('Workspace path must point to a .metisws file, not a directory.')
+  }
   const safeDatasetId = ensureSafeDatasetId(datasetId)
   const internalName = `${sanitizePathComponent(safeDatasetId, 'dataset')}${path.extname(originalName) || '.csv'}`
 
-  if (stat && stat.isFile()) {
-    let zip: JSZip
-    let wsData: WorkspaceManifest
+  if (!(await isZipFile(workspacePath))) {
+    throw new Error('Workspace file must be a ZIP archive.')
+  }
 
-    if (await isZipFile(workspacePath)) {
-      const zipData = await fs.promises.readFile(workspacePath)
-      zip = await JSZip.loadAsync(zipData)
-      const wsJsonFile = zip.file('workspace.json')
-      if (wsJsonFile) {
-        const wsJsonText = await wsJsonFile.async('text')
-        wsData = JSON.parse(wsJsonText) as WorkspaceManifest
-      } else {
-        wsData = { id: `ws-${Date.now()}`, name: path.basename(workspacePath, WORKSPACE_FILE_EXTENSION), children: [] }
-      }
-    } else {
-      // Legacy JSON file migration
-      const raw = await fs.promises.readFile(workspacePath, 'utf-8')
-      const legacyData = JSON.parse(raw) as AdaWorkspaceFile
-      wsData = hydrateWorkspaceManifest(legacyData)
-
-      zip = new JSZip()
-      const embeddedDatasets = normalizeEmbeddedDatasets(legacyData)
-      for (const entry of embeddedDatasets) {
-        const base64Buffer = Buffer.from(entry.base64Data, 'base64')
-        const entryInternalName = entry.internalName || `${entry.datasetId}${path.extname(entry.originalName || 'dataset.csv') || '.csv'}`
-        zip.file(`datasets/${entryInternalName}`, base64Buffer)
-      }
-    }
+  let zip: JSZip
+  let wsData: WorkspaceManifest
+  const zipData = await fs.promises.readFile(workspacePath)
+  zip = await JSZip.loadAsync(zipData)
+  const wsJsonFile = zip.file('workspace.json')
+  if (wsJsonFile) {
+    const wsJsonText = await wsJsonFile.async('text')
+    wsData = JSON.parse(wsJsonText) as WorkspaceManifest
+  } else {
+    wsData = { id: `ws-${Date.now()}`, name: path.basename(workspacePath, WORKSPACE_FILE_EXTENSION), children: [] }
+  }
 
     zip.file(`datasets/${internalName}`, fileBuffer)
 
@@ -3474,20 +3387,7 @@ async function writeDatasetBufferIntoWorkspace(
     }
     await fs.promises.writeFile(tempPath, fileBuffer)
 
-    return { success: true, internalName, path: tempPath, datasetTempPath: tempPath }
-  }
-
-  if (!fs.existsSync(workspacePath)) {
-    await fs.promises.mkdir(workspacePath, { recursive: true })
-  }
-
-  const datasetsDir = path.join(workspacePath, 'datasets')
-  if (!fs.existsSync(datasetsDir)) {
-    await fs.promises.mkdir(datasetsDir, { recursive: true })
-  }
-  const internalPath = resolveLegacyDatasetInternalPath(workspacePath, safeDatasetId, originalName)
-  writeAtomicSync(internalPath, fileBuffer)
-  return { success: true, internalName: path.basename(internalPath), path: internalPath, datasetTempPath: internalPath }
+  return { success: true, internalName, path: tempPath, datasetTempPath: tempPath }
 }
 
 async function copyDatasetIntoWorkspace(originalFilePath: string, workspacePath: string, datasetId: string): Promise<{
@@ -3546,91 +3446,56 @@ async function isZipFile(filePath: string): Promise<boolean> {
   }
 }
 
-/** Parses a workspace file and (if it contains a dataset) extracts to temp. */
-async function readAdaFile(adaFilePath: string, extract = true): Promise<(WorkspaceManifest & { path: string; _format: 'v2' | 'v3' | 'zip' }) | null> {
+/** Parses a ZIP workspace and (if it contains a dataset) extracts to temp. */
+async function readWorkspaceZipFile(workspacePath: string, extract = true): Promise<(WorkspaceManifest & { path: string; _format: 'zip' }) | null> {
   try {
-    if (await isZipFile(adaFilePath)) {
-      const fileBuffer = await fs.promises.readFile(adaFilePath)
-      const zip = await JSZip.loadAsync(fileBuffer)
-      const wsJsonFile = zip.file('workspace.json')
-      if (!wsJsonFile) return null
+    if (!(await isZipFile(workspacePath))) return null
 
-      const wsJsonText = await wsJsonFile.async('text')
-      const data = JSON.parse(wsJsonText) as WorkspaceManifest
-      if (!data || !data.id) return null
+    const fileBuffer = await fs.promises.readFile(workspacePath)
+    const zip = await JSZip.loadAsync(fileBuffer)
+    const wsJsonFile = zip.file('workspace.json')
+    if (!wsJsonFile) return null
 
-      const datasetTempPaths = new Map<string, string>()
-      if (extract) {
-        const datasetChildren = getManifestDatasetChildren(data)
-        for (const dataset of datasetChildren) {
-          const dir = getTempDatasetsDir()
-          if (dataset.filePath) {
-            const unsafePath = path.join(dir, dataset.filePath)
-            if (!isPathWithinRoot(unsafePath, dir)) {
-              throw new Error('Security Error: Directory traversal detected in extraction target path.')
-            }
-          }
-          const zipPath = `datasets/${dataset.filePath}`
-          const zipEntry = zip.file(zipPath)
-          if (zipEntry) {
-            try {
-              const buffer = await zipEntry.async('nodebuffer')
-              await fs.promises.mkdir(dir, { recursive: true })
-              const safeName = path.basename(dataset.filePath || `${dataset.id}.csv`)
-              const tempPath = path.join(dir, `${data.id}__${dataset.id}${path.extname(safeName) || '.csv'}`)
-              if (!isPathWithinRoot(tempPath, dir)) {
-                throw new Error('Security Error: Directory traversal detected in extraction target path.')
-              }
-              await fs.promises.writeFile(tempPath, buffer)
-              datasetTempPaths.set(dataset.id, tempPath)
-            } catch (err: any) {
-              console.warn('[main] Failed to extract zip dataset:', dataset.id, err.message)
-            }
-          }
-        }
-      }
+    const wsJsonText = await wsJsonFile.async('text')
+    const data = JSON.parse(wsJsonText) as WorkspaceManifest
+    if (!data || !data.id) return null
 
-      const hydrated = hydrateWorkspaceManifest(data, datasetTempPaths)
-      return {
-        ...hydrated,
-        path: adaFilePath,
-        _format: 'zip',
-      }
-    }
-
-    const raw = await fs.promises.readFile(adaFilePath, 'utf-8')
-    const data = JSON.parse(raw) as AdaWorkspaceFile
-    const isRecognizedWorkspaceFile = (data as any)?._metis === true || data._version === '2.0' || data._version === '3.0'
-    if (!isRecognizedWorkspaceFile) return null
-    if (!data.id) return null
-
-    const embeddedDatasets = normalizeEmbeddedDatasets(data)
     const datasetTempPaths = new Map<string, string>()
     if (extract) {
-      for (const dataset of embeddedDatasets) {
-        try {
-          datasetTempPaths.set(
-            dataset.datasetId,
-            await extractEmbeddedDataset(data.id, dataset.datasetId, dataset.base64Data, dataset.originalName)
-          )
-        } catch (e: any) {
-          console.warn('[main] Failed to extract embedded dataset:', e.message)
+      const datasetChildren = getManifestDatasetChildren(data)
+      for (const dataset of datasetChildren) {
+        const dir = getTempDatasetsDir()
+        if (dataset.filePath) {
+          const unsafePath = path.join(dir, dataset.filePath)
+          if (!isPathWithinRoot(unsafePath, dir)) {
+            throw new Error('Security Error: Directory traversal detected in extraction target path.')
+          }
+        }
+        const zipPath = `datasets/${dataset.filePath}`
+        const zipEntry = zip.file(zipPath)
+        if (zipEntry) {
+          try {
+            const buffer = await zipEntry.async('nodebuffer')
+            await fs.promises.mkdir(dir, { recursive: true })
+            const safeName = path.basename(dataset.filePath || `${dataset.id}.csv`)
+            const tempPath = path.join(dir, `${data.id}__${dataset.id}${path.extname(safeName) || '.csv'}`)
+            if (!isPathWithinRoot(tempPath, dir)) {
+              throw new Error('Security Error: Directory traversal detected in extraction target path.')
+            }
+            await fs.promises.writeFile(tempPath, buffer)
+            datasetTempPaths.set(dataset.id, tempPath)
+          } catch (err: any) {
+            console.warn('[main] Failed to extract zip dataset:', dataset.id, err.message)
+          }
         }
       }
     }
 
-    const {
-      datasetEmbedded: _legacyDatasetEmbedded,
-      datasetOriginalName: _legacyDatasetOriginalName,
-      embeddedDatasets: _embeddedDatasets,
-      ...rest
-    } = data as any
-
-    const hydrated = hydrateWorkspaceManifest(rest, datasetTempPaths)
+    const hydrated = hydrateWorkspaceManifest(data, datasetTempPaths)
     return {
       ...hydrated,
-      path: adaFilePath,
-      _format: data._version === '3.0' ? 'v3' : 'v2',
+      path: workspacePath,
+      _format: 'zip',
     }
   } catch (err: any) {
     if (err && err.message && err.message.includes('Security Error')) {
@@ -3640,44 +3505,13 @@ async function readAdaFile(adaFilePath: string, extract = true): Promise<(Worksp
   }
 }
 
-/** Reads an old-format workspace FOLDER (v1 backward compat). */
-function readLegacyWorkspaceFolder(folderPath: string): (WorkspaceManifest & { path: string; _format: 'v1' }) | null {
-  try {
-    const manifestPath = path.join(folderPath, 'workspace.json')
-    if (!fs.existsSync(manifestPath)) return null
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as WorkspaceManifest
-    if (!manifest.id) return null
-    const datasetTempPaths = new Map<string, string>()
-    const datasetChildren = getManifestDatasetChildren(manifest)
-    datasetChildren.forEach((child: any, index: number) => {
-      const ext = path.extname(child?.filePath || child?.originalFileName || 'dataset.csv') || '.csv'
-      const candidates = [
-        resolveLegacyDatasetInternalPath(folderPath, child.id, `dataset${ext}`),
-        path.join(folderPath, 'dataset.csv'),
-      ]
-      const candidate = candidates.find((entry) => fs.existsSync(entry))
-      if (candidate) {
-        datasetTempPaths.set(child.id, candidate)
-      } else if (index === 0 && manifest.datasetTempPath) {
-        datasetTempPaths.set(child.id, manifest.datasetTempPath)
-      }
-    })
-    return { ...hydrateWorkspaceManifest(manifest, datasetTempPaths), path: folderPath, _format: 'v1' }
-  } catch {
-    return null
-  }
-}
-
-/** Open a specific workspace file or legacy folder, even outside the app data directory. */
+/** Open a specific ZIP workspace file, even outside the app data directory. */
 ipcMain.handle('workspace:openFile', async (_, workspaceFilePath: string) => {
   try {
     const resolvedPath = validateWorkspaceFilePath(workspaceFilePath)
     if (!fs.existsSync(resolvedPath)) throw new Error('Workspace file not found.')
 
-    const stat = fs.statSync(resolvedPath)
-    const workspace = stat.isDirectory()
-      ? readLegacyWorkspaceFolder(resolvedPath)
-      : await readAdaFile(resolvedPath)
+    const workspace = await readWorkspaceZipFile(resolvedPath)
 
     if (!workspace) throw new Error('Could not read workspace file.')
     rememberApprovedWorkspacePath(resolvedPath)
@@ -3782,7 +3616,7 @@ ipcMain.handle('dataset:useSample', async (_, data: { workspacePath: string; dat
   }
 })
 
-/** Scan metis data directory for workspace files and legacy .ada folders. */
+/** Scan the metis data directory for current ZIP workspace files. */
 ipcMain.handle('workspace:list', async () => {
   const dataPath = getDataPath()
   try {
@@ -3796,13 +3630,8 @@ ipcMain.handle('workspace:list', async () => {
     for (const entry of entries) {
       const fullPath = path.join(dataPath, entry.name)
       const isWorkspaceFile = hasWorkspaceFileExtension(entry.name)
-      const isLegacyFolder = entry.name.toLowerCase().endsWith(LEGACY_WORKSPACE_FILE_EXTENSION)
       if (entry.isFile() && isWorkspaceFile) {
-        const ws = await readAdaFile(fullPath)
-        if (ws) workspaces.push(ws)
-      } else if (entry.isDirectory() && isLegacyFolder) {
-        // Legacy v1 folder
-        const ws = readLegacyWorkspaceFolder(fullPath)
+        const ws = await readWorkspaceZipFile(fullPath)
         if (ws) workspaces.push(ws)
       }
     }
@@ -3817,8 +3646,8 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
   console.log('[main] workspace:create request', { name: wsData.name, id: wsData.id })
   try {
     ensureDataDir()
-    const adaFilePath = getWorkspaceFilePath(wsData.name)
-    console.log('[main] Creating workspace at:', adaFilePath)
+    const workspacePath = getWorkspaceFilePath(wsData.name)
+    console.log('[main] Creating workspace at:', workspacePath)
 
     const hydrated = hydrateWorkspaceManifest(wsData)
     const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
@@ -3827,9 +3656,9 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
     zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-    writeAtomicSync(adaFilePath, zipBuffer)
+    writeAtomicSync(workspacePath, zipBuffer)
     console.log('[main] Workspace .metisws file created')
-    return { success: true, path: adaFilePath }
+    return { success: true, path: workspacePath }
   } catch (err: any) {
     console.error('[main] workspace:create error:', err.message)
     if (err.code === 'EPERM') return { success: false, error: 'Permission Denied. Please ensure no other app (or OneDrive) is locking this location.' }
@@ -3844,73 +3673,54 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
     // Resolve target path: prefer the explicit path if it exists.
     // Strip asterisks — the UI uses '*' as a dirty-state indicator in display
     // labels only; it must never reach the file system path.
-    let adaFilePath = ''
+    let workspacePath = ''
     const explicitPath = typeof (wsData as any).path === 'string'
       ? (wsData as any).path.trim().replace(/\*/g, '')
       : ''
     if (explicitPath) {
-      adaFilePath = validateWorkspaceFilePath(explicitPath)
+      workspacePath = validateWorkspaceFilePath(explicitPath)
     } else {
-      adaFilePath = getWorkspaceFilePath(typeof wsData.name === 'string' ? wsData.name.replace(/\*/g, '') : wsData.name)
+      workspacePath = getWorkspaceFilePath(typeof wsData.name === 'string' ? wsData.name.replace(/\*/g, '') : wsData.name)
     }
-    // Guard against legacy v1 directory at the same path (prevents EISDIR)
-    if (fs.existsSync(adaFilePath) && !fs.statSync(adaFilePath).isFile()) {
-      const parsed = path.parse(adaFilePath)
-      adaFilePath = path.join(parsed.dir, `${parsed.name}_v2${WORKSPACE_FILE_EXTENSION}`)
-      console.warn('[main] workspace:save — legacy folder conflict, writing to:', adaFilePath)
+    if (fs.existsSync(workspacePath) && !fs.statSync(workspacePath).isFile()) {
+      throw new Error('Workspace path must point to a .metisws file, not a directory.')
     }
 
     let zip = new JSZip()
-    const isExistingFile = fs.existsSync(adaFilePath) && fs.statSync(adaFilePath).isFile()
+    const isExistingFile = fs.existsSync(workspacePath) && fs.statSync(workspacePath).isFile()
 
     const hydrated = hydrateWorkspaceManifest(wsData)
     const datasetChildren = getManifestDatasetChildren(hydrated)
-    const datasetIds = new Set(datasetChildren.map((child: any) => child.id))
     const datasetFileNames = new Set(datasetChildren.map((child: any) => child.filePath).filter(Boolean))
 
     if (isExistingFile) {
-      if (await isZipFile(adaFilePath)) {
-        const fileBuffer = await fs.promises.readFile(adaFilePath)
-        zip = await JSZip.loadAsync(fileBuffer)
-
-        // Clean up deleted datasets from datasets/ in the zip
-        zip.folder('datasets')?.forEach((relativePath, file) => {
-          if (!datasetFileNames.has(relativePath)) {
-            zip.remove(`datasets/${relativePath}`)
-          }
-        })
-      } else {
-        // Migrate legacy JSON file to ZIP
-        try {
-          const raw = await fs.promises.readFile(adaFilePath, 'utf-8')
-          const existing = JSON.parse(raw) as AdaWorkspaceFile
-          const existingEmbeddedDatasets = normalizeEmbeddedDatasets(existing)
-          const activeEmbedded = existingEmbeddedDatasets.filter((entry) => datasetIds.has(entry.datasetId))
-
-          for (const entry of activeEmbedded) {
-            const base64Buffer = Buffer.from(entry.base64Data, 'base64')
-            const entryInternalName = entry.internalName || `${entry.datasetId}${path.extname(entry.originalName || 'dataset.csv') || '.csv'}`
-            zip.file(`datasets/${entryInternalName}`, base64Buffer)
-          }
-        } catch (e: any) {
-          console.warn('[main] Failed to parse legacy JSON workspace for migration:', e.message)
-        }
+      if (!(await isZipFile(workspacePath))) {
+        throw new Error('Workspace file must be a ZIP archive.')
       }
+      const fileBuffer = await fs.promises.readFile(workspacePath)
+      zip = await JSZip.loadAsync(fileBuffer)
+
+      // Clean up deleted datasets from datasets/ in the zip
+      zip.folder('datasets')?.forEach((relativePath, file) => {
+        if (!datasetFileNames.has(relativePath)) {
+          zip.remove(`datasets/${relativePath}`)
+        }
+      })
     }
 
     const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
     zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
 
-    if (!fs.existsSync(path.dirname(adaFilePath))) {
-      await fs.promises.mkdir(path.dirname(adaFilePath), { recursive: true })
+    if (!fs.existsSync(path.dirname(workspacePath))) {
+      await fs.promises.mkdir(path.dirname(workspacePath), { recursive: true })
     }
 
     const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-    writeAtomicSync(adaFilePath, zipBuffer)
+    writeAtomicSync(workspacePath, zipBuffer)
 
-    rememberApprovedWorkspacePath(adaFilePath)
-    console.log('[main] Workspace saved to:', adaFilePath)
-    return { success: true, path: adaFilePath }
+    rememberApprovedWorkspacePath(workspacePath)
+    console.log('[main] Workspace saved to:', workspacePath)
+    return { success: true, path: workspacePath }
   } catch (err: any) {
     console.error('[main] workspace:save error:', err.message)
     if (err.code === 'EPERM' || err.code === 'EBUSY') {
@@ -3920,16 +3730,16 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
   }
 })
 
-/** Delete a workspace file (or legacy folder). Also cleans up temp datasets. */
+/** Delete a current workspace file. Also cleans up temp datasets. */
 ipcMain.handle('workspace:delete', async (_, wsData: Partial<WorkspaceManifest> & { path?: string }) => {
   const dataPath = path.resolve(getDataPath())
   try {
     ensureDataDir()
     let targetPath = ''
     if (wsData.path && String(wsData.path).trim().length > 0) {
-      targetPath = path.resolve(String(wsData.path))
+      targetPath = validateWorkspaceFilePath(String(wsData.path))
     } else if (wsData.name && String(wsData.name).trim().length > 0) {
-      targetPath = path.resolve(getWorkspaceFilePath(String(wsData.name)))
+      targetPath = validateWorkspaceFilePath(getWorkspaceFilePath(String(wsData.name)))
     } else {
       throw new Error('Workspace name or path is required for deletion.')
     }
@@ -3960,7 +3770,7 @@ ipcMain.handle('workspace:delete', async (_, wsData: Partial<WorkspaceManifest> 
   }
 })
 
-/** Delete a child entry from a workspace (works for both v2 file and v1 folder). */
+/** Delete a child entry from a ZIP workspace. */
 ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: string; workspacePath?: string; childId?: string }) => {
   const dataPath = path.resolve(getDataPath())
   try {
@@ -3970,9 +3780,9 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
 
     let wsPath = ''
     if (payload?.workspacePath && String(payload.workspacePath).trim().length > 0) {
-      wsPath = path.resolve(String(payload.workspacePath))
+      wsPath = validateWorkspaceFilePath(String(payload.workspacePath))
     } else if (payload?.workspaceName && String(payload.workspaceName).trim().length > 0) {
-      wsPath = path.resolve(getWorkspaceFilePath(String(payload.workspaceName)))
+      wsPath = validateWorkspaceFilePath(getWorkspaceFilePath(String(payload.workspaceName)))
     } else {
       throw new Error('workspacePath or workspaceName is required.')
     }
@@ -3984,94 +3794,42 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
     if (!fs.existsSync(wsPath)) throw new Error('Workspace not found.')
 
     const stat = fs.statSync(wsPath)
-
-    if (stat.isFile()) {
-      let wsData: WorkspaceManifest
-      let zip: JSZip | null = null
-      const isZip = await isZipFile(wsPath)
-
-      if (isZip) {
-        const fileBuffer = await fs.promises.readFile(wsPath)
-        zip = await JSZip.loadAsync(fileBuffer)
-        const wsJsonFile = zip.file('workspace.json')
-        if (wsJsonFile) {
-          const wsJsonText = await wsJsonFile.async('text')
-          wsData = JSON.parse(wsJsonText) as WorkspaceManifest
-        } else {
-          throw new Error('workspace.json not found in ZIP archive.')
-        }
-      } else {
-        const raw = await fs.promises.readFile(wsPath, 'utf-8')
-        wsData = JSON.parse(raw) as AdaWorkspaceFile
-      }
-
-      const children = Array.isArray(wsData.children) ? wsData.children : []
-      const child = children.find((e: any) => e?.id === childId)
-      if (!child) return { success: true, deleted: false, reason: 'child_not_found' }
-      const nextChildren = children.filter((e: any) => e?.id !== childId)
-      const childType = String(child?.type ?? '').toLowerCase()
-
-      const nextManifest = hydrateWorkspaceManifest({
-        ...wsData,
-        children: nextChildren,
-      })
-      const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = nextManifest as any
-
-      if (isZip && zip) {
-        if (childType === 'dataset' && child.filePath) {
-          zip.remove(`datasets/${child.filePath}`)
-        }
-        zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
-        const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
-        writeAtomicSync(wsPath, zipBuffer)
-      } else {
-        const nextEmbeddedDatasets = childType === 'dataset'
-          ? normalizeEmbeddedDatasets(wsData as AdaWorkspaceFile).filter((entry) => entry.datasetId !== childId)
-          : normalizeEmbeddedDatasets(wsData as AdaWorkspaceFile)
-
-        const updated: AdaFileV3 = {
-          ...cleanData,
-          _metis: true,
-          _version: '3.0',
-          embeddedDatasets: nextEmbeddedDatasets,
-        }
-        writeAtomicSync(wsPath, JSON.stringify(updated, null, 2))
-      }
-
-      return { success: true, deleted: true, childId, childType, deletedFiles: [] }
+    if (!stat.isFile()) {
+      throw new Error('Workspace path must point to a .metisws file, not a directory.')
+    }
+    if (!(await isZipFile(wsPath))) {
+      throw new Error('Workspace file must be a ZIP archive.')
     }
 
-    // ── v1 legacy folder format ─────────────────────────────────────────────
-    const manifestPath = path.join(wsPath, 'workspace.json')
-    if (!fs.existsSync(manifestPath)) throw new Error('workspace.json not found.')
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8')) as WorkspaceManifest
-    const children = Array.isArray(manifest.children) ? manifest.children : []
+    const fileBuffer = await fs.promises.readFile(wsPath)
+    const zip = await JSZip.loadAsync(fileBuffer)
+    const wsJsonFile = zip.file('workspace.json')
+    if (!wsJsonFile) {
+      throw new Error('workspace.json not found in ZIP archive.')
+    }
+    const wsJsonText = await wsJsonFile.async('text')
+    const wsData = JSON.parse(wsJsonText) as WorkspaceManifest
+
+    const children = Array.isArray(wsData.children) ? wsData.children : []
     const child = children.find((e: any) => e?.id === childId)
     if (!child) return { success: true, deleted: false, reason: 'child_not_found' }
-    manifest.children = children.filter((e: any) => e?.id !== childId)
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8')
-    const deleteCandidates = new Set<string>()
+    const nextChildren = children.filter((e: any) => e?.id !== childId)
     const childType = String(child?.type ?? '').toLowerCase()
-    if (childType === 'dataset') {
-      deleteCandidates.add(path.join('datasets', `${childId}.csv`))
-      deleteCandidates.add(path.join('datasets', `${childId}.xlsx`))
-      deleteCandidates.add(path.join('datasets', `${childId}.xls`))
-      deleteCandidates.add('dataset.csv')
-    } else {
-      deleteCandidates.add(`${childId}.hbe`)
-      deleteCandidates.add(`${childId}.json`)
-      deleteCandidates.add(`${childId}.result.json`)
+
+    const nextManifest = hydrateWorkspaceManifest({
+      ...wsData,
+      children: nextChildren,
+    })
+    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = nextManifest as any
+
+    if (childType === 'dataset' && child.filePath) {
+      zip.remove(`datasets/${child.filePath}`)
     }
-    const deletedFiles: string[] = []
-    for (const candidate of deleteCandidates) {
-      if (!candidate || candidate === 'workspace.json') continue
-      const target = path.resolve(path.join(wsPath, candidate))
-      if (!target.startsWith(wsPath) || !fs.existsSync(target)) continue
-      if (!fs.statSync(target).isFile()) continue
-      fs.unlinkSync(target)
-      deletedFiles.push(target)
-    }
-    return { success: true, deleted: true, childId, childType, deletedFiles }
+    zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
+    const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+    writeAtomicSync(wsPath, zipBuffer)
+
+    return { success: true, deleted: true, childId, childType, deletedFiles: [] }
   } catch (err: any) {
     console.error('[main] workspace:deleteChild error:', err.message)
     return { success: false, error: err.message }
@@ -4079,51 +3837,31 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
 })
 
 /**
- * Extract the embedded dataset from a workspace file to a temp location.
+ * Extract a managed dataset from a ZIP workspace to a temp location.
  * The R backend calls this (via IPC) to get a real file path it can read.
  */
-ipcMain.handle('workspace:extractDataset', async (_, payload: string | { adaFilePath?: string; datasetId?: string }) => {
+ipcMain.handle('workspace:extractDataset', async (_, payload: string | { workspacePath?: string; datasetId?: string }) => {
   try {
     const requestedWorkspacePath = typeof payload === 'string'
       ? payload
-      : String(payload?.adaFilePath ?? '')
-    const adaFilePath = validateWorkspaceFilePath(requestedWorkspacePath)
+      : String(payload?.workspacePath ?? '')
+    const workspacePath = validateWorkspaceFilePath(requestedWorkspacePath)
     const datasetId = typeof payload === 'string'
       ? ''
       : (payload?.datasetId ? ensureSafeDatasetId(payload.datasetId) : '')
-    if (!fs.existsSync(adaFilePath)) throw new Error('Workspace file not found.')
-    const stat = fs.statSync(adaFilePath)
-    if (stat.isDirectory()) {
-      const extCandidates = ['.csv', '.xlsx', '.xls']
-      const datasetPaths = datasetId
-        ? extCandidates.map((ext) => path.join(adaFilePath, 'datasets', `${datasetId}${ext}`))
-        : []
-      const fallbackPaths = [...datasetPaths, path.join(adaFilePath, 'dataset.csv')]
-      const existingPath = fallbackPaths.find((candidate) => fs.existsSync(candidate))
-      if (existingPath) return { success: true, datasetTempPath: existingPath }
-      return { success: false, error: 'Dataset file not found in legacy workspace.' }
+    if (!(await isZipFile(workspacePath))) {
+      throw new Error('Workspace file must be a ZIP archive.')
     }
-    if (await isZipFile(adaFilePath)) {
-      const ws = await readAdaFile(adaFilePath, true)
-      if (!ws) throw new Error('Could not read ZIP workspace.')
-      const datasetChildren = getManifestDatasetChildren(ws)
-      const targetDataset = datasetId
-        ? datasetChildren.find((entry) => entry.id === datasetId)
-        : datasetChildren[0]
-      if (!targetDataset || !targetDataset.datasetTempPath) {
-        return { success: false, error: 'No dataset found in this workspace.' }
-      }
-      return { success: true, datasetTempPath: targetDataset.datasetTempPath }
-    }
-    const wsDataText = await fs.promises.readFile(adaFilePath, 'utf-8')
-    const wsData = JSON.parse(wsDataText) as AdaWorkspaceFile
-    const embeddedDatasets = normalizeEmbeddedDatasets(wsData)
+    const ws = await readWorkspaceZipFile(workspacePath, true)
+    if (!ws) throw new Error('Could not read ZIP workspace.')
+    const datasetChildren = getManifestDatasetChildren(ws)
     const targetDataset = datasetId
-      ? embeddedDatasets.find((entry) => entry.datasetId === datasetId)
-      : embeddedDatasets[0]
-    if (!targetDataset) return { success: false, error: 'No embedded dataset in this workspace.' }
-    const tempPath = await extractEmbeddedDataset(wsData.id, targetDataset.datasetId, targetDataset.base64Data, targetDataset.originalName)
-    return { success: true, datasetTempPath: tempPath }
+      ? datasetChildren.find((entry) => entry.id === datasetId)
+      : datasetChildren[0]
+    if (!targetDataset || !targetDataset.datasetTempPath) {
+      return { success: false, error: 'No dataset found in this workspace.' }
+    }
+    return { success: true, datasetTempPath: targetDataset.datasetTempPath }
   } catch (err: any) {
     console.error('[main] workspace:extractDataset error:', err.message)
     return { success: false, error: err.message }

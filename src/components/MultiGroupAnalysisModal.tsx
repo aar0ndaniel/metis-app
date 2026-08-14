@@ -9,6 +9,17 @@ import {
   SquaresFour,
   X,
 } from '@phosphor-icons/react'
+import type {
+  HocEstimationMethod,
+  HocMethod,
+  HocSettings,
+  HocTwoStageApproach,
+} from '../utils/hocSettings'
+import {
+  HOC_ESTIMATION_METHODS,
+  hocEstimationMethodLabel,
+  hocSettingsFromEstimationMethod,
+} from '../utils/hocSettings'
 
 export interface MultiGroupAnalysisSettings {
   groupingVariable: string
@@ -17,12 +28,17 @@ export interface MultiGroupAnalysisSettings {
   nboot: number
   alpha: number
   seed: number
+  baseHocMethod?: HocEstimationMethod
+  hocMethod?: HocMethod
+  hocTwoStage?: HocTwoStageApproach
 }
 
 export interface MultiGroupAnalysisModalProps {
   modelName: string
   groupingOptions: string[]
   datasetRows?: string[][]
+  hasHigherOrderConstructs?: boolean
+  initialHocSettings?: HocSettings
   isRunning?: boolean
   onClose: () => void
   onRun?: (settings: MultiGroupAnalysisSettings) => void
@@ -90,6 +106,8 @@ function validateSeed(value: string): string | null {
 export default function MultiGroupAnalysisModal({
   groupingOptions,
   datasetRows = [],
+  hasHigherOrderConstructs = false,
+  initialHocSettings = { method: 'Two-stage', twoStage: 'Disjoint two-stage' },
   isRunning = false,
   onClose,
   onRun,
@@ -100,6 +118,8 @@ export default function MultiGroupAnalysisModal({
   const [nbootInput, setNbootInput] = useState('500')
   const [alphaInput, setAlphaInput] = useState(String(DEFAULT_ALPHA))
   const [seedInput, setSeedInput] = useState(String(DEFAULT_SEED))
+  const baseHocMethod = hocEstimationMethodLabel(initialHocSettings)
+  const [hocEstimationMethod, setHocEstimationMethod] = useState<HocEstimationMethod>(baseHocMethod)
 
   const cleanGroupingOptions = useMemo(
     () => groupingOptions.map((option) => String(option ?? '').trim()).filter(Boolean),
@@ -135,6 +155,7 @@ export default function MultiGroupAnalysisModal({
 
   const handleRun = () => {
     if (calculateDisabled) return
+    const selectedHocSettings = hocSettingsFromEstimationMethod(hocEstimationMethod)
     onRun?.({
       groupingVariable,
       groupA,
@@ -142,6 +163,11 @@ export default function MultiGroupAnalysisModal({
       nboot: Number(nbootInput),
       alpha: Number(alphaInput),
       seed: Number(seedInput),
+      ...(hasHigherOrderConstructs ? {
+        baseHocMethod,
+        hocMethod: selectedHocSettings.method,
+        hocTwoStage: selectedHocSettings.twoStage,
+      } : {}),
     })
   }
 
@@ -183,7 +209,7 @@ export default function MultiGroupAnalysisModal({
         aria-label="Multi Group Analysis"
         className="w-[520px] max-w-[calc(100vw-32px)] overflow-hidden rounded-lg border border-white/10 bg-[var(--color-elevated)]"
         style={{
-          height: 410,
+          height: hasHigherOrderConstructs ? 486 : 410,
           maxHeight: 'calc(100vh - 32px)',
           display: 'flex',
           flexDirection: 'column',
@@ -388,7 +414,53 @@ export default function MultiGroupAnalysisModal({
             </div>
           </div>
 
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr', gap: 8, paddingTop: 40 }}>
+          {hasHigherOrderConstructs && (
+            <div style={{ display: 'grid', gap: 6, marginTop: 12 }}>
+              <span style={labelStyle}>HOC estimation method</span>
+              <div
+                role="radiogroup"
+                aria-label="HOC estimation method"
+                className="grid"
+                style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6 }}
+              >
+                {HOC_ESTIMATION_METHODS.map((method) => {
+                  const selected = hocEstimationMethod === method
+                  return (
+                    <button
+                      key={method}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      disabled={isRunning}
+                      onClick={() => setHocEstimationMethod(method)}
+                      style={{
+                        minHeight: 36,
+                        padding: '6px 8px',
+                        borderRadius: 6,
+                        border: selected
+                          ? '1px solid rgb(var(--color-accent-rgb) / 0.62)'
+                          : '1px solid var(--color-border)',
+                        background: selected
+                          ? 'rgb(var(--color-accent-rgb) / 0.14)'
+                          : 'var(--color-input, var(--color-elevated))',
+                        color: selected ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                        fontFamily: 'DM Sans, Inter, sans-serif',
+                        fontSize: 11,
+                        cursor: isRunning ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      {method}
+                    </button>
+                  )
+                })}
+              </div>
+              <p style={{ margin: 0, color: 'var(--color-text-muted)', fontFamily: 'DM Sans, Inter, sans-serif', fontSize: 11, lineHeight: '15px' }}>
+                Defaults to the method used for the fitted PLS-SEM model. Changing it re-estimates the model for MGA using the selected method.
+              </p>
+            </div>
+          )}
+
+          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr 1fr', gap: 8, paddingTop: hasHigherOrderConstructs ? 12 : 40 }}>
             {[
               { id: 'mga-nboot', label: 'Bootstrap subsamples', value: nbootInput, error: nbootError, onChange: setNbootInput, inputMode: 'numeric' as const },
               { id: 'mga-alpha', label: 'Alpha', value: alphaInput, error: alphaError, onChange: setAlphaInput, inputMode: 'decimal' as const },

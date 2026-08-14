@@ -10,13 +10,13 @@ const mainSource = await fs.readFile(path.join(workspaceRoot, 'electron/main.ts'
 
 assert.match(
   mainSource,
-  /ipcMain\.handle\('workspace:list'[\s\S]*const ws = await readAdaFile\(fullPath\)/,
+  /ipcMain\.handle\('workspace:list'[\s\S]*const ws = await readWorkspaceZipFile\(fullPath\)/,
   'Workspace startup listing should extract embedded datasets so reopened workspaces have usable datasetTempPath values.',
 )
 
 assert.doesNotMatch(
   mainSource,
-  /ipcMain\.handle\('workspace:list'[\s\S]*readAdaFile\(fullPath,\s*false\)/,
+  /ipcMain\.handle\('workspace:list'[\s\S]*readWorkspaceZipFile\(fullPath,\s*false\)/,
   'Workspace startup listing should not skip dataset extraction because analysis modals need rows after app restart.',
 )
 

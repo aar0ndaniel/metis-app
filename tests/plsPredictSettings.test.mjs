@@ -58,8 +58,11 @@ await runTest('PLSpredict settings normalize defaults and bounds consistently', 
   } = bundled.module ?? {}
 
   assert.deepEqual(DEFAULT_PLS_PREDICT_SETTINGS, {
-    folds: 5,
-    repetitions: 3,
+    folds: 10,
+    repetitions: 1,
+    technique: 'Direct antecedents (DA)',
+    predictionSeed: 123,
+    validationMode: 'K-fold',
     cvpatEnabled: false,
   })
 
@@ -75,6 +78,9 @@ await runTest('PLSpredict settings normalize defaults and bounds consistently', 
     {
       folds: 20,
       repetitions: 1,
+      technique: 'Direct antecedents (DA)',
+      predictionSeed: 123,
+      validationMode: 'K-fold',
       cvpatEnabled: true,
     }
   )
@@ -102,6 +108,9 @@ await runTest('PLSpredict settings can be restored from saved workspace state an
     {
       folds: 7,
       repetitions: 4,
+      technique: 'Direct antecedents (DA)',
+      predictionSeed: 123,
+      validationMode: 'K-fold',
       cvpatEnabled: true,
     }
   )
@@ -121,6 +130,9 @@ await runTest('PLSpredict settings can be restored from saved workspace state an
     {
       folds: 6,
       repetitions: 2,
+      technique: 'Direct antecedents (DA)',
+      predictionSeed: 123,
+      validationMode: 'K-fold',
       cvpatEnabled: true,
     }
   )
@@ -138,6 +150,9 @@ await runTest('PLSpredict settings can be restored from saved workspace state an
     {
       folds: 8,
       repetitions: 3,
+      technique: 'Direct antecedents (DA)',
+      predictionSeed: 123,
+      validationMode: 'K-fold',
       cvpatEnabled: true,
     }
   )
@@ -149,6 +164,8 @@ await runTest('PLSpredict settings can be restored from saved workspace state an
           plspredict: {
             folds: 12,
             repetitions: 5,
+            technique: 'Entire antecedents (EA)',
+            predictionSeed: 42,
           },
         },
       },
@@ -163,6 +180,9 @@ await runTest('PLSpredict settings can be restored from saved workspace state an
     {
       folds: 12,
       repetitions: 5,
+      technique: 'Entire antecedents (EA)',
+      predictionSeed: 42,
+      validationMode: 'K-fold',
       cvpatEnabled: true,
     }
   )

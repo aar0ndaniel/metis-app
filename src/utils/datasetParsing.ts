@@ -1,3 +1,5 @@
+import { isMissingDatasetValue } from './datasetMissing'
+
 export interface ParseResult {
   headers: string[]
   rows: string[][]
@@ -84,10 +86,9 @@ function parseCSVText(text: string, delimiter: string): ParseResult {
   const headers = splitLine(lines[0] || '')
   const allRows = lines.slice(1).map(splitLine)
   const rows = allRows.slice(0, HEAD_ROWS)
-  const missingTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
   let missing = 0
   allRows.forEach((row) => row.forEach((cell) => {
-    if (missingTokens.has(cell.toLowerCase())) missing += 1
+    if (isMissingDatasetValue(cell)) missing += 1
   }))
 
   return { headers, rows, allRows, totalRows: allRows.length, missing, delimiter }
@@ -113,10 +114,9 @@ export async function parseExcelBase64(base64: string): Promise<ParseResult> {
   const headers = data[0].map(String)
   const allRows = data.slice(1).map((row) => row.map(String))
   const rows = allRows.slice(0, HEAD_ROWS)
-  const missingTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
   let missing = 0
   allRows.forEach((row) => row.forEach((cell) => {
-    if (missingTokens.has(String(cell).toLowerCase())) missing += 1
+    if (isMissingDatasetValue(cell)) missing += 1
   }))
 
   return { headers, rows, allRows, totalRows: allRows.length, missing, delimiter: '' }

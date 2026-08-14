@@ -7,6 +7,7 @@ export type PanelIconKey =
   | 'check-circle'
   | 'info'
   | 'folders'
+  | 'settings'
 
 interface PanelDefinition {
   id: string
@@ -87,6 +88,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       defaultOpen: false,
       tone: 'subtle',
       items: [
+        { id: 'algorithm-settings', label: 'Algorithm settings', iconKey: 'settings', isLeaf: true },
         { id: 'execution-log', label: 'Execution log', iconKey: 'file-code', isLeaf: true },
       ],
     },
@@ -132,6 +134,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       defaultOpen: false,
       tone: 'subtle',
       items: [
+        { id: 'algorithm-settings', label: 'Algorithm settings', iconKey: 'settings', isLeaf: true },
         { id: 'execution-log', label: 'Execution log', iconKey: 'file-code', isLeaf: true },
       ],
     },
@@ -157,7 +160,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
         { id: 'lv-predictions-errors', label: 'LV predictions and errors', iconKey: 'table' },
         { id: 'plsem-mv-error-hist', label: 'MV error histograms', iconKey: 'graph', showChart: true },
         { id: 'plsem-lv-error-hist', label: 'LV error histograms', iconKey: 'graph', showChart: true },
-        { id: 'cvpat-lv-summary', label: 'CVPAT LV summary', iconKey: 'table' },
+        { id: 'cvpat-lv-summary', label: 'CVPAT', iconKey: 'table' },
       ],
     },
     {
@@ -166,6 +169,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       defaultOpen: false,
       tone: 'subtle',
       items: [
+        { id: 'algorithm-settings', label: 'Algorithm settings', iconKey: 'settings', isLeaf: true },
         { id: 'execution-log', label: 'Execution log', iconKey: 'file-code', isLeaf: true },
       ],
     },
@@ -200,6 +204,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       defaultOpen: false,
       tone: 'subtle',
       items: [
+        { id: 'algorithm-settings', label: 'Algorithm settings', iconKey: 'settings', isLeaf: true },
         { id: 'execution-log', label: 'Execution log', iconKey: 'file-code', isLeaf: true },
       ],
     },
@@ -215,6 +220,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
         { id: 'equality-means', label: 'Equality of Means', iconKey: 'table' },
         { id: 'equality-variances', label: 'Equality of Variances', iconKey: 'table' },
         { id: 'invariance-classification', label: 'Invariance Classification', iconKey: 'check-circle' },
+        { id: 'algorithm-settings', label: 'Algorithm settings', iconKey: 'settings', isLeaf: true },
         { id: 'execution-log', label: 'Execution Log', iconKey: 'file-code', isLeaf: true },
       ],
     },
@@ -226,6 +232,7 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       defaultOpen: true,
       items: [
         { id: 'overview', label: 'Overview', iconKey: 'info' },
+        { id: 'algorithm-settings', label: 'Algorithm settings', iconKey: 'settings', isLeaf: true },
         {
           id: 'mga-comparisons',
           label: 'MULTI GROUP COMPARISON',

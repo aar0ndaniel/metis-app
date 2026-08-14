@@ -230,6 +230,37 @@ await runTest('data view transform helper maps unique column terms into typed re
   )
 })
 
+await runTest('missing value navigation returns row-major locations and wraps in both directions', async () => {
+  const bundled = await bundleModule('src/utils/datasetMissing.ts', 'datasetMissing.navigation.test.bundle.mjs')
+  assert.ok(!bundled.error, `Expected src/utils/datasetMissing.ts to exist and compile, got: ${bundled.error?.message ?? 'unknown error'}`)
+
+  const {
+    findMissingCellLocations,
+    getNextMissingCellIndex,
+    getPreviousMissingCellIndex,
+  } = bundled.module ?? {}
+  assert.equal(typeof findMissingCellLocations, 'function', 'findMissingCellLocations should be exported')
+  assert.equal(typeof getNextMissingCellIndex, 'function', 'getNextMissingCellIndex should be exported')
+  assert.equal(typeof getPreviousMissingCellIndex, 'function', 'getPreviousMissingCellIndex should be exported')
+
+  const locations = findMissingCellLocations([
+    ['1', '', 'NA'],
+    ['.', '4', '5'],
+    ['6', '7', 'none'],
+  ])
+
+  assert.deepEqual(locations, [
+    { rowIndex: 0, columnIndex: 1 },
+    { rowIndex: 0, columnIndex: 2 },
+    { rowIndex: 1, columnIndex: 0 },
+    { rowIndex: 2, columnIndex: 2 },
+  ])
+  assert.equal(getNextMissingCellIndex(-1, locations.length), 0)
+  assert.equal(getNextMissingCellIndex(3, locations.length), 0)
+  assert.equal(getPreviousMissingCellIndex(0, locations.length), 3)
+  assert.equal(getPreviousMissingCellIndex(2, locations.length), 1)
+})
+
 await runTest('dataset column helpers normalize locale decimals and duplicate headers for persistence', async () => {
   const bundled = await bundleModule('src/utils/datasetColumns.ts', 'datasetColumns.test.bundle.mjs')
   assert.ok(!bundled.error, `Expected src/utils/datasetColumns.ts to exist and compile, got: ${bundled.error?.message ?? 'unknown error'}`)

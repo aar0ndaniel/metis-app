@@ -1,12 +1,18 @@
 export interface PlsPredictSettings {
   folds: number
   repetitions: number
+  technique: 'Direct antecedents (DA)' | 'Entire antecedents (EA)'
+  predictionSeed: number
+  validationMode: 'K-fold' | 'LOOCV'
   cvpatEnabled: boolean
 }
 
 export const DEFAULT_PLS_PREDICT_SETTINGS: PlsPredictSettings = {
-  folds: 5,
-  repetitions: 3,
+  folds: 10,
+  repetitions: 1,
+  technique: 'Direct antecedents (DA)',
+  predictionSeed: 123,
+  validationMode: 'K-fold',
   cvpatEnabled: false,
 }
 
@@ -28,10 +34,24 @@ function clamp(value: number | null, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, value))
 }
 
+function normalizeTechnique(value: unknown): PlsPredictSettings['technique'] {
+  const text = String(value ?? '').trim().toLowerCase()
+  return text.includes('entire') || text === 'ea'
+    ? 'Entire antecedents (EA)'
+    : 'Direct antecedents (DA)'
+}
+
+function normalizeValidationMode(value: unknown): PlsPredictSettings['validationMode'] {
+  return String(value ?? '').trim().toLowerCase() === 'loocv' ? 'LOOCV' : 'K-fold'
+}
+
 export function normalizePlsPredictSettings(settings?: Partial<PlsPredictSettings> | null): PlsPredictSettings {
   return {
     folds: clamp(coerceWholeNumber(settings?.folds), 2, 20, DEFAULT_PLS_PREDICT_SETTINGS.folds),
     repetitions: clamp(coerceWholeNumber(settings?.repetitions), 1, 50, DEFAULT_PLS_PREDICT_SETTINGS.repetitions),
+    technique: normalizeTechnique(settings?.technique),
+    predictionSeed: clamp(coerceWholeNumber(settings?.predictionSeed), 1, 2147483647, DEFAULT_PLS_PREDICT_SETTINGS.predictionSeed),
+    validationMode: normalizeValidationMode(settings?.validationMode),
     cvpatEnabled: settings?.cvpatEnabled === true,
   }
 }
@@ -48,6 +68,9 @@ export function readPlsPredictSettingsFromResults(results?: Record<string, unkno
   return normalizePlsPredictSettings({
     folds: metaSettings?.folds ?? algorithmSettings?.folds,
     repetitions: metaSettings?.repetitions ?? algorithmSettings?.repetitions,
+    technique: metaSettings?.technique ?? algorithmSettings?.prediction_technique,
+    predictionSeed: metaSettings?.predictionSeed ?? algorithmSettings?.prediction_seed,
+    validationMode: metaSettings?.validationMode ?? algorithmSettings?.cross_validation,
     cvpatEnabled:
       metaSettings?.cvpatEnabled ??
       algorithmSettings?.cvpat_enabled ??

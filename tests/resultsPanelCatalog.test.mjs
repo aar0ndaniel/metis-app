@@ -93,7 +93,10 @@ await runTest('results panel catalog exposes the approved mode-specific sidebars
   assert.ok(!collectIds(bootstrap).includes('model-fit'))
   assert.ok(!collectIds(bootstrap).includes('model-select'))
   assert.equal(bootstrap.find((section) => section.id === 'base-model-quality')?.defaultOpen, true)
-  assert.ok(!collectIds(plspredict).includes('algorithm-settings'))
+  assert.ok(collectIds(plsSem).includes('algorithm-settings'))
+  assert.ok(collectIds(bootstrap).includes('algorithm-settings'))
+  assert.ok(collectIds(plspredict).includes('algorithm-settings'))
+  assert.ok(collectIds(advanced).includes('algorithm-settings'))
   assert.ok(!collectIds(moderatedPlsPredict).includes('moderation-summary'))
   assert.ok(collectIds(plspredict).includes('cvpat-lv-summary'))
   assert.ok(!collectIds(plspredict).includes('cvpat-mv-summary'))
@@ -116,6 +119,7 @@ await runTest('results panel catalog exposes the approved mode-specific sidebars
     'ceiling-lines',
     'bottleneck-table',
     'cipma-priorities',
+    'algorithm-settings',
     'execution-log',
   ])
 })

@@ -185,4 +185,16 @@ assert.doesNotMatch(
   'ModelCanvas should not hard-code the MICOM configural status to pending after the precheck bridge exists.',
 )
 
+assert.match(
+  plumberSource,
+  /pr\$handle\("POST", "\/run-permutation-configural-precheck"[\s\S]*prepare_payload\(req\)[\s\S]*assert_micom_payload_supported\(payload\)[\s\S]*get_cached_pls_core\(payload, data\)/,
+  'MICOM configural precheck should reject HOCs after validation and before core estimation.',
+)
+
+assert.match(
+  plumberSource,
+  /pr\$handle\("POST", "\/run-permutation-analysis"[\s\S]*prepare_payload\(req\)[\s\S]*assert_micom_payload_supported\(payload\)[\s\S]*get_cached_pls_core\(payload, data\)/,
+  'Full MICOM should reject HOCs after validation and before core estimation.',
+)
+
 console.log('PASS permutation analysis plumber contract')

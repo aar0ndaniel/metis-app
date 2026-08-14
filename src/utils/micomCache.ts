@@ -30,17 +30,25 @@ export interface MicomCacheEntry {
 }
 
 export interface MicomOverviewForMga {
-  status: 'full' | 'partial' | 'not-run'
+  status: 'full' | 'partial' | 'not-run' | 'unavailable'
   message: string
-  source: 'cached-micom' | 'not-run'
+  source: 'cached-micom' | 'not-run' | 'hoc-not-supported'
 }
 
 export const MICOM_MGA_NOT_RUN_MESSAGE = 'MICOM was not run for this analysis. Interpret results well.'
+export const MICOM_MGA_HOC_UNAVAILABLE_MESSAGE =
+  'MICOM is unavailable for HOC models; MGA was estimated without a MICOM invariance assessment.'
 
 export const MICOM_MGA_NOT_RUN_OVERVIEW: MicomOverviewForMga = Object.freeze({
   status: 'not-run',
   message: MICOM_MGA_NOT_RUN_MESSAGE,
   source: 'not-run',
+})
+
+export const MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW: MicomOverviewForMga = Object.freeze({
+  status: 'unavailable',
+  message: MICOM_MGA_HOC_UNAVAILABLE_MESSAGE,
+  source: 'hoc-not-supported',
 })
 
 function normalizeToken(value: unknown): string {

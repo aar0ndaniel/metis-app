@@ -49,6 +49,7 @@ assert.deepEqual(permutationPanelIds, [
   'equality-means',
   'equality-variances',
   'invariance-classification',
+  'algorithm-settings',
   'execution-log',
 ])
 const hocPermutationPanelIds = panelCatalog
@@ -262,7 +263,7 @@ assert.match(
 )
 assert.match(
   modelCanvasSource,
-  /analysis:\s*analysisState\s*\?[\s\S]*\.\.\.analysisState[\s\S]*modelSnapshot:\s*snapshot/,
+  /\.\.\.\(analysisState\s*\?\s*\{\s*analysis:\s*\{\s*\.\.\.analysisState,\s*modelSnapshot:\s*snapshot\s*\}\s*\}\s*:\s*\{\}\)/,
   'ModelCanvas should persist the analysis-time model snapshot inside saved analysis state.',
 )
 assert.match(

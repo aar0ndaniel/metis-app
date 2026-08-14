@@ -882,6 +882,38 @@ function buildStructuralSection(
   }
 }
 
+function buildSpecificIndirectSection(
+  request: TarkReportTableRequest,
+  bootstrap: Record<string, unknown> | undefined,
+  pls: Record<string, unknown> | undefined,
+): TarkReportSection | null {
+  const rows = toRows(
+    (bootstrap as any)?.final_results?.specific_indirect_effects
+      ?? (pls as any)?.final_results?.specific_indirect_effects,
+  )
+  if (!rows.length) return null
+
+  const mapIndirectPath = (value: unknown): string => String(value ?? '')
+    .split(/\s*(?:->|→)\s*/)
+    .filter(Boolean)
+    .map((part) => mapConstructLabel(request, part))
+    .join(' → ')
+
+  return {
+    title: 'Specific indirect effects',
+    headers: ['Path', 'β', 'STDEV', 't-value', '2.5% CI', '97.5% CI'],
+    rows: rows.map((row, index) => [
+      mapIndirectPath(readValue(row, ['path', 'Path', 'row_name', 'row']) ?? `Path ${index + 1}`),
+      formatCell(readValue(row, ['Original Est.', 'Original.Est.', 'Original Estimate', 'Original sample', 'Original sample (O)', 'O', 'coefficient', 'estimate', 'value'])),
+      formatCell(readValue(row, ['Bootstrap SD', 'Bootstrap.SD', 'STDEV', 'SDEV', 'Standard Deviation', 'Standard deviation (STDEV)'])),
+      formatCell(readValue(row, ['T Stat.', 'T.Stat.', 'T Statistic', 'T statistics', 'T statistics (|O/STDEV|)', 'T Value', 'T values', 't_value', 't'])),
+      formatCell(readValue(row, ['2.5% CI', '2.5% CI (BC)', '2.5% CI (bias-corrected)', 'CI lower', 'lower'])),
+      formatCell(readValue(row, ['97.5% CI', '97.5% CI (BC)', '97.5% CI (bias-corrected)', 'CI upper', 'upper'])),
+    ]),
+    note: 'Note. β = specific indirect effect; STDEV = bootstrap standard deviation; CI = bootstrap confidence interval. The displayed bounds are the standard 95% interval limits (2.5% and 97.5%).',
+  }
+}
+
 function buildPowerSection(
   request: TarkReportTableRequest,
   pls: Record<string, unknown> | undefined,
@@ -1262,7 +1294,17 @@ function buildMgaComparisonSection(
   const biasCorrected = toRows(family.biasCorrectedConfidenceIntervals)
   const henseler = toRows(family.henselerPlsMga)
   const parametric = toRows(family.parametricTest)
-  const sourceRows = [...biasCorrected, ...henseler, ...parametric]
+  const welch = toRows(family.welchTest)
+  const sourceRows = [
+    ...biasCorrected,
+    ...henseler.map((row) => ({ ...row, henseler_p: readValue(row, ['pls_mga_p', 'p_value']) })),
+    ...parametric.map((row) => ({ ...row, parametric_p: readValue(row, ['p_value']) })),
+    ...welch.map((row) => ({
+      ...row,
+      welch_p: readValue(row, ['p_value']),
+      welch_df: readValue(row, ['df']),
+    })),
+  ]
   if (!sourceRows.length) return null
 
   const rowMap = new Map<string, Record<string, unknown>>()
@@ -1287,8 +1329,8 @@ function buildMgaComparisonSection(
   return {
     title: sectionTitle,
     headers: sourceKey === 'pathCoefficients'
-      ? ['Path', 'Group A β', 'Group B β', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision']
-      : ['Construct', 'Indicator', `Group A ${metricLabel}`, `Group B ${metricLabel}`, 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Decision'],
+      ? ['Path', 'Group A β', 'Group B β', 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Welch p-value', 'Welch df', 'Decision']
+      : ['Construct', 'Indicator', `Group A ${metricLabel}`, `Group B ${metricLabel}`, 'Difference', 'Bias-corrected 95% CI', 'PLS-MGA p-value', 'Parametric p-value', 'Welch p-value', 'Welch df', 'Decision'],
     rows: Array.from(rowMap.values()).map((row) => {
       const path = getRowPathLabel(row)
       let ciLower = readValue(row, ['difference_ci_lower', 'diff_ci_lower', 'ci_lower', 'lower'])
@@ -1309,6 +1351,8 @@ function buildMgaComparisonSection(
 
       const henselerP = readValue(row, ['pls_mga_p', 'p_value_henseler', 'henseler_p']) ?? readValue(row, ['pls_mga_p', 'p_value'])
       const parametricP = readValue(row, ['parametric_p_value', 'parametric_p', 'p_value_parametric']) ?? readValue(row, ['p_value'])
+      const welchP = readValue(row, ['welch_p', 'welch_p_value', 'p_value_welch'])
+      const welchDf = readValue(row, ['welch_df', 'df_welch'])
       const decision = normalizeDecisionLabel(readValue(row, ['result', 'decision', 'status']), 'Significant difference', 'No significant difference')
       
       if (sourceKey === 'pathCoefficients') {
@@ -1320,6 +1364,8 @@ function buildMgaComparisonSection(
           formatInterval(ciLower, ciUpper),
           formatPValueCell(henselerP),
           formatPValueCell(parametricP),
+          formatPValueCell(welchP),
+          formatCell(welchDf),
           decision,
         ]
       }
@@ -1335,6 +1381,8 @@ function buildMgaComparisonSection(
         formatInterval(ciLower, ciUpper),
         formatPValueCell(henselerP),
         formatPValueCell(parametricP),
+        formatPValueCell(welchP),
+        formatCell(welchDf),
         decision,
       ]
     }),
@@ -1712,7 +1760,8 @@ export function buildTarkReportSections(
   const sections = [
     buildMeasurementSection(request, pls, savedModel),
     buildDiscriminantSection(request, pls),
-    buildStructuralSection(request, bootstrap, pls, savedModel),
+    buildStructuralSection(request, bootstrap, pls, savedModel, savedAnalyses),
+    buildSpecificIndirectSection(request, bootstrap, pls),
     buildPowerSection(request, pls, plspredict),
     buildModelFitSection(pls),
   ].filter((section): section is TarkReportSection => Boolean(section && section.rows.length))

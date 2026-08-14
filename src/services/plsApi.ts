@@ -33,6 +33,11 @@ export interface RunPlsRequest {
     initialWeights?: string
     maxIterations?: number
     stopCriterion?: string
+    missingData?: string
+    missingValue?: string
+    assessSyntax?: boolean
+    hocMethod?: string
+    hocTwoStage?: string
   }
 }
 
@@ -71,11 +76,18 @@ export interface RunBootstrapRequest extends RunPlsRequest {
   ciType?: string
   confidenceLevel?: string
   seed?: number
+  bootstrapSeed?: number
+  bootstrapTails?: string
+  bootstrapResampling?: string
+  bootstrapSignChanges?: string
 }
 
 export interface RunPlsPredictRequest extends RunPlsRequest {
   folds?: number
   repetitions?: number
+  technique?: string
+  predictionSeed?: number
+  validationMode?: string
   cvpatEnabled?: boolean
 }
 
@@ -107,6 +119,7 @@ export interface RunMultiGroupAnalysisRequest extends RunPlsRequest {
   nboot: number
   alpha: number
   seed: number
+  baseHocMethod?: string
 }
 
 export interface GenericAnalysisResponse extends AnalysisErrorMetadata {

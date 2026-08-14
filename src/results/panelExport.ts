@@ -34,7 +34,7 @@ const PANEL_TITLES: Record<string, string> = {
   'plspredict-lv-summary': 'LV Summary',
   'pls-lm-comparison': 'PLS vs LM Comparison',
   'q2-predict': 'Q²predict',
-  'cvpat-lv-summary': 'CVPAT LV Summary',
+  'cvpat-lv-summary': 'CVPAT',
   'mv-predictions-errors': 'MV Predictions and Errors',
   'lv-predictions-errors': 'LV Predictions and Errors',
   'plsem-mv-error-hist': 'MV Error Histograms',

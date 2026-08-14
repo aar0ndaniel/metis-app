@@ -210,7 +210,7 @@ await runTest('results chart config supports PLSpredict summary and comparison p
 await runTest('results view limits inline charts to advanced panels and PLSpredict error histograms', async () => {
   assert.match(
     resultsViewSource,
-    /import\s*\{\s*ResultChart\s*\}\s*from\s*['"]\.\.\/components\/ResultsCharts['"]/,
+    /import\s*\{\s*ResultChart(?:\s*,\s*buildChartSvgForPanel)?\s*\}\s*from\s*['"]\.\.\/components\/ResultsCharts['"]/,
     'ResultsView should import the shared ResultChart renderer.'
   )
   assert.match(

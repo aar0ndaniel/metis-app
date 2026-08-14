@@ -449,6 +449,23 @@ await runTest('panel data resolver exposes bootstrap HTMT confidence interval al
   const { getPanelDataFromResults } = bundled.module ?? {}
   assert.equal(typeof getPanelDataFromResults, 'function')
 
+  assert.deepEqual(
+    getPanelDataFromResults('mga', 'algorithm-settings', {
+      algorithm: {
+        settings: {
+          method: 'MGA',
+          nboot: 500,
+          algorithm_settings: { innerWeighting: 'path' },
+        },
+      },
+    }),
+    [
+      { Setting: 'method', Value: 'MGA' },
+      { Setting: 'nboot', Value: 500 },
+      { Setting: 'algorithm_settings.innerWeighting', Value: 'path' },
+    ],
+  )
+
   const fallbackRows = [{ row_name: 'GAI -> SM', '2.5% CI': 0.21, '97.5% CI': 0.74 }]
   assert.deepEqual(
     getPanelDataFromResults('bootstrap', 'htmt-confidence-intervals', {

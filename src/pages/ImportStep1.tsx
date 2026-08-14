@@ -12,9 +12,11 @@ import {
   FileCsv, FileXls, Info, ArrowRight, CaretDown, X, Warning,
 } from '@phosphor-icons/react'
 import { inferVariableTypesFromRows } from '../utils/datasetColumns'
+import { isMissingDatasetValue } from '../utils/datasetMissing'
 import { persistDatasetToWorkspace } from '../utils/datasetPersistence'
 import { writeDatasetViewCache } from '../utils/datasetViewCache'
 import { addDiagnostic } from '../utils/diagnostics'
+import { formatUserFriendlyDatasetError } from '../utils/userFriendlyErrors'
 import type { Workspace } from '../types/workspace'
 
 // ─── File icon / label by extension ──────────────────────────────────────────
@@ -98,7 +100,7 @@ function truncateDatasetName(name: string): string {
 }
 
 function getWorkspaceDisplayName(name: string): string {
-  return name.replace(/\.(ada|metis|metisws)$/i, '')
+  return name.replace(/\.metisws$/i, '')
 }
 
 function countWorkspaceDatasets(workspace: Workspace | null | undefined): number {
@@ -139,11 +141,9 @@ function parseCSVText(text: string, delimiter: string): ParseResult {
   const allRows  = lines.slice(1).map(splitLine)
   const headRows = allRows.slice(0, HEAD_ROWS)
 
-  // Count missing (empty cell or "NA" / "N/A" / "." / "na")
-  const missingTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
   let missing = 0
   allRows.forEach(row => row.forEach(cell => {
-    if (missingTokens.has(cell.toLowerCase())) missing++
+    if (isMissingDatasetValue(cell)) missing++
   }))
 
   return { headers, rows: headRows, allRows, totalRows: allRows.length, missing, delimiter }
@@ -173,10 +173,9 @@ async function parseExcelBase64(base64: string): Promise<ParseResult> {
   const allRows     = allRowsRaw.map(r => r.map(String))
   const headRows    = allRows.slice(0, HEAD_ROWS)
 
-  const missingTokens = new Set(['', 'na', 'n/a', '.', 'null', 'none', 'nan'])
   let missing = 0
   allRows.forEach(row => row.forEach((cell: string) => {
-    if (missingTokens.has(cell.toLowerCase())) missing++
+    if (isMissingDatasetValue(cell)) missing++
   }))
 
   return { headers, rows: headRows, allRows, totalRows: allRows.length, missing, delimiter: '' }
@@ -429,7 +428,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
       }
     } catch (err: any) {
       setStatus('error')
-      setParseError(err?.message ?? 'Unknown error while parsing file.')
+      setParseError(formatUserFriendlyDatasetError(err))
     }
   }, [filePath, fileContent, ext, isCSV, encoding])
 
@@ -492,7 +491,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
       const finalPath = persisted.internalName || fileName || 'dataset.csv'
       const normalizedWorkspacePath = targetWorkspacePath.replace(/\\/g, '/')
       const absoluteDatasetPath = persisted.datasetTempPath
-        || (normalizedWorkspacePath && !/\.(ada|metis|metisws)$/i.test(normalizedWorkspacePath)
+        || (normalizedWorkspacePath && !/\.metisws$/i.test(normalizedWorkspacePath)
           ? `${normalizedWorkspacePath}/${finalPath}`
           : finalPath)
 

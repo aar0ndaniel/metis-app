@@ -12,15 +12,25 @@ function structuredField(error: unknown, key: string): string {
   return ''
 }
 
+function sanitizeVisibleErrorText(text: string): string {
+  return text
+    .replace(/^:\s*/, '')
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*Backend:\s*/i.test(line))
+    .join('\n')
+    .replace(/\bhttps?:\/\/(?:127\.0\.0\.1|localhost):[0-9]+\b/gi, 'the local analysis engine')
+    .trim()
+}
+
 function normalizeErrorText(error: unknown): string {
   if (error instanceof Error) {
-    return error.message.replace(/^:\s*/, '').trim()
+    return sanitizeVisibleErrorText(error.message)
   }
   if (error && typeof error === 'object') {
     const structuredMessage = structuredField(error, 'error') || structuredField(error, 'backendDetail') || structuredField(error, 'message')
-    if (structuredMessage) return structuredMessage.replace(/^:\s*/, '').trim()
+    if (structuredMessage) return sanitizeVisibleErrorText(structuredMessage)
   }
-  return String(error ?? '').replace(/^:\s*/, '').trim()
+  return sanitizeVisibleErrorText(String(error ?? ''))
 }
 
 function hasAny(text: string, patterns: RegExp[]): boolean {
@@ -34,7 +44,7 @@ function packageName(raw: string): string {
 
 export function formatUserFriendlyAnalysisError(error: unknown): string {
   const userAction = stringField(error, 'userAction')
-  if (userAction) return userAction
+  if (userAction) return sanitizeVisibleErrorText(userAction)
 
   const cleanedRaw = normalizeErrorText(error)
   const msg = cleanedRaw.toLowerCase()
@@ -49,6 +59,10 @@ export function formatUserFriendlyAnalysisError(error: unknown): string {
 
   if (/dataset path is outside trusted metis workspace directories/.test(msg)) {
     return 'The selected dataset is outside the folders Metis is allowed to analyze. Re-import the dataset into the current workspace.'
+  }
+
+  if (/renderer file read blocked: path was not selected through an approved import dialog/.test(msg)) {
+    return 'Metis can see this dataset in the workspace, but the readable file copy is not available. Re-import the dataset into this workspace, then run the analysis again.'
   }
 
   if (/dataset file exceeds/.test(msg)) {
@@ -175,5 +189,17 @@ export function formatUserFriendlyAnalysisError(error: unknown): string {
     return 'One analysis setting is outside the allowed range. Reopen the settings dialog, choose a valid value, and run the analysis again.'
   }
 
-  return `The model could not be calculated. Backend detail: ${cleanedRaw}`
+  return `The model could not be calculated. Technical detail: ${cleanedRaw}`
+}
+
+export function formatUserFriendlyDatasetError(error: unknown): string {
+  const friendly = formatUserFriendlyAnalysisError(error)
+  if (!friendly.startsWith('The model could not be calculated.')) return friendly
+
+  const cleanedRaw = normalizeErrorText(error)
+  if (!cleanedRaw || /^unknown error$/i.test(cleanedRaw)) {
+    return 'The dataset could not be loaded. Re-import the dataset into this workspace, then try again.'
+  }
+
+  return `The dataset could not be loaded. Technical detail: ${cleanedRaw}`
 }

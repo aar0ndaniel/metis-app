@@ -33,10 +33,9 @@ const testEntryContent = `
 ${mainContent}
 
 export {
-  readAdaFile,
+  readWorkspaceZipFile,
   isZipFile,
   writeAtomicSync,
-  extractEmbeddedDataset,
   writeDatasetBufferIntoWorkspace,
   cleanLegacyTempDatasetDirectories,
   getTempDatasetsDir
@@ -73,9 +72,8 @@ const mockElectron = await import(pathToFileURL(path.resolve('./tests/mockElectr
 
 const {
   isZipFile,
-  readAdaFile,
+  readWorkspaceZipFile,
   writeAtomicSync,
-  extractEmbeddedDataset,
   writeDatasetBufferIntoWorkspace,
   cleanLegacyTempDatasetDirectories,
   getTempDatasetsDir
@@ -165,8 +163,8 @@ await runTest('Zip Slip Prevention and Path Traversal Protection', async () => {
 
   // Try to read/extract the workspace and assert it throws a traversal error
   try {
-    await readAdaFile(corruptWsPath, true)
-    assert.fail('readAdaFile should have thrown a Directory Traversal error')
+    await readWorkspaceZipFile(corruptWsPath, true)
+    assert.fail('readWorkspaceZipFile should have thrown a Directory Traversal error')
   } catch (err) {
     assert.ok(
       err.message.includes('Directory traversal detected') || err.message.includes('Security Error'),
@@ -336,75 +334,42 @@ await runTest('Workspace Saving and Dataset Imports (ZIP format)', async () => {
   await cleanupTestFiles([wsPath])
 })
 
-await runTest('Legacy JSON workspace file auto-migration on save', async () => {
+await runTest('Legacy non-ZIP workspace content is rejected instead of migrated', async () => {
   const legacyWsPath = path.join(dataPath, 'legacy-ws.metisws')
   await cleanupTestFiles([legacyWsPath])
 
-  // Construct a legacy JSON file format workspace
-  const legacyData = {
-    _metis: true,
-    _version: '3.0',
-    id: 'ws-legacy',
-    name: 'legacy-ws',
-    children: [
-      {
-        id: 'ds-legacy',
-        type: 'dataset',
-        name: 'legacy.csv',
-        filePath: 'ds-legacy.csv'
-      }
-    ],
-    embeddedDatasets: [
-      {
-        datasetId: 'ds-legacy',
-        base64Data: Buffer.from('A,B\n1,2\n3,4').toString('base64'),
-        originalName: 'legacy.csv',
-        internalName: 'ds-legacy.csv'
-      }
-    ]
-  }
-  await fsPromises.writeFile(legacyWsPath, JSON.stringify(legacyData, null, 2), 'utf8')
+  await fsPromises.writeFile(legacyWsPath, JSON.stringify({ id: 'ws-legacy', name: 'legacy-ws', children: [] }), 'utf8')
 
-  // Verify it is recognized as legacy (non-ZIP) first
   assert.equal(await isZipFile(legacyWsPath), false, 'Legacy format should not be detected as ZIP')
 
-  // Trigger workspace:save on the legacy workspace path to force migration
   const saveHandler = ipcMain.getHandler('workspace:save')
   const saveRes = await saveHandler(null, {
     id: 'ws-legacy',
     name: 'legacy-ws',
-    children: [
-      {
-        id: 'ds-legacy',
-        type: 'dataset',
-        name: 'legacy.csv',
-        filePath: 'ds-legacy.csv'
-      }
-    ],
+    children: [],
     path: legacyWsPath
   })
 
-  assert.equal(saveRes.success, true)
-
-  // Verify it has been converted to a ZIP archive
-  assert.equal(await isZipFile(legacyWsPath), true, 'Migrated workspace should be recognized as ZIP')
-
-  // Verify ZIP contents and dataset relocation
-  const zipBuffer = await fsPromises.readFile(legacyWsPath)
-  const zip = await JSZip.loadAsync(zipBuffer)
-  
-  assert.ok(zip.file('workspace.json'), 'Migrated ZIP must contain workspace.json')
-  assert.ok(zip.file('datasets/ds-legacy.csv'), 'Migrated dataset must be relocated to datasets/ds-legacy.csv in ZIP')
-
-  const wsJsonText = await zip.file('workspace.json').async('text')
-  const parsedWs = JSON.parse(wsJsonText)
-  assert.ok(!parsedWs.embeddedDatasets, 'workspace.json inside ZIP must not contain legacy embeddedDatasets key')
-  assert.equal(parsedWs.id, 'ws-legacy')
-
-  const csvContent = await zip.file('datasets/ds-legacy.csv').async('text')
-  assert.equal(csvContent, 'A,B\n1,2\n3,4', 'Dataset content must match original legacy data')
+  assert.equal(saveRes.success, false)
+  assert.match(saveRes.error, /ZIP|metisws/i)
+  assert.equal(await isZipFile(legacyWsPath), false, 'Rejected legacy content must remain non-ZIP')
 
   await cleanupTestFiles([legacyWsPath])
+})
+
+await runTest('Legacy workspace extensions are rejected', async () => {
+  const openHandler = ipcMain.getHandler('workspace:openFile')
+  for (const extension of ['.ada', '.metis']) {
+    const legacyPath = path.join(dataPath, `legacy-ws${extension}`)
+    await cleanupTestFiles([legacyPath])
+    await fsPromises.writeFile(legacyPath, '{}', 'utf8')
+    const openRes = await openHandler(null, legacyPath)
+
+    assert.equal(openRes.success, false)
+    assert.match(openRes.error, /\.metisws/i)
+
+    await cleanupTestFiles([legacyPath])
+  }
 })
 
 console.log('All tests completed.')

@@ -32,8 +32,9 @@ async function bundleModule(relativeEntry, outfileName) {
 const bundled = await bundleModule('src/utils/userFriendlyErrors.ts', 'userFriendlyErrors.test.bundle.mjs')
 assert.ok(!bundled.error, `Expected src/utils/userFriendlyErrors.ts to compile, got: ${bundled.error?.message ?? 'unknown error'}`)
 
-const { formatUserFriendlyAnalysisError } = bundled.module ?? {}
+const { formatUserFriendlyAnalysisError, formatUserFriendlyDatasetError } = bundled.module ?? {}
 assert.equal(typeof formatUserFriendlyAnalysisError, 'function', 'Error helper should export formatUserFriendlyAnalysisError.')
+assert.equal(typeof formatUserFriendlyDatasetError, 'function', 'Error helper should export formatUserFriendlyDatasetError.')
 
 const cases = [
   [
@@ -76,6 +77,10 @@ const cases = [
     'Dataset path is outside trusted metis workspace directories.',
     'The selected dataset is outside the folders Metis is allowed to analyze. Re-import the dataset into the current workspace.',
   ],
+  [
+    'Renderer file read blocked: path was not selected through an approved import dialog.',
+    'Metis can see this dataset in the workspace, but the readable file copy is not available. Re-import the dataset into this workspace, then run the analysis again.',
+  ],
 ]
 
 for (const [raw, expected] of cases) {
@@ -84,8 +89,24 @@ for (const [raw, expected] of cases) {
 
 assert.equal(
   formatUserFriendlyAnalysisError('Some rare R error that should remain visible.'),
-  'The model could not be calculated. Backend detail: Some rare R error that should remain visible.',
-  'Unknown backend failures should keep the backend detail after a friendly lead-in.',
+  'The model could not be calculated. Technical detail: Some rare R error that should remain visible.',
+  'Unknown analysis failures should keep a concise technical detail after a friendly lead-in.',
+)
+
+const backendUrlLeakMessage = formatUserFriendlyAnalysisError(
+  ': Some rare R error that should remain visible.\nBackend: http://127.0.0.1:8765',
+)
+
+assert.equal(
+  backendUrlLeakMessage,
+  'The model could not be calculated. Technical detail: Some rare R error that should remain visible.',
+  'Friendly fallback messages should strip local backend URL lines before reaching the user.',
+)
+
+assert.doesNotMatch(
+  backendUrlLeakMessage,
+  /Backend:|127\.0\.0\.1|8765/,
+  'Friendly fallback messages should not expose local backend labels or addresses.',
 )
 
 assert.equal(
@@ -96,6 +117,35 @@ assert.equal(
   }),
   'Reopen PLSpredict settings and choose fewer folds.',
   'Structured backend failures should prefer the explicit userAction guidance.',
+)
+
+const structuredUserActionLeakMessage = formatUserFriendlyAnalysisError({
+  error: 'Cannot reach local PLS backend.',
+  userAction: 'Restart Metis and try again.\nBackend: http://127.0.0.1:8765',
+})
+
+assert.equal(
+  structuredUserActionLeakMessage,
+  'Restart Metis and try again.',
+  'Structured userAction guidance should strip accidental local backend URL lines.',
+)
+
+assert.doesNotMatch(
+  structuredUserActionLeakMessage,
+  /Backend:|127\.0\.0\.1|8765/,
+  'Structured userAction guidance should not expose local backend labels or addresses.',
+)
+
+assert.equal(
+  formatUserFriendlyDatasetError('Renderer file read blocked: path was not selected through an approved import dialog.'),
+  'Metis can see this dataset in the workspace, but the readable file copy is not available. Re-import the dataset into this workspace, then run the analysis again.',
+  'Dataset screens should explain renderer file-read blocks without exposing Electron security wording.',
+)
+
+assert.equal(
+  formatUserFriendlyDatasetError('Unexpected parser exploded.'),
+  'The dataset could not be loaded. Technical detail: Unexpected parser exploded.',
+  'Dataset screens should use a dataset-specific fallback instead of model calculation wording.',
 )
 
 const nestedMissingDatasetMessage = formatUserFriendlyAnalysisError({
@@ -121,6 +171,8 @@ assert.doesNotMatch(
 
 const modelCanvas = await fs.readFile(path.join(workspaceRoot, 'src/pages/ModelCanvas.tsx'), 'utf8')
 const resultsView = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
+const dataView = await fs.readFile(path.join(workspaceRoot, 'src/pages/DataView.tsx'), 'utf8')
+const importStep1 = await fs.readFile(path.join(workspaceRoot, 'src/pages/ImportStep1.tsx'), 'utf8')
 
 assert.match(
   modelCanvas,
@@ -133,6 +185,18 @@ assert.ok(
   'ModelCanvas should pass failed analysis response objects into the shared formatter so userAction metadata is preserved.',
 )
 
+assert.doesNotMatch(
+  modelCanvas,
+  /Backend:\s*\$\{response\.url\}/,
+  'ModelCanvas should not append local backend URLs to analysis errors shown in user-facing flows.',
+)
+
+assert.doesNotMatch(
+  modelCanvas,
+  /message:\s*msg\b/,
+  'ModelCanvas caution modals should use friendly messages, not raw analysis exception text.',
+)
+
 assert.match(
   resultsView,
   /formatUserFriendlyAnalysisError/,
@@ -143,6 +207,18 @@ assert.doesNotMatch(
   resultsView,
   /normalizeAnalysisFailureMessage\(result\.error\)/,
   'ResultsView should pass full failed analysis responses into the shared formatter, not only result.error.',
+)
+
+assert.match(
+  dataView,
+  /formatUserFriendlyDatasetError\(err\)/,
+  'DataView should show dataset-friendly loader errors instead of raw Electron messages.',
+)
+
+assert.match(
+  importStep1,
+  /formatUserFriendlyDatasetError\(err\)/,
+  'ImportStep1 should show dataset-friendly import errors instead of raw Electron messages.',
 )
 
 console.log('PASS user-friendly analysis error contracts')

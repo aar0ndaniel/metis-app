@@ -54,7 +54,7 @@ interface Window {
     onConfirmQuitDuringCalc: (cb: () => void) => () => void
     quitConfirmed: () => Promise<any>
     quitCancelled: () => Promise<any>
-    extractDataset: (payload: string | { adaFilePath: string; datasetId?: string }) => Promise<any>
+    extractDataset: (payload: string | { workspacePath: string; datasetId?: string }) => Promise<any>
     reportRendererError: (payload: any) => Promise<any>
     getInstallDefaultPaths: () => Promise<any>
     getExistingAppInstall: () => Promise<any>
