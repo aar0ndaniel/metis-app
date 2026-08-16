@@ -40,9 +40,9 @@ const {
   saveWalkthroughStep,
 } = onboarding
 
-assert.equal(ONBOARDING_RELEASE, '0.3.0')
-assert.ok(ONBOARDING_STORAGE_KEYS.whatsNewViewed.includes('0.3.0'))
-assert.ok(ONBOARDING_STORAGE_KEYS.walkthroughStep.includes('0.3.0'))
+assert.equal(ONBOARDING_RELEASE, '0.3.1')
+assert.ok(ONBOARDING_STORAGE_KEYS.whatsNewViewed.includes('0.3.1'))
+assert.ok(ONBOARDING_STORAGE_KEYS.walkthroughStep.includes('0.3.1'))
 assert.deepEqual(
   WALKTHROUGH_STEPS.map(step => step.id),
   [
@@ -62,7 +62,7 @@ assert.deepEqual(
 const fresh = new MemoryStorage()
 fresh.setItem('metis:tour-completed', 'true')
 fresh.setItem('pls:tour-completed', 'true')
-assert.equal(resolveOnboardingStage(fresh), 'whats-new', 'Legacy 0.2.x completion flags must not suppress the 0.3.0 update flow.')
+assert.equal(resolveOnboardingStage(fresh), 'whats-new', 'Legacy 0.2.x completion flags must not suppress the 0.3.1 update flow.')
 
 completeWhatsNew(fresh)
 assert.equal(resolveOnboardingStage(fresh), 'walkthrough')

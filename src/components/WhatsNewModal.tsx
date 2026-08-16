@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, ArrowRight, ArrowSquareOut, X } from '@phosphor-icons/react'
-import analysisTitlebarCapture from '../assets/onboarding/0.3.0/analysis-titlebar.png'
-import languagesCapture from '../assets/onboarding/0.3.0/languages.png'
-import micomCapture from '../assets/onboarding/0.3.0/micom.png'
-import mgaCapture from '../assets/onboarding/0.3.0/mga.png'
-import tarkReportCapture from '../assets/onboarding/0.3.0/tark-report.png'
+import analysisTitlebarCapture from '../assets/onboarding/0.3.1/analysis-titlebar.png'
+import languagesCapture from '../assets/onboarding/0.3.1/languages.png'
+import micomCapture from '../assets/onboarding/0.3.1/micom.png'
+import mgaCapture from '../assets/onboarding/0.3.1/mga.png'
+import tarkReportCapture from '../assets/onboarding/0.3.1/tark-report.png'
 
 interface WhatsNewModalProps {
   theme: 'Dark' | 'Light'
@@ -54,7 +54,7 @@ const slides: UpdateSlide[] = [
   },
   {
     title: 'Analysis menu',
-    description: 'Metis 0.3.0 brings every analysis into one title-bar menu: PLS-SEM, Bootstrap, PLS Predict, NCA and IPMA, MICOM, and MGA.',
+    description: 'Metis 0.3.1 brings every analysis into one title-bar menu: PLS-SEM, Bootstrap, PLS Predict, NCA and IPMA, MICOM, and MGA.',
     image: analysisTitlebarCapture,
     imageAlt: 'Metis Analysis menu open in the title bar with all analysis commands visible.',
     links: [{ label: 'Metis documentation', href: 'https://metis.emend.it.com/docs.html' }],
@@ -129,13 +129,13 @@ export default function WhatsNewModal({ theme, onComplete, onDismiss }: WhatsNew
       >
         <header style={{ height: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', padding: '30px 54px 0 20px' }}>
           <div style={{ minWidth: 0 }}>
-            <h1 id="metis-whats-new-title" style={{ margin: 0, fontSize: 20, lineHeight: 1.2, fontWeight: 400 }}>What's new in Metis 0.3.0</h1>
+            <h1 id="metis-whats-new-title" style={{ margin: 0, fontSize: 20, lineHeight: 1.2, fontWeight: 400 }}>What's new in Metis 0.3.1</h1>
             <p style={{ margin: '4px 0 0', color: 'var(--color-text-muted)', fontSize: 13 }}>Welcome — review each update, then build your first model.</p>
           </div>
           <button
             ref={closeRef}
             type="button"
-            aria-label="Close 0.3.0 updates"
+            aria-label="Close 0.3.1 updates"
             onClick={onDismiss}
             style={{ marginLeft: 'auto', width: 32, height: 32, border: '1px solid var(--color-floating-border-soft)', borderRadius: 10, background: 'var(--color-floating-icon-bg)', color: 'var(--color-text-muted)', cursor: 'pointer', display: 'grid', placeItems: 'center' }}
           >

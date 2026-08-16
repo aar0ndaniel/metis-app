@@ -210,6 +210,8 @@ const EXACT_TRANSLATIONS: Record<string, TranslationSet> = {
   'Prediction technique': { Español: 'Técnica de predicción', Português: 'Técnica de predição', Français: 'Technique de prédiction' },
   'PLS algorithm': { Español: 'Algoritmo PLS', Português: 'Algoritmo PLS', Français: 'Algorithme PLS' },
   'CVPAT': { Español: 'CVPAT', Português: 'CVPAT', Français: 'CVPAT' },
+  'CVPAT MV summary': { Español: 'Resumen CVPAT de VM', Português: 'Resumo CVPAT de VM', Français: 'Résumé CVPAT des VM' },
+  'CVPAT LV summary': { Español: 'Resumen CVPAT de VL', Português: 'Resumo CVPAT de VL', Français: 'Résumé CVPAT des VL' },
   'CVPAT configuration': { Español: 'Configuración de CVPAT', Português: 'Configuração do CVPAT', Français: 'Configuration de CVPAT' },
   'Validation cycles': { Español: 'Ciclos de validación', Português: 'Ciclos de validação', Français: 'Cycles de validation' },
   'NCA run depth': { Español: 'Profundidad de ejecución de NCA', Português: 'Profundidade de execução do NCA', Français: 'Profondeur d’exécution de NCA' },

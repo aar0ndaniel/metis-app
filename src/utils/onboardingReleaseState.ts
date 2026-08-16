@@ -1,4 +1,4 @@
-export const ONBOARDING_RELEASE = '0.3.0'
+export const ONBOARDING_RELEASE = '0.3.1'
 
 export const ONBOARDING_STORAGE_KEYS = {
   whatsNewViewed: `metis:onboarding:${ONBOARDING_RELEASE}:whats-new-viewed`,

@@ -40,7 +40,7 @@ function buildActionWalkthrough(displayName = ''): TourStep[] {
     {
       id: 'welcome',
       screen: 'home',
-      title: firstName ? `Welcome to ${APP_BRAND_NAME} 0.3.0, ${firstName}` : `Welcome to ${APP_BRAND_NAME} 0.3.0`,
+      title: firstName ? `Welcome to ${APP_BRAND_NAME} 0.3.1, ${firstName}` : `Welcome to ${APP_BRAND_NAME} 0.3.1`,
       content: 'This walkthrough stays with you while you build and run a real model. Complete each highlighted action to continue.',
       icon: <span style={{ fontSize: 34, lineHeight: 1 }}>👋</span>,
     },

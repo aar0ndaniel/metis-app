@@ -180,10 +180,33 @@ await runTest('PLSpredict settings can be restored from saved workspace state an
     {
       folds: 12,
       repetitions: 5,
-      technique: 'Entire antecedents (EA)',
+      technique: 'Earliest antecedents (EA)',
       predictionSeed: 42,
       validationMode: 'K-fold',
       cvpatEnabled: true,
+    }
+  )
+
+  assert.deepEqual(
+    readPlsPredictSettingsFromResults({
+      meta: {
+        analysis_settings: {
+          plspredict: {
+            folds: 12,
+            repetitions: 5,
+            technique: 'Earliest antecedents (EA)',
+            predictionSeed: 42,
+          },
+        },
+      },
+    }),
+    {
+      folds: 12,
+      repetitions: 5,
+      technique: 'Earliest antecedents (EA)',
+      predictionSeed: 42,
+      validationMode: 'K-fold',
+      cvpatEnabled: false,
     }
   )
 })

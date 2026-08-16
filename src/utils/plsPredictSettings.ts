@@ -1,7 +1,7 @@
 export interface PlsPredictSettings {
   folds: number
   repetitions: number
-  technique: 'Direct antecedents (DA)' | 'Entire antecedents (EA)'
+  technique: 'Direct antecedents (DA)' | 'Earliest antecedents (EA)'
   predictionSeed: number
   validationMode: 'K-fold' | 'LOOCV'
   cvpatEnabled: boolean
@@ -36,8 +36,8 @@ function clamp(value: number | null, min: number, max: number, fallback: number)
 
 function normalizeTechnique(value: unknown): PlsPredictSettings['technique'] {
   const text = String(value ?? '').trim().toLowerCase()
-  return text.includes('entire') || text === 'ea'
-    ? 'Entire antecedents (EA)'
+  return text.includes('earliest') || text.includes('entire') || text === 'ea'
+    ? 'Earliest antecedents (EA)'
     : 'Direct antecedents (DA)'
 }
 

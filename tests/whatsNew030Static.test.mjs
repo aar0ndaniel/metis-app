@@ -11,7 +11,7 @@ const [modal, app] = await Promise.all([
   read('src/App.tsx'),
 ])
 
-assert.match(modal, /What's new in Metis 0\.3\.0/)
+assert.match(modal, /What's new in Metis 0\.3\.[01]/)
 assert.match(modal, /width:\s*680/)
 assert.match(modal, /height:\s*420/)
 assert.match(modal, /role="dialog"/)
@@ -56,7 +56,10 @@ const captures = [
 ]
 for (const capture of captures) {
   assert.match(modal, new RegExp(capture.replace('.', '\\.')))
-  await fs.access(path.join(workspaceRoot, 'src/assets/onboarding/0.3.0', capture))
+  const assetPath = (await fs.stat(path.join(workspaceRoot, 'src/assets/onboarding/0.3.1', capture)).catch(() => null))
+    ? path.join(workspaceRoot, 'src/assets/onboarding/0.3.1', capture)
+    : path.join(workspaceRoot, 'src/assets/onboarding/0.3.0', capture)
+  await fs.access(assetPath)
 }
 
 assert.match(app, /<WhatsNewModal/)

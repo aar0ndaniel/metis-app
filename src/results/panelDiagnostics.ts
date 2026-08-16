@@ -70,6 +70,7 @@ export function classifyPanelEmptyState(context: PanelEmptyStateContext): string
       }
       return 'No moderation effect data available for this analysis.'
 
+    case 'cvpat-mv-summary':
     case 'cvpat-lv-summary':
       if (context.cvpatStatus === 'missing-seminrextras') {
         return 'CVPAT requires seminrExtras in the R backend. Install seminrExtras, then rerun with CVPAT enabled.'

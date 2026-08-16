@@ -147,8 +147,8 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
       items: [
         { id: 'plspredict-mv-summary', label: 'MV summary', iconKey: 'table' },
         { id: 'plspredict-lv-summary', label: 'LV summary', iconKey: 'table' },
-        { id: 'pls-lm-comparison', label: 'PLS vs LM comparison', iconKey: 'graph', showChart: true },
-        { id: 'q2-predict', label: 'Q²predict', iconKey: 'graph' },
+        { id: 'cvpat-mv-summary', label: 'CVPAT MV summary', iconKey: 'table' },
+        { id: 'cvpat-lv-summary', label: 'CVPAT LV summary', iconKey: 'table' },
       ],
     },
     {
@@ -160,7 +160,6 @@ const PANEL_SECTIONS: Record<AnalysisMode, PanelSection[]> = {
         { id: 'lv-predictions-errors', label: 'LV predictions and errors', iconKey: 'table' },
         { id: 'plsem-mv-error-hist', label: 'MV error histograms', iconKey: 'graph', showChart: true },
         { id: 'plsem-lv-error-hist', label: 'LV error histograms', iconKey: 'graph', showChart: true },
-        { id: 'cvpat-lv-summary', label: 'CVPAT', iconKey: 'table' },
       ],
     },
     {

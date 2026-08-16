@@ -765,7 +765,8 @@ validate_algorithm_settings_payload <- function(settings_payload) {
     stop("algorithmSettings must be an object.")
   }
 
-  normalized <- normalize_hoc_settings(settings_payload)
+  has_hoc_settings <- !is.null(settings_payload$hocMethod) || !is.null(settings_payload$hocTwoStage)
+  normalized <- if (has_hoc_settings) normalize_hoc_settings(settings_payload) else list()
   if (!is.null(settings_payload$innerWeighting)) {
     normalized$innerWeighting <- require_scalar_string(settings_payload$innerWeighting, "algorithmSettings.innerWeighting", max_chars = 80)
   }
@@ -972,7 +973,7 @@ validate_payload_object <- function(payload) {
   }
   if (!is.null(payload$technique)) {
     technique <- toupper(trimws(as.character(payload$technique)))
-    technique <- if (technique %in% c("EA", "ENTIRE ANTECEDENTS (EA)")) "EA" else if (technique %in% c("DA", "DIRECT ANTECEDENTS (DA)")) "DA" else stop("technique must be Direct antecedents (DA) or Entire antecedents (EA).")
+    technique <- if (technique %in% c("EA", "ENTIRE ANTECEDENTS (EA)", "EARLIEST ANTECEDENTS (EA)")) "EA" else if (technique %in% c("DA", "DIRECT ANTECEDENTS (DA)")) "DA" else stop("technique must be Direct antecedents (DA), Earliest antecedents (EA), or Entire antecedents (EA).")
     normalized$technique <- technique
   }
   if (!is.null(payload$predictionSeed)) {
@@ -1238,11 +1239,48 @@ cvpat_matrix_to_rows <- function(matrix_like, benchmark_label, label_map = NULL)
   })
 }
 
-run_cvpat_assessment <- function(core, folds, reps, payload = NULL, prediction_seed = 123L, validation_mode = "K-fold") {
+run_cvpat_bootstrap_comparison <- function(LossM1, LossM2, nboot = 2000L, testtype = "two.sided") {
+  valid <- is.finite(LossM1) & is.finite(LossM2)
+  LossM1 <- LossM1[valid]
+  LossM2 <- LossM2[valid]
+  N <- length(LossM1)
+  if (N < 2L) {
+    return(list(boot_t = NA_real_, boot_p = NA_real_))
+  }
+
+  if (requireNamespace("seminrExtras", quietly = TRUE) && exists("bootstrap_cvpat", envir = asNamespace("seminrExtras"), mode = "function")) {
+    fn <- get("bootstrap_cvpat", envir = asNamespace("seminrExtras"))
+    res <- tryCatch({
+      fn(LossM1, LossM2, testtype = testtype, nboot = nboot)
+    }, error = function(e) NULL)
+    if (!is.null(res)) {
+      boot_t <- as.numeric(res[["Boot T value"]] %||% res[["Boot.T.value"]] %||% res[[3]])
+      boot_p <- as.numeric(res[["Boot P Value"]] %||% res[["Boot.P.Value"]] %||% res[[4]])
+      return(list(boot_t = boot_t, boot_p = boot_p))
+    }
+  }
+
+  OrgDbar <- mean(LossM2 - LossM1)
+  D_0 <- LossM2 - LossM1 - OrgDbar
+  BootDbar <- numeric(nboot)
+  for (b in seq_len(nboot)) {
+    BootDbar[b] <- mean(sample(D_0, length(D_0), replace = TRUE))
+  }
+  std <- sqrt(stats::var(BootDbar))
+  tstat_boot_Var <- if (is.finite(std) && std > 0) OrgDbar / std else NA_real_
+  p.value_var_ttest <- if (is.finite(tstat_boot_Var)) 2 * stats::pt(-abs(tstat_boot_Var), df = N - 1, lower.tail = TRUE) else NA_real_
+  list(boot_t = as.numeric(tstat_boot_Var), boot_p = as.numeric(p.value_var_ttest))
+}
+
+run_cvpat_assessment <- function(core, folds, reps, payload = NULL, prediction_seed = 123L, validation_mode = "K-fold", cv_res = NULL) {
   if (!requireNamespace("seminrExtras", quietly = TRUE)) {
     return(list(
       status = "missing-seminrextras",
+      lv_ia = list(),
+      lv_lm = list(),
       lv_rows = list(),
+      mv_ia = list(),
+      mv_lm = list(),
       mv_rows = list(),
       execution_log = list(list(message = "CVPAT skipped because the R backend does not have seminrExtras installed."))
     ))
@@ -1268,33 +1306,138 @@ run_cvpat_assessment <- function(core, folds, reps, payload = NULL, prediction_s
   if (!is.null(result$.metis_error)) {
     return(list(
       status = "error",
+      lv_ia = list(),
+      lv_lm = list(),
       lv_rows = list(),
+      mv_ia = list(),
+      mv_lm = list(),
       mv_rows = list(),
       execution_log = list(list(message = paste("CVPAT failed:", result$.metis_error)))
     ))
   }
 
   label_map <- build_construct_display_name_map(payload %||% list())
-
-  if (is.matrix(result) || is.data.frame(result)) {
-    lv_rows <- cvpat_matrix_to_rows(result, "CVPAT", label_map)
-  } else {
-    lv_rows <- c(
-      cvpat_matrix_to_rows(result$CVPAT_compare_LM %||% result$cvpat_compare_lm, "Linear model", label_map),
-      cvpat_matrix_to_rows(result$CVPAT_compare_IA %||% result$cvpat_compare_ia, "Item average", label_map)
-    )
+  scalar <- function(value) {
+    number <- suppressWarnings(as.numeric(value))
+    if (!length(number) || !is.finite(number[[1]])) NULL else number[[1]]
   }
 
-  cvpat_log <- if (length(lv_rows)) {
-    sprintf("CVPAT completed via seminrExtras::assess_cvpat with %s bootstrap subsamples.", nboot)
+  normalise_cvpat_lv_matrix <- function(mat, benchmark_type) {
+    if (is.null(mat) || !nrow(mat)) return(list())
+    df <- as.data.frame(mat, stringsAsFactors = FALSE, check.names = FALSE)
+    rn <- rownames(mat)
+    out <- vector("list", nrow(df))
+    for (i in seq_len(nrow(df))) {
+      c_name <- if (!is.null(rn) && length(rn) >= i) rn[[i]] else paste0("Construct_", i)
+      display_construct <- map_display_label(c_name, label_map %||% list())
+      pls_loss_val <- scalar(df[i, "PLS Loss"] %||% df[i, 1])
+      bench_loss_val <- scalar(df[i, if (benchmark_type == "IA") "IA Loss" else "LM Loss"] %||% df[i, 2])
+      diff_val <- if (!is.null(pls_loss_val) && !is.null(bench_loss_val)) {
+        pls_loss_val - bench_loss_val
+      } else {
+        scalar(df[i, "Diff"] %||% df[i, 3])
+      }
+      boot_t_val <- scalar(df[i, "Boot T value"] %||% df[i, "Boot.T.value"] %||% df[i, 4])
+      boot_p_val <- scalar(df[i, "Boot P Value"] %||% df[i, "Boot.P.Value"] %||% df[i, 5])
+      out[[i]] <- list(
+        Construct = display_construct,
+        `PLS Loss` = pls_loss_val,
+        `Benchmark Loss` = bench_loss_val,
+        Diff = diff_val,
+        `Boot T value` = boot_t_val,
+        `Boot P Value` = boot_p_val
+      )
+    }
+    out
+  }
+
+  lv_lm <- normalise_cvpat_lv_matrix(result$CVPAT_compare_LM %||% result$cvpat_compare_lm, "LM")
+  lv_ia <- normalise_cvpat_lv_matrix(result$CVPAT_compare_IA %||% result$cvpat_compare_ia, "IA")
+
+  mv_ia <- list()
+  mv_lm <- list()
+
+  if (!is.null(cv_res) && length(cv_res$indicators) > 0) {
+    indicators <- cv_res$indicators
+    prediction_indicator_aliases <- core$prediction_indicator_aliases %||% list()
+    set.seed(prediction_seed)
+
+    for (ind in indicators) {
+      alias_details <- prediction_indicator_aliases[[ind]]
+      indicator_label <- if (is.null(alias_details)) {
+        ind
+      } else if (as.character(alias_details$indicator) %in% indicators) {
+        sprintf("%s (%s)", as.character(alias_details$indicator), as.character(alias_details$construct))
+      } else {
+        as.character(alias_details$indicator)
+      }
+
+      pls_loss_vec <- suppressWarnings(as.numeric(cv_res$mv$pls_loss[[ind]]))
+      ia_loss_vec <- suppressWarnings(as.numeric(cv_res$mv$ia_loss[[ind]]))
+      lm_loss_vec <- suppressWarnings(as.numeric(cv_res$mv$lm_loss[[ind]]))
+
+      valid_ia <- is.finite(pls_loss_vec) & is.finite(ia_loss_vec)
+      if (sum(valid_ia) >= 2L) {
+        pls_loss_ia <- mean(pls_loss_vec[valid_ia])
+        ia_loss_mean <- mean(ia_loss_vec[valid_ia])
+        diff_ia <- pls_loss_ia - ia_loss_mean
+      } else {
+        pls_loss_ia <- NA_real_
+        ia_loss_mean <- NA_real_
+        diff_ia <- NA_real_
+      }
+
+      valid_lm <- is.finite(pls_loss_vec) & is.finite(lm_loss_vec)
+      if (sum(valid_lm) >= 2L) {
+        pls_loss_lm <- mean(pls_loss_vec[valid_lm])
+        lm_loss_mean <- mean(lm_loss_vec[valid_lm])
+        diff_lm <- pls_loss_lm - lm_loss_mean
+      } else {
+        pls_loss_lm <- NA_real_
+        lm_loss_mean <- NA_real_
+        diff_lm <- NA_real_
+      }
+
+      boot_ia <- run_cvpat_bootstrap_comparison(pls_loss_vec, ia_loss_vec, nboot = nboot, testtype = "two.sided")
+      boot_lm <- run_cvpat_bootstrap_comparison(pls_loss_vec, lm_loss_vec, nboot = nboot, testtype = "two.sided")
+
+      mv_ia[[length(mv_ia) + 1L]] <- list(
+        Indicator = indicator_label,
+        `PLS Loss` = scalar(pls_loss_ia),
+        `IA Loss` = scalar(ia_loss_mean),
+        `Benchmark Loss` = scalar(ia_loss_mean),
+        Diff = scalar(diff_ia),
+        `Boot T value` = scalar(boot_ia$boot_t),
+        `Boot P Value` = scalar(boot_ia$boot_p)
+      )
+
+      mv_lm[[length(mv_lm) + 1L]] <- list(
+        Indicator = indicator_label,
+        `PLS Loss` = scalar(pls_loss_lm),
+        `LM Loss` = scalar(lm_loss_mean),
+        `Benchmark Loss` = scalar(lm_loss_mean),
+        Diff = scalar(diff_lm),
+        `Boot T value` = scalar(boot_lm$boot_t),
+        `Boot P Value` = scalar(boot_lm$boot_p)
+      )
+    }
+  }
+
+  has_results <- length(lv_ia) > 0 || length(lv_lm) > 0 || length(mv_ia) > 0 || length(mv_lm) > 0
+  cvpat_log <- if (has_results) {
+    "CVPAT LV results were calculated with seminrExtras::assess_cvpat; MV CVPAT results were derived from case-wise SEMinR prediction losses using the SEMinRExtras bootstrap CVPAT procedure."
   } else {
     "CVPAT ran, but seminrExtras returned no comparison rows. Check whether the model has supported endogenous constructs and no unsupported higher-order prediction setup."
   }
 
   list(
-    status = if (length(lv_rows)) "computed" else "empty",
-    lv_rows = lv_rows,
-    mv_rows = list(),
+    status = if (has_results) "computed" else "empty",
+    lv_ia = lv_ia,
+    lv_lm = lv_lm,
+    lv_rows = c(lv_lm, lv_ia),
+    mv_ia = mv_ia,
+    mv_lm = mv_lm,
+    mv_rows = c(mv_lm, mv_ia),
     execution_log = list(list(message = cvpat_log))
   )
 }
@@ -4264,7 +4407,7 @@ plspredict_default_seed <- function() 123L
 
 normalize_plspredict_technique <- function(value) {
   normalized <- toupper(trimws(as.character(value %||% "DA")))
-  if (normalized %in% c("EA", "ENTIRE ANTECEDENTS (EA)")) return(seminr::predict_EA)
+  if (normalized %in% c("EA", "ENTIRE ANTECEDENTS (EA)", "EARLIEST ANTECEDENTS (EA)")) return(seminr::predict_EA)
   seminr::predict_DA
 }
 
@@ -4281,76 +4424,8 @@ plspredict_fold_assignments <- function(model_data, folds, seed) {
   setNames(as.integer(fold_ids), ordered_ids)
 }
 
-calculate_plspredict_q2 <- function(item_actuals, pls_oos_residuals, model_data, folds, seed, validation_mode = "K-fold") {
-  actuals <- as.data.frame(item_actuals, stringsAsFactors = FALSE)
-  residuals <- as.data.frame(pls_oos_residuals, stringsAsFactors = FALSE)
-  if (is.null(actuals) || is.null(residuals) || !nrow(actuals) || !nrow(residuals)) return(numeric(0))
-  if (is.null(rownames(actuals)) || is.null(rownames(residuals)) || is.null(rownames(model_data))) return(numeric(0))
-  if (!identical(rownames(actuals), rownames(residuals)) || !identical(rownames(actuals), rownames(model_data))) return(numeric(0))
-  common_rows <- rownames(actuals)
-  actuals <- actuals[common_rows, , drop = FALSE]
-  residuals <- residuals[common_rows, , drop = FALSE]
-  training_data <- model_data[common_rows, , drop = FALSE]
-  is_loocv <- toupper(as.character(validation_mode %||% "K-fold")) == "LOOCV"
-  fold_map <- if (is_loocv) NULL else plspredict_fold_assignments(model_data, folds, seed)[common_rows]
-  indicators <- intersect(colnames(actuals), colnames(residuals))
-  output <- setNames(numeric(length(indicators)), indicators)
-  for (indicator in indicators) {
-    actual <- suppressWarnings(as.numeric(actuals[[indicator]]))
-    pls_error <- suppressWarnings(as.numeric(residuals[[indicator]]))
-    source_values <- suppressWarnings(as.numeric(training_data[[indicator]]))
-    valid <- is.finite(actual) & is.finite(pls_error)
-    if (!any(valid)) next
-    sse_pls <- sum(pls_error[valid]^2)
-    sse_naive <- 0
-    for (i in which(valid)) {
-      training <- if (is_loocv) source_values[-i] else source_values[fold_map != fold_map[[i]]]
-      training <- training[is.finite(training)]
-      if (!length(training)) next
-      sse_naive <- sse_naive + (actual[[i]] - mean(training))^2
-    }
-    if (is.finite(sse_naive) && sse_naive > 0) output[[indicator]] <- 1 - sse_pls / sse_naive else output[[indicator]] <- NA_real_
-  }
-  output
-}
-
-extract_plspredict_sections <- function(payload, data, core, predict_model, folds = NULL, reps = NULL, timings = NULL, prediction_representation = "Standard", prediction_core = core) {
-  model <- core$model
-  prediction_model <- prediction_core$model
-  prediction_indicator_aliases <- prediction_core$prediction_indicator_aliases %||% list()
-  items <- predict_model$items %||% list()
-  composites <- predict_model$composites %||% list()
-  validation_mode <- if (toupper(as.character(payload$validationMode %||% "K-fold")) == "LOOCV") "LOOCV" else "K-fold"
-  effective_folds <- if (validation_mode == "LOOCV") nrow(prediction_model$data) else as.integer(folds %||% payload$folds %||% plspredict_default_folds())
-  effective_reps <- as.integer(reps %||% payload$repetitions %||% plspredict_default_repetitions())
-  prediction_seed <- as.integer(payload$predictionSeed %||% payload$prediction_seed %||% plspredict_default_seed())
-  technique_label <- if (toupper(as.character(payload$technique %||% payload$predictionTechnique %||% "DA")) %in% c("EA", "ENTIRE ANTECEDENTS (EA)") || grepl("entire", as.character(payload$technique %||% ""), ignore.case = TRUE)) "Entire antecedents (EA)" else "Direct antecedents (DA)"
+normalize_plspredict_cv_result <- function(predict_model, model, effective_folds, effective_reps, prediction_seed, validation_mode = "K-fold") {
   as_df <- function(value) if (is.null(value)) NULL else as.data.frame(value, stringsAsFactors = FALSE)
-  scalar <- function(value) {
-    number <- suppressWarnings(as.numeric(value))
-    if (!length(number) || !is.finite(number[[1]])) NULL else number[[1]]
-  }
-  metric <- function(values, kind) {
-    numbers <- suppressWarnings(as.numeric(values))
-    numbers <- numbers[is.finite(numbers)]
-    if (!length(numbers)) return(NULL)
-    if (kind == "rmse") sqrt(mean(numbers^2)) else mean(abs(numbers))
-  }
-  align <- function(frames) {
-    frames <- lapply(frames, as_df)
-    if (any(vapply(frames, is.null, logical(1)))) return(NULL)
-    row_sets <- lapply(frames, rownames)
-    if (any(vapply(row_sets, is.null, logical(1))) || any(vapply(row_sets, anyDuplicated, integer(1)) > 0)) return(NULL)
-    if (!all(vapply(row_sets[-1], identical, logical(1), row_sets[[1]]))) return(NULL)
-    common <- row_sets[[1]]
-    lapply(frames, function(frame) frame[common, , drop = FALSE])
-  }
-  as_rows_safe <- function(frame) {
-    if (is.null(frame) || !nrow(frame)) return(list())
-    out <- vector("list", nrow(frame))
-    for (i in seq_len(nrow(frame))) out[[i]] <- as.list(frame[i, , drop = FALSE])
-    out
-  }
 
   pls_oos <- as_df(predict_model$items[["PLS_out_of_sample"]])
   pls_in_sample <- as_df(predict_model$items[["PLS_in_sample"]])
@@ -4365,14 +4440,196 @@ extract_plspredict_sections <- function(payload, data, core, predict_model, fold
   composite_in_sample <- as_df(predict_model$composites[["composite_in_sample"]])
   actuals_star <- as_df(predict_model$composites[["actuals_star"]])
 
-  mv_aligned <- align(list(item_actuals, pls_oos, pls_oos_residuals, lm_oos, lm_oos_residuals))
+  align_frames <- function(frames) {
+    frames <- lapply(frames, as_df)
+    if (any(vapply(frames, is.null, logical(1)))) return(NULL)
+    row_sets <- lapply(frames, rownames)
+    if (any(vapply(row_sets, is.null, logical(1))) || any(vapply(row_sets, anyDuplicated, integer(1)) > 0)) return(NULL)
+    if (!all(vapply(row_sets[-1], identical, logical(1), row_sets[[1]]))) return(NULL)
+    common <- row_sets[[1]]
+    lapply(frames, function(frame) frame[common, , drop = FALSE])
+  }
+
+  mv_frames <- align_frames(list(item_actuals, pls_oos, pls_oos_residuals, lm_oos, lm_oos_residuals))
+  if (is.null(mv_frames)) return(NULL)
+
+  item_actuals <- mv_frames[[1]]
+  pls_oos <- mv_frames[[2]]
+  pls_oos_residuals <- mv_frames[[3]]
+  lm_oos <- mv_frames[[4]]
+  lm_oos_residuals <- mv_frames[[5]]
+
+  common_rows <- rownames(item_actuals)
+  is_loocv <- toupper(as.character(validation_mode %||% "K-fold")) == "LOOCV"
+  fold_map <- if (is_loocv) {
+    setNames(seq_along(common_rows), common_rows)
+  } else {
+    plspredict_fold_assignments(model$data[common_rows, , drop = FALSE], effective_folds, prediction_seed)[common_rows]
+  }
+
+  indicators <- Reduce(intersect, list(
+    colnames(item_actuals),
+    colnames(pls_oos),
+    colnames(pls_oos_residuals),
+    colnames(lm_oos),
+    colnames(lm_oos_residuals)
+  ))
+
+  sm <- as.matrix(model$smMatrix)
+  endogenous_constructs <- if ("target" %in% colnames(sm)) unique(as.character(sm[, "target"])) else character(0)
+  endogenous_constructs <- endogenous_constructs[!is.na(endogenous_constructs) & nzchar(endogenous_constructs)]
+
+  lv_frames <- align_frames(list(composite_oos, actuals_star))
+  if (!is.null(lv_frames)) {
+    composite_oos <- lv_frames[[1]]
+    actuals_star <- lv_frames[[2]]
+    constructs <- intersect(colnames(composite_oos), colnames(actuals_star))
+    endogenous_constructs <- intersect(constructs, endogenous_constructs)
+  } else {
+    endogenous_constructs <- character(0)
+  }
+
+  n_rows <- nrow(item_actuals)
+  ia_predictions <- matrix(NA_real_, nrow = n_rows, ncol = length(indicators), dimnames = list(common_rows, indicators))
+  ia_residuals <- matrix(NA_real_, nrow = n_rows, ncol = length(indicators), dimnames = list(common_rows, indicators))
+
+  for (j in seq_along(indicators)) {
+    ind <- indicators[[j]]
+    raw_vals <- suppressWarnings(as.numeric(model$data[common_rows, ind]))
+    act_vals <- suppressWarnings(as.numeric(item_actuals[[ind]]))
+    for (i in seq_len(n_rows)) {
+      train_indices <- if (is_loocv) seq_len(n_rows)[-i] else which(fold_map != fold_map[[i]])
+      train_sample <- raw_vals[train_indices]
+      train_sample <- train_sample[is.finite(train_sample)]
+      if (length(train_sample) > 0) {
+        train_mean <- mean(train_sample)
+        ia_predictions[i, j] <- train_mean
+        ia_residuals[i, j] <- act_vals[[i]] - train_mean
+      }
+    }
+  }
+  ia_predictions <- as.data.frame(ia_predictions, stringsAsFactors = FALSE)
+  ia_residuals <- as.data.frame(ia_residuals, stringsAsFactors = FALSE)
+
+  pls_mv_loss <- as.data.frame(pls_oos_residuals[, indicators, drop = FALSE]^2, stringsAsFactors = FALSE)
+  lm_mv_loss <- as.data.frame(lm_oos_residuals[, indicators, drop = FALSE]^2, stringsAsFactors = FALSE)
+  ia_mv_loss <- as.data.frame(ia_residuals[, indicators, drop = FALSE]^2, stringsAsFactors = FALSE)
+
+  lv_ia_predictions <- matrix(NA_real_, nrow = n_rows, ncol = length(endogenous_constructs), dimnames = list(common_rows, endogenous_constructs))
+  lv_ia_residuals <- matrix(NA_real_, nrow = n_rows, ncol = length(endogenous_constructs), dimnames = list(common_rows, endogenous_constructs))
+  lv_pls_residuals <- matrix(NA_real_, nrow = n_rows, ncol = length(endogenous_constructs), dimnames = list(common_rows, endogenous_constructs))
+
+  for (k in seq_along(endogenous_constructs)) {
+    con <- endogenous_constructs[[k]]
+    act_con_scores <- suppressWarnings(as.numeric(actuals_star[[con]]))
+    pred_con_scores <- suppressWarnings(as.numeric(composite_oos[[con]]))
+    lv_pls_residuals[, k] <- act_con_scores - pred_con_scores
+    for (i in seq_len(n_rows)) {
+      train_indices <- if (is_loocv) seq_len(n_rows)[-i] else which(fold_map != fold_map[[i]])
+      train_scores <- act_con_scores[train_indices]
+      train_scores <- train_scores[is.finite(train_scores)]
+      if (length(train_scores) > 0) {
+        con_train_mean <- mean(train_scores)
+        lv_ia_predictions[i, k] <- con_train_mean
+        lv_ia_residuals[i, k] <- act_con_scores[[i]] - con_train_mean
+      }
+    }
+  }
+  lv_ia_predictions <- as.data.frame(lv_ia_predictions, stringsAsFactors = FALSE)
+  lv_ia_residuals <- as.data.frame(lv_ia_residuals, stringsAsFactors = FALSE)
+  lv_pls_residuals <- as.data.frame(lv_pls_residuals, stringsAsFactors = FALSE)
+
+  pls_lv_loss <- matrix(NA_real_, nrow = n_rows, ncol = length(endogenous_constructs), dimnames = list(common_rows, endogenous_constructs))
+  lm_lv_loss <- matrix(NA_real_, nrow = n_rows, ncol = length(endogenous_constructs), dimnames = list(common_rows, endogenous_constructs))
+  ia_lv_loss <- matrix(NA_real_, nrow = n_rows, ncol = length(endogenous_constructs), dimnames = list(common_rows, endogenous_constructs))
+
+  mm <- as.matrix(model$mmMatrix)
+  for (con in endogenous_constructs) {
+    con_items <- if (nrow(mm) > 0 && ncol(mm) >= 2) as.character(mm[mm[, 1] == con, 2]) else character(0)
+    valid_items <- intersect(con_items, indicators)
+    if (length(valid_items) > 0) {
+      pls_lv_loss[, con] <- rowMeans(pls_oos_residuals[, valid_items, drop = FALSE]^2)
+      lm_lv_loss[, con] <- rowMeans(lm_oos_residuals[, valid_items, drop = FALSE]^2)
+      ia_lv_loss[, con] <- rowMeans(ia_residuals[, valid_items, drop = FALSE]^2)
+    }
+  }
+  pls_lv_loss <- as.data.frame(pls_lv_loss, stringsAsFactors = FALSE)
+  lm_lv_loss <- as.data.frame(lm_lv_loss, stringsAsFactors = FALSE)
+  ia_lv_loss <- as.data.frame(ia_lv_loss, stringsAsFactors = FALSE)
+
+  list(
+    fold_assignments = fold_map,
+    indicators = indicators,
+    constructs = endogenous_constructs,
+    mv = list(
+      actuals = item_actuals[, indicators, drop = FALSE],
+      pls_pred = pls_oos[, indicators, drop = FALSE],
+      pls_resid = pls_oos_residuals[, indicators, drop = FALSE],
+      lm_pred = lm_oos[, indicators, drop = FALSE],
+      lm_resid = lm_oos_residuals[, indicators, drop = FALSE],
+      ia_pred = ia_predictions,
+      ia_resid = ia_residuals,
+      pls_loss = pls_mv_loss,
+      lm_loss = lm_mv_loss,
+      ia_loss = ia_mv_loss
+    ),
+    lv = list(
+      actuals = actuals_star[, endogenous_constructs, drop = FALSE],
+      pls_pred = composite_oos[, endogenous_constructs, drop = FALSE],
+      pls_resid = lv_pls_residuals,
+      ia_pred = lv_ia_predictions,
+      ia_resid = lv_ia_residuals,
+      pls_loss = pls_lv_loss,
+      lm_loss = lm_lv_loss,
+      ia_loss = ia_lv_loss
+    )
+  )
+}
+
+extract_plspredict_sections <- function(payload, data, core, predict_model, folds = NULL, reps = NULL, timings = NULL, prediction_representation = "Standard", prediction_core = core) {
+  model <- core$model
+  prediction_model <- prediction_core$model
+  prediction_indicator_aliases <- prediction_core$prediction_indicator_aliases %||% list()
+  validation_mode <- if (toupper(as.character(payload$validationMode %||% "K-fold")) == "LOOCV") "LOOCV" else "K-fold"
+  effective_folds <- if (validation_mode == "LOOCV") nrow(prediction_model$data) else as.integer(folds %||% payload$folds %||% plspredict_default_folds())
+  effective_reps <- as.integer(reps %||% payload$repetitions %||% plspredict_default_repetitions())
+  prediction_seed <- as.integer(payload$predictionSeed %||% payload$prediction_seed %||% plspredict_default_seed())
+  technique_label <- if (toupper(as.character(payload$technique %||% payload$predictionTechnique %||% "DA")) %in% c("EA", "ENTIRE ANTECEDENTS (EA)", "EARLIEST ANTECEDENTS (EA)")) "Earliest antecedents (EA)" else "Direct antecedents (DA)"
+
+  scalar <- function(value) {
+    number <- suppressWarnings(as.numeric(value))
+    if (!length(number) || !is.finite(number[[1]])) NULL else number[[1]]
+  }
+  metric <- function(values, kind) {
+    numbers <- suppressWarnings(as.numeric(values))
+    numbers <- numbers[is.finite(numbers)]
+    if (!length(numbers)) return(NULL)
+    if (kind == "rmse") sqrt(mean(numbers^2)) else mean(abs(numbers))
+  }
+
+  cv_res <- normalize_plspredict_cv_result(
+    predict_model = predict_model,
+    model = prediction_model,
+    effective_folds = effective_folds,
+    effective_reps = effective_reps,
+    prediction_seed = prediction_seed,
+    validation_mode = validation_mode
+  )
+
   mv_summary <- list()
   mv_pred_err <- list()
   mv_log <- list()
-  if (!is.null(mv_aligned)) {
-    actuals <- mv_aligned[[1]]; pls_predictions <- mv_aligned[[2]]; pls_errors <- mv_aligned[[3]]; lm_predictions <- mv_aligned[[4]]; lm_errors <- mv_aligned[[5]]
-    indicators <- Reduce(intersect, list(colnames(actuals), colnames(pls_predictions), colnames(pls_errors), colnames(lm_predictions), colnames(lm_errors)))
-    q2_values <- calculate_plspredict_q2(actuals, pls_errors, prediction_model$data, effective_folds, prediction_seed, validation_mode)
+
+  if (!is.null(cv_res) && length(cv_res$indicators) > 0) {
+    actuals <- cv_res$mv$actuals
+    pls_predictions <- cv_res$mv$pls_pred
+    pls_errors <- cv_res$mv$pls_resid
+    lm_predictions <- cv_res$mv$lm_pred
+    lm_errors <- cv_res$mv$lm_resid
+    ia_predictions <- cv_res$mv$ia_pred
+    ia_errors <- cv_res$mv$ia_resid
+    indicators <- cv_res$indicators
+
     for (indicator in indicators) {
       alias_details <- prediction_indicator_aliases[[indicator]]
       indicator_label <- if (is.null(alias_details)) {
@@ -4382,23 +4639,37 @@ extract_plspredict_sections <- function(payload, data, core, predict_model, fold
       } else {
         as.character(alias_details$indicator)
       }
-      q2_value <- if (indicator %in% names(q2_values)) q2_values[[indicator]] else NA_real_
+
+      pls_err_vec <- suppressWarnings(as.numeric(pls_errors[[indicator]]))
+      lm_err_vec <- suppressWarnings(as.numeric(lm_errors[[indicator]]))
+      ia_err_vec <- suppressWarnings(as.numeric(ia_errors[[indicator]]))
+      valid_common <- is.finite(pls_err_vec) & is.finite(ia_err_vec)
+      sse_pls <- sum(pls_err_vec[valid_common]^2)
+      sse_ia <- sum(ia_err_vec[valid_common]^2)
+      q2_val <- if (sse_ia > 0) (1 - sse_pls / sse_ia) else NA_real_
+
       mv_summary[[length(mv_summary) + 1L]] <- list(
         Indicator = indicator_label,
-        Q2predict = scalar(q2_value),
-        `PLS-SEM_RMSE` = scalar(metric(pls_errors[[indicator]], "rmse")),
-        `PLS-SEM_MAE` = scalar(metric(pls_errors[[indicator]], "mae")),
-        LM_RMSE = scalar(metric(lm_errors[[indicator]], "rmse")),
-        LM_MAE = scalar(metric(lm_errors[[indicator]], "mae"))
+        Q2predict = scalar(q2_val),
+        PLS_SEM_RMSE = scalar(metric(pls_err_vec, "rmse")),
+        PLS_SEM_MAE = scalar(metric(pls_err_vec, "mae")),
+        LM_RMSE = scalar(metric(lm_err_vec, "rmse")),
+        LM_MAE = scalar(metric(lm_err_vec, "mae")),
+        IA_RMSE = scalar(metric(ia_err_vec, "rmse")),
+        IA_MAE = scalar(metric(ia_err_vec, "mae"))
       )
+
       for (case_id in seq_len(nrow(actuals))) {
         mv_pred_err[[length(mv_pred_err) + 1L]] <- list(
-          Case = rownames(actuals)[[case_id]], Indicator = indicator_label,
+          Case = rownames(actuals)[[case_id]],
+          Indicator = indicator_label,
           Actual = scalar(actuals[case_id, indicator]),
           `PLS Prediction` = scalar(pls_predictions[case_id, indicator]),
           `PLS Error` = scalar(pls_errors[case_id, indicator]),
           `LM Prediction` = scalar(lm_predictions[case_id, indicator]),
-          `LM Error` = scalar(lm_errors[case_id, indicator])
+          `LM Error` = scalar(lm_errors[case_id, indicator]),
+          `IA Prediction` = scalar(ia_predictions[case_id, indicator]),
+          `IA Error` = scalar(ia_errors[case_id, indicator])
         )
       }
     }
@@ -4407,19 +4678,41 @@ extract_plspredict_sections <- function(payload, data, core, predict_model, fold
     mv_log <- list(list(message = "MV prediction/error panels are empty because SEMinR native item prediction slots were unavailable or could not be aligned."))
   }
 
-  sm <- as.matrix(prediction_core$model$smMatrix)
-  endogenous_constructs <- if ("target" %in% colnames(sm)) unique(as.character(sm[, "target"])) else character(0)
-  endogenous_constructs <- endogenous_constructs[!is.na(endogenous_constructs) & nzchar(endogenous_constructs)]
-  lv_aligned <- align(list(composite_oos, actuals_star))
-  lv_summary <- list(); lv_pred_err <- list(); lv_log <- list()
-  if (!is.null(lv_aligned)) {
-    lv_predictions <- lv_aligned[[1]]; lv_actuals <- lv_aligned[[2]]
-    constructs <- intersect(colnames(lv_predictions), colnames(lv_actuals))
-    constructs <- intersect(constructs, endogenous_constructs)
+  lv_summary <- list()
+  lv_pred_err <- list()
+  lv_log <- list()
+
+  if (!is.null(cv_res) && length(cv_res$constructs) > 0) {
+    lv_actuals <- cv_res$lv$actuals
+    lv_predictions <- cv_res$lv$pls_pred
+    lv_errors <- cv_res$lv$pls_resid
+    lv_ia_errors <- cv_res$lv$ia_resid
+    constructs <- cv_res$constructs
+
     for (construct in constructs) {
-      errors <- suppressWarnings(as.numeric(lv_actuals[[construct]] - lv_predictions[[construct]]))
-      lv_summary[[length(lv_summary) + 1L]] <- list(Construct = construct, `PLS-SEM_RMSE` = scalar(metric(errors, "rmse")), `PLS-SEM_MAE` = scalar(metric(errors, "mae")))
-      for (case_id in seq_len(nrow(lv_predictions))) lv_pred_err[[length(lv_pred_err) + 1L]] <- list(Case = rownames(lv_predictions)[[case_id]], Construct = construct, Actual = scalar(lv_actuals[case_id, construct]), `PLS Prediction` = scalar(lv_predictions[case_id, construct]), `PLS Error` = scalar(errors[[case_id]]))
+      pls_err_con <- suppressWarnings(as.numeric(lv_errors[[construct]]))
+      ia_err_con <- suppressWarnings(as.numeric(lv_ia_errors[[construct]]))
+      valid_common <- is.finite(pls_err_con) & is.finite(ia_err_con)
+      sse_pls_con <- sum(pls_err_con[valid_common]^2)
+      sse_ia_con <- sum(ia_err_con[valid_common]^2)
+      q2_con <- if (sse_ia_con > 0) (1 - sse_pls_con / sse_ia_con) else NA_real_
+
+      lv_summary[[length(lv_summary) + 1L]] <- list(
+        Construct = construct,
+        Q2predict = scalar(q2_con),
+        PLS_SEM_RMSE = scalar(metric(pls_err_con, "rmse")),
+        PLS_SEM_MAE = scalar(metric(pls_err_con, "mae"))
+      )
+
+      for (case_id in seq_len(nrow(lv_predictions))) {
+        lv_pred_err[[length(lv_pred_err) + 1L]] <- list(
+          Case = rownames(lv_predictions)[[case_id]],
+          Construct = construct,
+          Actual = scalar(lv_actuals[case_id, construct]),
+          `PLS Prediction` = scalar(lv_predictions[case_id, construct]),
+          `PLS Error` = scalar(lv_errors[case_id, construct])
+        )
+      }
     }
     lv_log <- list(list(message = sprintf("Extracted %s endogenous construct predictions from SEMinR native composite slots.", length(constructs))))
   } else {
@@ -4427,7 +4720,34 @@ extract_plspredict_sections <- function(payload, data, core, predict_model, fold
   }
 
   cvpat_enabled <- isTRUE(payload$cvpatEnabled)
-  cvpat <- if (cvpat_enabled) timed_or_direct(timings, "plspredict cvpat assessment", run_cvpat_assessment(prediction_core, effective_folds, effective_reps, payload, prediction_seed, validation_mode), details = list(folds = effective_folds, repetitions = effective_reps, validation_mode = validation_mode)) else list(status = "disabled", lv_rows = list(), mv_rows = list(), execution_log = list())
+  cvpat <- if (cvpat_enabled) {
+    timed_or_direct(
+      timings,
+      "plspredict cvpat assessment",
+      run_cvpat_assessment(
+        prediction_core,
+        effective_folds,
+        effective_reps,
+        payload,
+        prediction_seed,
+        validation_mode,
+        cv_res = cv_res
+      ),
+      details = list(folds = effective_folds, repetitions = effective_reps, validation_mode = validation_mode)
+    )
+  } else {
+    list(
+      status = "disabled",
+      lv_ia = list(),
+      lv_lm = list(),
+      lv_rows = list(),
+      mv_ia = list(),
+      mv_lm = list(),
+      mv_rows = list(),
+      execution_log = list()
+    )
+  }
+
   algorithm <- if (tolower(as.character(payload$algorithm %||% "standard")) == "consistent") "consistent" else "standard"
   algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
   unsupported <- c(if (grepl("centroid", tolower(as.character(payload$algorithmSettings$innerWeighting %||% ""))) || grepl("loh", tolower(as.character(payload$algorithmSettings$initialWeights %||% ""))) || grepl("random", tolower(as.character(payload$algorithmSettings$initialWeights %||% "")))) "The installed SEMinR version does not expose centroid inner weighting or selectable initial outer weights; the request is recorded and SEMinR's supported defaults are used." else character(0))
@@ -4436,12 +4756,77 @@ extract_plspredict_sections <- function(payload, data, core, predict_model, fold
   lv_histogram <- lapply(lv_pred_err, function(row) list(Construct = row$Construct, Error = row[["PLS Error"]]))
   lv_histogram <- Filter(function(row) !is.null(row$Error) && is.finite(row$Error), lv_histogram)
   execution_log <- c(list(list(message = sprintf("PLSpredict used SEMinR predict_pls with %s, %s, %s repetitions, seed %s, and %s model representation.", technique_label, validation_mode, effective_reps, prediction_seed, prediction_representation))), mv_log, lv_log, cvpat$execution_log)
+
+  cvpat_lv_summary <- if (length(cvpat$lv_ia) || length(cvpat$lv_lm)) list(ia = cvpat$lv_ia, lm = cvpat$lv_lm) else list()
+  cvpat_mv_summary <- if (length(cvpat$mv_ia) || length(cvpat$mv_lm)) list(ia = cvpat$mv_ia, lm = cvpat$mv_lm) else list()
+
   list(
-    final_results = list(plspredict_mv_summary = mv_summary, plspredict_lv_summary = lv_summary, cvpat_lv_summary = cvpat$lv_rows, mv_predictions_and_errors = mv_pred_err, lv_predictions_and_errors = lv_pred_err),
-    algorithm = list(settings = list(method = "PLSpredict", engine = "SEMinR", mode = "PLS-SEM", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = if (has_higher_order_construct(payload)) "Repeated Indicators" else NULL, prediction_technique = technique_label, cross_validation = validation_mode, folds = effective_folds, repetitions = effective_reps, prediction_seed = prediction_seed, prediction_cores = "SEMinR default (NULL)", cvpat_enabled = cvpat_enabled, cvpat_status = cvpat$status, model_representation = prediction_representation, algorithm_settings = payload$algorithmSettings %||% list(), missing_data = payload$algorithmSettings$missingData %||% "Mean replacement", assess_syntax = isTRUE(payload$algorithmSettings$assessSyntax), missing_value_sentinel = payload$algorithmSettings$missingValue %||% "NA", initial_weights_requested = payload$algorithmSettings$initialWeights %||% "1 (uniform)", initial_weights_status = "SEMinR 2.5.0 does not expose a public initial-weights argument; SEMinR default initialization was used.", unsupported_settings = unsupported), execution_log = execution_log),
+    final_results = list(
+      plspredict_mv_summary = mv_summary,
+      plspredict_lv_summary = lv_summary,
+      cvpat_mv_summary = cvpat_mv_summary,
+      cvpat_mv_ia = cvpat$mv_ia,
+      cvpat_mv_lm = cvpat$mv_lm,
+      cvpat_lv_summary = cvpat_lv_summary,
+      cvpat_compare_ia = cvpat$lv_ia,
+      cvpat_compare_lm = cvpat$lv_lm,
+      mv_predictions_and_errors = mv_pred_err,
+      lv_predictions_and_errors = lv_pred_err
+    ),
+    algorithm = list(
+      settings = list(
+        method = "PLSpredict",
+        engine = "SEMinR",
+        mode = "PLS-SEM",
+        algorithm = algorithm,
+        algorithm_label = algorithm_label,
+        hoc_method = if (has_higher_order_construct(payload)) "Repeated Indicators" else NULL,
+        prediction_technique = technique_label,
+        cross_validation = validation_mode,
+        folds = effective_folds,
+        repetitions = effective_reps,
+        prediction_seed = prediction_seed,
+        prediction_cores = "SEMinR default (NULL)",
+        cvpat_enabled = cvpat_enabled,
+        cvpat_status = cvpat$status,
+        model_representation = prediction_representation,
+        algorithm_settings = payload$algorithmSettings %||% list(),
+        missing_data = payload$algorithmSettings$missingData %||% "Mean replacement",
+        assess_syntax = isTRUE(payload$algorithmSettings$assessSyntax),
+        missing_value_sentinel = payload$algorithmSettings$missingValue %||% "NA",
+        initial_weights_requested = payload$algorithmSettings$initialWeights %||% "1 (uniform)",
+        initial_weights_status = "SEMinR 2.5.0 does not expose a public initial-weights argument; SEMinR default initialization was used.",
+        unsupported_settings = unsupported
+      ),
+      execution_log = execution_log
+    ),
     histograms = list(plsem_mv_error_histogram = mv_histogram, plsem_lv_error_histogram = lv_histogram),
-    model_and_data = list(inner_model = as_rows(model$path_coef), outer_model = as_rows(model$outer_loadings), indicator_data_original = as_rows(utils::head(data, 200)), indicator_data_standardized = as_rows(utils::head(standardize_data(data), 200))),
-    meta = list(mode = "plspredict", algorithm = algorithm, algorithm_label = algorithm_label, hoc_method = if (has_higher_order_construct(payload)) "Repeated Indicators" else NULL, rows = nrow(data), columns = ncol(data), engine = "seminr", analysis_settings = list(plspredict = list(folds = effective_folds, repetitions = effective_reps, technique = technique_label, predictionSeed = prediction_seed, validationMode = validation_mode, cvpatEnabled = cvpat_enabled)), cvpat_status = cvpat$status)
+    model_and_data = list(
+      inner_model = as_rows(model$path_coef),
+      outer_model = as_rows(model$outer_loadings),
+      indicator_data_original = as_rows(utils::head(data, 200)),
+      indicator_data_standardized = as_rows(utils::head(standardize_data(data), 200))
+    ),
+    meta = list(
+      mode = "plspredict",
+      algorithm = algorithm,
+      algorithm_label = algorithm_label,
+      hoc_method = if (has_higher_order_construct(payload)) "Repeated Indicators" else NULL,
+      rows = nrow(data),
+      columns = ncol(data),
+      engine = "seminr",
+      analysis_settings = list(
+        plspredict = list(
+          folds = effective_folds,
+          repetitions = effective_reps,
+          technique = technique_label,
+          predictionSeed = prediction_seed,
+          validationMode = validation_mode,
+          cvpatEnabled = cvpat_enabled
+        )
+      ),
+      cvpat_status = cvpat$status
+    )
   )
 }
 
@@ -5841,6 +6226,11 @@ map_mga_response <- function(payload, data, mga_result, timings = NULL) {
   ))
 }
 
+pr$handle("GET", "/health", function(req, res) {
+  res$setHeader("Content-Type", "application/json")
+  list(status = "ok", service = "metis-plumber")
+})
+
 pr$handle("POST", "/run-pls", function(req, res) {
   res$setHeader("Content-Type", "application/json")
   tryCatch({
@@ -5989,7 +6379,7 @@ pr$handle("POST", "/run-plspredict", function(req, res) {
               mode = "PLS-SEM",
               algorithm = payload$algorithm %||% "standard",
               algorithm_settings = payload$algorithmSettings %||% list(),
-              prediction_technique = if (identical(technique, seminr::predict_EA)) "Entire antecedents (EA)" else "Direct antecedents (DA)",
+              prediction_technique = if (identical(technique, seminr::predict_EA)) "Earliest antecedents (EA)" else "Direct antecedents (DA)",
               cross_validation = validation_mode,
               folds = effective_folds,
               repetitions = reps,

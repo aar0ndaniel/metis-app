@@ -1,5 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  CaretDown,
+  Check,
   CircleNotch,
   MathOperations,
   SquaresFour,
@@ -35,7 +37,122 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   )
 }
 
-function InlineField({
+interface SelectOption {
+  value: string
+  label: string
+}
+
+function ModalSelect({
+  value,
+  options,
+  onChange,
+  disabled = false,
+  ariaLabel,
+}: {
+  value: string
+  options: SelectOption[]
+  onChange: (value: string) => void
+  disabled?: boolean
+  ariaLabel: string
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null)
+  const [open, setOpen] = useState(false)
+  const selected = options.find((option) => option.value === value)
+
+  useEffect(() => {
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    return () => document.removeEventListener('mousedown', handlePointerDown)
+  }, [])
+
+  return (
+    <div ref={rootRef} style={{ position: 'relative', width: '100%' }}>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        onClick={() => setOpen((previous) => !previous)}
+        style={{
+          width: '100%',
+          minHeight: 34,
+          background: 'var(--color-elevated)',
+          color: 'var(--color-text-secondary)',
+          border: `1px solid ${open ? 'var(--color-accent)' : 'var(--color-border)'}`,
+          borderRadius: 7,
+          padding: '7px 10px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          fontFamily: 'DM Sans, sans-serif',
+          fontSize: 12,
+          fontWeight: 500,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.6 : 1,
+        }}
+      >
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selected?.label ?? value}
+        </span>
+        <CaretDown size={11} style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.16s ease' }} />
+      </button>
+      {open && !disabled && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 5px)',
+            left: 0,
+            right: 0,
+            zIndex: 40,
+            padding: 5,
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 7,
+            boxShadow: 'var(--shadow-modal-popover)',
+          }}
+        >
+          {options.map((option) => {
+            const selectedOption = option.value === value
+            return (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onChange(option.value)
+                  setOpen(false)
+                }}
+                style={{
+                  width: '100%',
+                  border: 0,
+                  borderRadius: 5,
+                  background: selectedOption ? 'rgb(var(--color-accent-rgb) / 0.16)' : 'transparent',
+                  color: selectedOption ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
+                  padding: '7px 8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  fontFamily: 'DM Sans, sans-serif',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <span>{option.label}</span>
+                {selectedOption && <Check size={11} color="var(--color-accent)" weight="bold" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CompactField({
   label,
   children,
 }: {
@@ -43,22 +160,19 @@ function InlineField({
   children: React.ReactNode
 }) {
   return (
-    <div
-      className="grid gap-3 items-center"
-      style={{ gridTemplateColumns: 'minmax(0, 1fr) 140px' }}
-    >
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
       <span
         style={{
           color: 'var(--color-text-muted-alt)',
           fontFamily: 'DM Sans, sans-serif',
-          fontSize: 13,
-          fontWeight: 400,
+          fontSize: 11,
+          fontWeight: 500,
           lineHeight: 1.2,
         }}
       >
         {label}
       </span>
-      {children}
+      <div style={{ minWidth: 0 }}>{children}</div>
     </div>
   )
 }
@@ -212,22 +326,32 @@ export default function PlsPredictModal({
                 style={{ gridTemplateColumns: 'minmax(140px, 160px) 1fr' }}
               >
                 <SectionTitle>Cross-validation</SectionTitle>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 260 }}>
-                  <InlineField label="Validation mode">
-                    <InputBox>
-                      <select
-                        value={settings.validationMode}
-                        onChange={(event) => set('validationMode', event.target.value as PlsPredictSettings['validationMode'])}
-                        disabled={isRunning}
-                        aria-label="Validation mode"
-                        style={{ width: '100%', color: 'var(--color-text-secondary)', background: 'transparent', border: 0, outline: 'none', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
-                      >
-                        <option>K-fold</option>
-                        <option>LOOCV</option>
-                      </select>
-                    </InputBox>
-                  </InlineField>
-                  <InlineField label="Folds">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <CompactField label="Validation mode">
+                    <ModalSelect
+                      value={settings.validationMode}
+                      options={[{ value: 'K-fold', label: 'K-fold' }, { value: 'LOOCV', label: 'LOOCV' }]}
+                      onChange={(value) => set('validationMode', value as PlsPredictSettings['validationMode'])}
+                      disabled={isRunning}
+                      ariaLabel="Validation mode"
+                    />
+                  </CompactField>
+
+                  <CompactField label="Prediction technique">
+                    <ModalSelect
+                      value={settings.technique}
+                      options={[
+                        { value: 'Direct antecedents (DA)', label: 'Direct antecedents (DA)' },
+                        { value: 'Earliest antecedents (EA)', label: 'Earliest antecedents (EA)' },
+                      ]}
+                      onChange={(value) => set('technique', value as PlsPredictSettings['technique'])}
+                      disabled={isRunning}
+                      ariaLabel="Prediction technique"
+                    />
+                  </CompactField>
+
+                  <div className="grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                    <CompactField label="Folds">
                     <InputBox>
                       <DraftNumberInput
                         value={settings.folds}
@@ -240,9 +364,8 @@ export default function PlsPredictModal({
                         style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
                       />
                     </InputBox>
-                  </InlineField>
-
-                  <InlineField label="Repetitions">
+                    </CompactField>
+                    <CompactField label="Repetitions">
                     <InputBox>
                       <DraftNumberInput
                         value={settings.repetitions}
@@ -254,24 +377,11 @@ export default function PlsPredictModal({
                         style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
                       />
                     </InputBox>
-                  </InlineField>
+                    </CompactField>
+                  </div>
 
-                  <InlineField label="Prediction technique">
-                    <InputBox>
-                      <select
-                        value={settings.technique}
-                        onChange={(event) => set('technique', event.target.value as PlsPredictSettings['technique'])}
-                        disabled={isRunning}
-                        aria-label="Prediction technique"
-                        style={{ width: '100%', color: 'var(--color-text-secondary)', background: 'transparent', border: 0, outline: 'none', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
-                      >
-                        <option>Direct antecedents (DA)</option>
-                        <option>Entire antecedents (EA)</option>
-                      </select>
-                    </InputBox>
-                  </InlineField>
-
-                  <InlineField label="Prediction seed">
+                  <div className="grid gap-3" style={{ gridTemplateColumns: 'minmax(0, 0.9fr) minmax(0, 1.4fr)' }}>
+                    <CompactField label="Prediction seed">
                     <InputBox>
                       <DraftNumberInput
                         value={settings.predictionSeed}
@@ -283,12 +393,15 @@ export default function PlsPredictModal({
                         style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 12, fontWeight: 500 }}
                       />
                     </InputBox>
-                  </InlineField>
-
-                  <InlineField label="Validation plan">
+                    </CompactField>
+                    <CompactField label="Validation plan">
                     <InputBox>
                       <span
                         style={{
+                          display: 'block',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
                           color: 'var(--color-text-secondary)',
                           fontFamily: 'DM Sans, sans-serif',
                           fontSize: 12,
@@ -300,7 +413,8 @@ export default function PlsPredictModal({
                           : `${settings.folds} fold${settings.folds === 1 ? '' : 's'}${settings.repetitions > 1 ? `, ${settings.repetitions} repetitions` : ''}`}
                       </span>
                     </InputBox>
-                  </InlineField>
+                    </CompactField>
+                  </div>
                 </div>
               </div>
 
@@ -309,8 +423,8 @@ export default function PlsPredictModal({
                 style={{ gridTemplateColumns: 'minmax(140px, 160px) 1fr' }}
               >
                 <SectionTitle>Prediction diagnostics</SectionTitle>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 260 }}>
-                  <InlineField label="CVPAT">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <CompactField label="CVPAT">
                     <div
                       style={{
                         height: 34,
@@ -326,7 +440,7 @@ export default function PlsPredictModal({
                         ariaLabel="Run CVPAT"
                       />
                     </div>
-                  </InlineField>
+                  </CompactField>
                 </div>
               </div>
             </div>

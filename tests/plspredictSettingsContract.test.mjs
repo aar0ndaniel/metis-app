@@ -14,7 +14,7 @@ const canvas = await read('src/pages/ModelCanvas.tsx')
 const preferences = await read('src/components/PreferencesModal.tsx')
 const resultsView = await read('src/pages/ResultsView.tsx')
 
-assert.match(settings, /technique:\s*'Direct antecedents \(DA\)'\s*\|\s*'Entire antecedents \(EA\)'/, 'PLSpredict settings should carry the selected SEMinR technique.')
+assert.match(settings, /technique:\s*'Direct antecedents \(DA\)'\s*\|\s*'Earliest antecedents \(EA\)'/, 'PLSpredict settings should carry the selected SEMinR technique.')
 assert.match(settings, /predictionSeed:\s*number/, 'PLSpredict settings should carry a reproducible prediction seed.')
 assert.match(settings, /validationMode:\s*'K-fold'\s*\|\s*'LOOCV'/, 'PLSpredict settings should carry the selected cross-validation mode.')
 assert.match(settings, /technique:\s*'Direct antecedents \(DA\)'/, 'The frontend and backend should share the DA default.')
@@ -26,7 +26,7 @@ assert.match(modal, /Validation mode|LOOCV/, 'The PLSpredict dialog should expos
 assert.doesNotMatch(modal, /Interaction method|Product-indicator|Orthogonal/, 'PLSpredict should not expose a prediction-only interaction method selector.')
 assert.match(modal, /Prediction seed/, 'The PLSpredict dialog should expose the prediction seed.')
 assert.match(modal, /Direct antecedents \(DA\)/, 'The PLSpredict dialog should expose DA.')
-assert.match(modal, /Entire antecedents \(EA\)/, 'The PLSpredict dialog should expose EA.')
+assert.match(modal, /Earliest antecedents \(EA\)/, 'The PLSpredict dialog should expose EA.')
 
 assert.match(api, /missingData\?:\s*string/, 'The request contract should carry missing-data handling.')
 assert.match(api, /missingValue\?:\s*string/, 'The request contract should carry the SEMinR missing-value sentinel.')

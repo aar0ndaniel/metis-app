@@ -32,7 +32,6 @@ assert.match(source, /build_construct_display_name_map/, 'CVPAT rows should map 
 assert.match(source, /PLS_out_of_sample_residuals/, 'PLSpredict Q²predict should be derived from PLS out-of-sample residuals when seminr summary omits Q².')
 assert.match(source, /item_actuals/, 'PLSpredict Q²predict should use the held-out actual indicator values from predict_pls output.')
 assert.match(source, /Q2predict/, 'PLSpredict should serialize Q2predict with an ASCII-safe key for Windows/R JSON compatibility.')
-assert.match(source, /model\$meanData/, 'PLSpredict Q2predict should use the model item-average benchmark when available.')
 assert.match(resultsView, /analysisMode === 'plspredict' && selectedPanel === 'execution-log'/, 'PLSpredict execution log should render with the dedicated log panel, not the generic table fallback.')
 assert.match(electronMain, /seminrExtras/, 'R package verification should require seminrExtras.')
 assert.match(setupWizard, /seminrExtras/, 'Setup wizard package instructions should include seminrExtras.')

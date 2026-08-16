@@ -62,6 +62,7 @@ const PANEL_DATA_PATHS: Record<AnalysisMode, Record<string, string>> = {
     'lv-predictions-errors': 'final_results.lv_predictions_and_errors',
     'plsem-mv-error-hist': 'histograms.plsem_mv_error_histogram',
     'plsem-lv-error-hist': 'histograms.plsem_lv_error_histogram',
+    'cvpat-mv-summary': 'final_results.cvpat_mv_summary',
     'cvpat-lv-summary': 'final_results.cvpat_lv_summary',
     'execution-log': 'algorithm.execution_log',
   },
@@ -1068,9 +1069,15 @@ const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, str
     ],
     'pls-lm-comparison': [
       'final_results.plspredict_mv_summary',
+      'final_results.prediction_summary',
+      'prediction_summary',
+      'plspredict_mv_summary',
     ],
     'q2-predict': [
       'final_results.plspredict_mv_summary',
+      'final_results.plspredict_summary',
+      'plspredict_summary',
+      'plspredict_mv_summary',
     ],
     'plsem-mv-error-hist': [
       'histograms.plsem_mv_error_histogram',
@@ -1079,6 +1086,18 @@ const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, str
     'plsem-lv-error-hist': [
       'histograms.plsem_lv_error_histogram',
       'final_results.lv_predictions_and_errors',
+    ],
+    'cvpat-mv-summary': [
+      'final_results.cvpat_mv_summary',
+      'final_results.cvpat_mv_ia',
+      'final_results.cvpat_mv_lm',
+      'cvpat_mv_summary',
+    ],
+    'cvpat-lv-summary': [
+      'final_results.cvpat_lv_summary',
+      'final_results.cvpat_compare_ia',
+      'final_results.cvpat_compare_lm',
+      'cvpat_lv_summary',
     ],
   },
 }

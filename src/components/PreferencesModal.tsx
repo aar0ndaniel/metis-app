@@ -1747,7 +1747,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       {rowDivider()}
       {settingRow('Repetitions', 'Number of repeated cross-validation runs.', stepperControl(predictRepetitions, setPredictRepetitions, 1, 50), 260)}
       {rowDivider()}
-      {settingRow('Prediction technique', 'SEMinR technique used for out-of-sample prediction.', selectShell(predictTechnique, 260, ['Direct antecedents (DA)', 'Entire antecedents (EA)'], setPredictTechnique, true, false, preferenceColors.field, 'predict-technique'), 280, 78, 500)}
+      {settingRow('Prediction technique', 'SEMinR technique used for out-of-sample prediction.', selectShell(predictTechnique, 260, ['Direct antecedents (DA)', 'Earliest antecedents (EA)'], setPredictTechnique, true, false, preferenceColors.field, 'predict-technique'), 280, 78, 500)}
       {rowDivider()}
       {settingRow('PLS algorithm', 'Algorithm used to estimate the prediction model.', selectShell(predictAlgorithm, 220, ['Standard PLS', 'Consistent PLS (PLSc)'], setPredictAlgorithm, true, false, preferenceColors.field, 'predict-algorithm'), 240, 78, 500)}
       {rowDivider()}

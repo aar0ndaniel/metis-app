@@ -532,7 +532,7 @@ async function notifyCrashReport(kind: string, summary: string, reportPath: stri
 
 function buildSplashHtml(): string {
   const splashTheme = readStoredThemePreference()
-  const splashVersionLabel = app.getVersion() || '0.3.0'
+  const splashVersionLabel = app.getVersion() || '0.3.1'
   const isLightSplash = splashTheme === 'light'
   const logoAssetPath = isLightSplash ? 'src/assets/logo-black.svg' : 'src/assets/logo-primary.svg'
   const splashColors = isLightSplash

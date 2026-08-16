@@ -97,9 +97,11 @@ await runTest('results panel catalog exposes the approved mode-specific sidebars
   assert.ok(collectIds(bootstrap).includes('algorithm-settings'))
   assert.ok(collectIds(plspredict).includes('algorithm-settings'))
   assert.ok(collectIds(advanced).includes('algorithm-settings'))
-  assert.ok(!collectIds(moderatedPlsPredict).includes('moderation-summary'))
   assert.ok(collectIds(plspredict).includes('cvpat-lv-summary'))
-  assert.ok(!collectIds(plspredict).includes('cvpat-mv-summary'))
+  assert.ok(collectIds(plspredict).includes('cvpat-mv-summary'))
+  const predictiveSummaries = plspredict.find((section) => section.id === 'predictive-summaries')
+  assert.ok(predictiveSummaries?.items.some((item) => item.id === 'cvpat-mv-summary'))
+  assert.ok(predictiveSummaries?.items.some((item) => item.id === 'cvpat-lv-summary'))
   assert.equal(plspredict.find((section) => section.id === 'prediction-diagnostics')?.defaultOpen, true)
   assert.ok(!collectIds(moderatedAdvanced).includes('moderation-summary'))
 
@@ -152,7 +154,17 @@ await runTest('results placeholder rules use the approved mode-specific copy', a
   )
 
   assert.equal(
+    classifyPanelEmptyState({ mode: 'plspredict', panelId: 'cvpat-mv-summary', hasRows: false, cvpatEnabled: false }),
+    'CVPAT not run — re-run analysis with CVPAT enabled.'
+  )
+
+  assert.equal(
     classifyPanelEmptyState({ mode: 'plspredict', panelId: 'cvpat-lv-summary', hasRows: false, cvpatEnabled: true, cvpatStatus: 'missing-seminrextras' }),
+    'CVPAT requires seminrExtras in the R backend. Install seminrExtras, then rerun with CVPAT enabled.'
+  )
+
+  assert.equal(
+    classifyPanelEmptyState({ mode: 'plspredict', panelId: 'cvpat-mv-summary', hasRows: false, cvpatEnabled: true, cvpatStatus: 'missing-seminrextras' }),
     'CVPAT requires seminrExtras in the R backend. Install seminrExtras, then rerun with CVPAT enabled.'
   )
 

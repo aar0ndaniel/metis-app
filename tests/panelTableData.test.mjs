@@ -500,6 +500,26 @@ await runTest('panel data resolver exposes bootstrap HTMT confidence interval al
     mvErrorRows,
   )
 
+  const cvpatMvRows = { ia: [{ Indicator: 'sat_1', 'PLS Loss': 0.2 }], lm: [{ Indicator: 'sat_1', 'PLS Loss': 0.2 }] }
+  assert.deepEqual(
+    getPanelDataFromResults('plspredict', 'cvpat-mv-summary', {
+      final_results: {
+        cvpat_mv_summary: cvpatMvRows,
+      },
+    }),
+    cvpatMvRows,
+  )
+
+  const cvpatLvRows = { ia: [{ Construct: 'SAT', 'PLS Loss': 0.15 }], lm: [{ Construct: 'SAT', 'PLS Loss': 0.15 }] }
+  assert.deepEqual(
+    getPanelDataFromResults('plspredict', 'cvpat-lv-summary', {
+      final_results: {
+        cvpat_lv_summary: cvpatLvRows,
+      },
+    }),
+    cvpatLvRows,
+  )
+
   const altSummaryRows = [{ Item: 'SAT1', Q2_predict: 0.25 }]
   assert.deepEqual(
     getPanelDataFromResults('plspredict', 'q2-predict', {

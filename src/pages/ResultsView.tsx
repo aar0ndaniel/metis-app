@@ -102,8 +102,6 @@ import {
 import {
   buildConstructIndicatorLookup,
   buildMeasurementMatrix,
-  extractPlsLmComparisonRows,
-  extractQ2PredictRows,
   formatBottleneckDisplayValue,
   formatBottleneckOutcomeLevel,
   formatPreciseNumber,
@@ -292,13 +290,12 @@ const PANEL_ICON_OVERRIDES: Record<string, ElementType> = {
   'htmt-confidence-intervals': ShieldCheck,
   'plspredict-mv-summary': Table,
   'plspredict-lv-summary': ChartPieSlice,
-  'pls-lm-comparison': ChartBar,
-  'q2-predict': Target,
+  'cvpat-mv-summary': CheckCircle,
+  'cvpat-lv-summary': CheckCircle,
   'mv-predictions-errors': WaveSine,
   'lv-predictions-errors': ChartLineUp,
   'plsem-mv-error-hist': ChartScatter,
   'plsem-lv-error-hist': ChartPieSlice,
-  'cvpat-lv-summary': CheckCircle,
   'priority-map': Target,
   'construct-table': Database,
   'necessity-check': ShieldCheck,
@@ -2192,6 +2189,20 @@ function formatResultTableHeader(header: string, selectedPanel?: string): string
   if (normalizedHeader === 'bcciupper') return 'BC CI upper'
   if (normalizedHeader === 'bcacilower') return 'BCa CI lower'
   if (normalizedHeader === 'bcaciupper') return 'BCa CI upper'
+  if (normalizedHeader === 'q2predict' || normalizedHeader === 'q2') return 'Q²predict'
+  if (normalizedHeader === 'plssemrmse') return 'PLS-SEM RMSE'
+  if (normalizedHeader === 'plssemmae') return 'PLS-SEM MAE'
+  if (normalizedHeader === 'lmrmse') return 'LM RMSE'
+  if (normalizedHeader === 'lmmae') return 'LM MAE'
+  if (normalizedHeader === 'iarmse') return 'IA RMSE'
+  if (normalizedHeader === 'iamae') return 'IA MAE'
+  if (normalizedHeader === 'plsloss') return 'PLS loss'
+  if (normalizedHeader === 'ialoss') return 'IA loss'
+  if (normalizedHeader === 'lmloss') return 'LM loss'
+  if (normalizedHeader === 'benchmarkloss') return 'Benchmark loss'
+  if (normalizedHeader === 'diff') return 'Average loss difference'
+  if (normalizedHeader === 'boottvalue' || normalizedHeader === 'boott') return 't value'
+  if (normalizedHeader === 'bootpvalue' || normalizedHeader === 'bootp') return 'p value'
   return humanizeResultTableHeader(header)
 }
 
@@ -2752,6 +2763,7 @@ function DiagramCanvas({
       }
 
       if (tagName === 'text') {
+        exportEl.setAttribute('fill', EXPORT_DIAGRAM_TEXT_COLOR)
         exportEl.setAttribute('font-family', computed.fontFamily)
         exportEl.setAttribute('font-size', computed.fontSize)
         exportEl.setAttribute('font-weight', computed.fontWeight)
@@ -3814,61 +3826,99 @@ function BootstrapSignificanceTable({
   )
 }
 
-function Q2PredictTable({ rows }: { rows: Array<Record<string, unknown>> }) {
-  const q2Rows = extractQ2PredictRows(rows)
-  if (!q2Rows.length) return <EmptyTableState />
+function CvpatDualSectionTable({
+  data,
+  isMV,
+  label,
+}: {
+  data: any
+  isMV?: boolean
+  label?: string
+}) {
+  const iaRows = rowsFromData(data?.ia ?? data?.IA ?? data?.cvpat_compare_ia ?? data?.cvpat_mv_ia)
+  const lmRows = rowsFromData(data?.lm ?? data?.LM ?? data?.cvpat_compare_lm ?? data?.cvpat_mv_lm)
+
+  if (!iaRows.length && !lmRows.length) {
+    return <EmptyTableState label={label ?? 'No CVPAT results available'} />
+  }
+
+  const firstColumnHeader = isMV ? 'Indicator' : 'Construct'
+  const benchmarkLossHeader = (section: 'ia' | 'lm') => (section === 'ia' ? 'IA loss' : 'LM loss')
+
+  const renderSection = (title: string, rows: Array<Record<string, unknown>>, sectionKey: 'ia' | 'lm') => {
+    if (!rows.length) return null
+    return (
+      <div className="mb-6 last:mb-0">
+        <h3 className="px-4 py-2 text-xs font-semibold text-text-primary uppercase tracking-wider bg-white/5 border-y border-border/60">
+          {title}
+        </h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-primary/20">
+                <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  {firstColumnHeader}
+                </th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  PLS loss
+                </th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  {benchmarkLossHeader(sectionKey)}
+                </th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  Average loss difference
+                </th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  t value
+                </th>
+                <th className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
+                  p value
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, idx) => {
+                const entity = row[firstColumnHeader] ?? row.Indicator ?? row.Construct ?? row.row ?? `Item_${idx + 1}`
+                const plsLoss = row['PLS Loss'] ?? row.pls_loss ?? row.PLS_Loss ?? row.plsLoss
+                const benchLoss = row[benchmarkLossHeader(sectionKey)] ?? row['Benchmark Loss'] ?? row['IA Loss'] ?? row['LM Loss'] ?? row.benchmark_loss ?? row.ia_loss ?? row.lm_loss
+                const diff = row.Diff ?? row.diff ?? row['Average loss difference'] ?? row.average_loss_difference
+                const tVal = row['Boot T value'] ?? row['Boot T'] ?? row.boot_t_value ?? row.boot_t ?? row.t_value ?? row.T
+                const pVal = row['Boot P Value'] ?? row['Boot P'] ?? row.boot_p_value ?? row.boot_p ?? row.p_value ?? row.p
+
+                return (
+                  <tr key={`${entity}-${idx}`} style={resultsTableRowStyle(idx)}>
+                    <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40 whitespace-nowrap">
+                      {String(entity)}
+                    </td>
+                    <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">
+                      {fmtNum(plsLoss)}
+                    </td>
+                    <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">
+                      {fmtNum(benchLoss)}
+                    </td>
+                    <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">
+                      {fmtNum(diff)}
+                    </td>
+                    <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">
+                      {fmtNum(tVal)}
+                    </td>
+                    <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">
+                      {fmtNum(pVal)}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr className="bg-primary/20">
-          {['Indicator', 'Q²predict'].map((header) => (
-            <th key={header} className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border">
-              {header}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {q2Rows.map((row, idx) => (
-          <tr key={`${row.label}-${idx}`} style={resultsTableRowStyle(idx)}>
-            <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40">{row.label}</td>
-            <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{fmtNum(row.q2Predict)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  )
-}
-
-function PlsLmComparisonTable({ rows }: { rows: Array<Record<string, unknown>> }) {
-  const comparisonRows = extractPlsLmComparisonRows(rows)
-  if (!comparisonRows.length) return <EmptyTableState />
-
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="bg-primary/20">
-            {['Indicator', 'PLS RMSE', 'PLS MAE', 'LM RMSE', 'LM MAE'].map((header) => (
-              <th key={header} className="px-4 py-2.5 text-left text-[10px] font-semibold text-text-muted uppercase tracking-wider border-b border-border whitespace-nowrap">
-                {header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {comparisonRows.map((row, idx) => (
-            <tr key={`${row.label}-${idx}`} style={resultsTableRowStyle(idx)}>
-              <td className="px-4 py-2 text-text-primary font-medium border-b border-border/40 whitespace-nowrap">{row.label}</td>
-              <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{row.plsRmse == null ? '—' : fmtNum(row.plsRmse)}</td>
-              <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{row.plsMae == null ? '—' : fmtNum(row.plsMae)}</td>
-              <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{row.lmRmse == null ? '—' : fmtNum(row.lmRmse)}</td>
-              <td className="px-4 py-2 text-text-secondary border-b border-border/40 tabular-nums">{row.lmMae == null ? '—' : fmtNum(row.lmMae)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="py-2">
+      {renderSection('PLS-SEM versus Indicator Average', iaRows, 'ia')}
+      {renderSection('PLS-SEM versus Linear Model', lmRows, 'lm')}
     </div>
   )
 }
@@ -4454,7 +4504,7 @@ function ModerationSlopeChartPanel({
 
 type AdvancedPanelViewMode = 'table' | 'chart'
 
-const SUPPORTED_PANELS = ['path-coef','r-square','reliability','outer-loadings','outer-weights','cross-loadings','vif','discriminant','model-fit','q2-predict','pls-lm-comparison','execution-log','moderation-slope-chart']
+const SUPPORTED_PANELS = ['path-coef','r-square','reliability','outer-loadings','outer-weights','cross-loadings','vif','discriminant','model-fit','cvpat-mv-summary','cvpat-lv-summary','execution-log','moderation-slope-chart']
 const STRUCTURAL_EFFECT_PANEL_IDS = ['path-coef', 'total-indirect', 'specific-indirect', 'total-effects']
 
 function isStructuralEffectPanel(panelId: string): boolean {
@@ -4734,10 +4784,10 @@ function TablePanel({
     hasFormativeWeights: Array.isArray(savedModel?.constructs)
       ? savedModel.constructs.some((construct: any) => String(construct?.type || '').toLowerCase() === 'formative')
       : undefined,
-    cvpatEnabled: effectiveSelectedPanel === 'cvpat-lv-summary'
+    cvpatEnabled: (effectiveSelectedPanel === 'cvpat-lv-summary' || effectiveSelectedPanel === 'cvpat-mv-summary')
       ? cvpatRequested
       : undefined,
-    cvpatStatus: effectiveSelectedPanel === 'cvpat-lv-summary'
+    cvpatStatus: (effectiveSelectedPanel === 'cvpat-lv-summary' || effectiveSelectedPanel === 'cvpat-mv-summary')
       ? cvpatStatus
       : undefined,
     modelSelectionComparable: effectiveSelectedPanel === 'model-select' ? panelRows.length > 0 : undefined,
@@ -5156,16 +5206,13 @@ function TablePanel({
           ) : null
         ) : (
           <>
-            {analysisMode === 'plspredict' && selectedPanel === 'q2-predict' && (
-              <Q2PredictTable rows={q2PredictRows} />
-            )}
-            {analysisMode === 'plspredict' && selectedPanel === 'pls-lm-comparison' && (
-              <PlsLmComparisonTable rows={plsLmComparisonRows} />
+            {analysisMode === 'plspredict' && (selectedPanel === 'cvpat-mv-summary' || selectedPanel === 'cvpat-lv-summary') && (
+              <CvpatDualSectionTable data={displayPanelData} isMV={selectedPanel === 'cvpat-mv-summary'} label={emptyStateLabel} />
             )}
             {analysisMode === 'plspredict' && selectedPanel === 'execution-log' && (
               <ExecutionLogPanel log={execLog} />
             )}
-            {!['q2-predict', 'pls-lm-comparison', 'execution-log', 'plsem-mv-error-hist', 'plsem-lv-error-hist'].includes(selectedPanel) && (
+            {!['cvpat-mv-summary', 'cvpat-lv-summary', 'execution-log', 'plsem-mv-error-hist', 'plsem-lv-error-hist'].includes(selectedPanel) && (
               <GenericDataTable data={displayPanelData} analysisMode={analysisMode} selectedPanel={selectedPanel} emptyLabel={emptyStateLabel} savedModel={savedModel} analysisResults={analysisResults} />
             )}
           </>
@@ -6062,14 +6109,6 @@ export default function ResultsView() {
       : Number.isFinite(stopCriterionValue) && stopCriterionValue >= 1
         ? Math.round(stopCriterionValue)
         : 7
-    const settingComments = Object.entries(runSettings)
-      .filter(([key, value]) => !['algorithm_label', 'algorithm_settings', 'algorithmSettings'].includes(key) && value !== undefined && value !== null && typeof value !== 'object')
-      .map(([key, value]) => `# ${key}: ${String(value)}`)
-    if (runAlgorithmSettings && typeof runAlgorithmSettings === 'object') {
-      Object.entries(algorithmSettings)
-        .filter(([, value]) => value !== undefined && value !== null)
-        .forEach(([key, value]) => settingComments.push(`# algorithm_settings.${key}: ${String(value)}`))
-    }
     const algorithmIsConsistent = algorithm.toLowerCase().includes('consistent')
     const constructBlocks = savedModel.constructs.map((construct) => {
       const fn = construct.type === 'Formative' ? 'composite' : algorithmIsConsistent ? 'reflective' : 'composite'
@@ -6123,10 +6162,19 @@ export default function ResultsView() {
           'summary(boot_model)',
         ]
       : runAnalysisMode === 'plspredict'
-        ? [
-            `prediction <- predict_pls(model, technique = predict_DA, noFolds = ${Number(runSettings.folds) || 10}, reps = ${Number(runSettings.repetitions) || 1})`,
-            'summary(prediction)',
-          ]
+        ? (() => {
+            const plspredictMeta = (getByPath(analysisResults, 'meta.analysis_settings.plspredict') ?? {}) as Record<string, unknown>
+            const techniqueRaw = String(runSettings.prediction_technique ?? runSettings.technique ?? plspredictMeta.technique ?? '').trim().toLowerCase()
+            const isEarliestAntecedents = techniqueRaw.includes('ea') || techniqueRaw.includes('earliest') || techniqueRaw.includes('entire')
+            const predictTechnique = isEarliestAntecedents ? 'predict_EA' : 'predict_DA'
+            const validationMode = String(runSettings.cross_validation ?? runSettings.validationMode ?? plspredictMeta.validationMode ?? '').trim().toUpperCase()
+            const foldsParam = validationMode === 'LOOCV' ? 'NULL' : `${Number(runSettings.folds ?? plspredictMeta.folds) || 10}`
+            const repsParam = `${Number(runSettings.repetitions ?? plspredictMeta.repetitions) || 1}`
+            return [
+              `prediction <- predict_pls(model, technique = ${predictTechnique}, noFolds = ${foldsParam}, reps = ${repsParam})`,
+              'summary(prediction)',
+            ]
+          })()
         : runAnalysisMode === 'advanced'
           ? [
               'library(seminrExtras)',
@@ -6162,7 +6210,6 @@ export default function ResultsView() {
       '',
       `# Analysis run: ${runMode}`,
       `# Algorithm: ${algorithmLabel} (${algorithm})`,
-      ...settingComments,
       '',
       'mm <- constructs(',
       constructBlocks.join(',\n'),
@@ -6408,24 +6455,35 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
               measurementRows.map((row) => [row.construct, row.indicator, fmtNum(row.loading)]),
             )
           }
-        } else if (item.id === 'q2-predict') {
-          const q2Rows = extractQ2PredictRows(rows)
-          tableHtml = buildExportTableFromRows(
-            ['Indicator', 'Q²predict'],
-            q2Rows.map((row) => [row.label, fmtNum(row.q2Predict)]),
-          )
-        } else if (item.id === 'pls-lm-comparison') {
-          const comparisonRows = extractPlsLmComparisonRows(rows)
-          tableHtml = buildExportTableFromRows(
-            ['Indicator', 'PLS RMSE', 'PLS MAE', 'LM RMSE', 'LM MAE'],
-            comparisonRows.map((row) => [
-              row.label,
-              row.plsRmse == null ? '—' : fmtNum(row.plsRmse),
-              row.plsMae == null ? '—' : fmtNum(row.plsMae),
-              row.lmRmse == null ? '—' : fmtNum(row.lmRmse),
-              row.lmMae == null ? '—' : fmtNum(row.lmMae),
-            ]),
-          )
+        } else if (item.id === 'cvpat-mv-summary' || item.id === 'cvpat-lv-summary') {
+          const isMV = item.id === 'cvpat-mv-summary'
+          const firstCol = isMV ? 'Indicator' : 'Construct'
+          const finalRes: any = analysisResults?.final_results
+          const data: any = (finalRes ? finalRes[isMV ? 'cvpat_mv_summary' : 'cvpat_lv_summary'] : null) ?? rows
+          const iaRows = rowsFromData(data?.ia ?? data?.cvpat_compare_ia ?? data?.cvpat_mv_ia)
+          const lmRows = rowsFromData(data?.lm ?? data?.cvpat_compare_lm ?? data?.cvpat_mv_lm)
+
+          const buildCvpatSectionHtml = (title: string, sectionRows: Array<Record<string, unknown>>, isIa: boolean) => {
+            if (!sectionRows.length) return ''
+            const benchCol = isIa ? 'IA loss' : 'LM loss'
+            const headers = [firstCol, 'PLS loss', benchCol, 'Average loss difference', 't value', 'p value']
+            const rowData: Array<Array<string | number | null | undefined>> = sectionRows.map((r, idx) => [
+              String(r[firstCol] ?? r.Indicator ?? r.Construct ?? r.row ?? `Item_${idx + 1}`),
+              fmtNum(r['PLS Loss'] ?? r.pls_loss ?? r.PLS_Loss),
+              fmtNum(r[benchCol] ?? r['Benchmark Loss'] ?? r['IA Loss'] ?? r['LM Loss'] ?? r.benchmark_loss),
+              fmtNum(r.Diff ?? r.diff ?? r['Average loss difference']),
+              fmtNum(r['Boot T value'] ?? r.boot_t_value ?? r.t_value),
+              fmtNum(r['Boot P Value'] ?? r.boot_p_value ?? r.p_value),
+            ])
+            return `
+              <div style="margin-bottom: 24px;">
+                <h3 style="font-size: 13px; font-weight: 600; margin-bottom: 8px; color: #f0f0f5; text-transform: uppercase; letter-spacing: 0.5px;">${escapeHtml(title)}</h3>
+                ${buildExportTableFromRows(headers, rowData)}
+              </div>
+            `
+          }
+
+          tableHtml = `${buildCvpatSectionHtml('PLS-SEM versus Indicator Average', iaRows, true)}${buildCvpatSectionHtml('PLS-SEM versus Linear Model', lmRows, false)}`
         }
         const exportHocRows = parseHOCResults(analysisResults)
         const hocExportHtml = (item.id === 'outer-loadings' || item.id === 'outer-weights') && exportHocRows.length > 0
