@@ -205,8 +205,8 @@ assert.deepEqual(
 )
 
 const specificIndirect = byTitle.get('Specific indirect effects')
-assert.deepEqual(specificIndirect.headers, ['Path', 'β', 'STDEV', 't-value', '2.5% CI', '97.5% CI'])
-assert.deepEqual(specificIndirect.rows, [['Perceived Ease of Use → Attitude → Loyalty', '0.123', '0.041', '3.000', '0.051', '0.208']])
+assert.deepEqual(specificIndirect.headers, ['Path', 'β', 'STDEV', 't-value', 'p-value', '2.5% CI', '97.5% CI'])
+assert.deepEqual(specificIndirect.rows, [['Perceived Ease of Use → Attitude → Loyalty', '0.123', '0.041', '3.000', '0.003', '0.051', '0.208']])
 
 const power = byTitle.get('Explanatory and predictive power')
 assert.deepEqual(

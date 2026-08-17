@@ -45,6 +45,7 @@ import {
   resolveAccentOnColor,
   resolveAccentRgb,
 } from '../utils/themeAccent'
+import { MISSING_MARKER_PRESETS, getSavedCustomMissingMarkers, deleteCustomMissingMarker } from '../utils/datasetMissing'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Props {
@@ -434,8 +435,22 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const [defaultSeed, setDefaultSeed]             = useState(getSavedSetting('defaultSeed', 'Auto'))
   const [missingData, setMissingData]             = useState(getSavedSetting('missingData', 'Mean replacement'))
   const [missingValue, setMissingValue]           = useState(getSavedSetting('missingValue', 'NA'))
+  const [customMissingMarkers, setCustomMissingMarkers] = useState<string[]>(() => getSavedCustomMissingMarkers())
   const [assessSyntax, setAssessSyntax]           = useState(getSavedSetting('assessSyntax', false))
   const [plsAlgorithm, setPlsAlgorithm]           = useState(getSavedSetting('plsAlgorithm', 'Standard PLS'))
+
+  const handleDeleteCustomMarker = (markerToDelete: string) => {
+    const updated = deleteCustomMissingMarker(markerToDelete)
+    setCustomMissingMarkers(updated)
+    if (missingValue.toLowerCase() === markerToDelete.toLowerCase()) {
+      setMissingValue('NA')
+      try {
+        localStorage.setItem('pls:prefs:missingValue', 'NA')
+      } catch {
+        // Ignore storage errors
+      }
+    }
+  }
   const [hocMethod, setHocMethod]                 = useState(getSavedSetting('hocMethod', 'Two-stage'))
   const [hocTwoStage, setHocTwoStage]             = useState(getSavedHocTwoStageSetting)
   const [openAlgorithmCards, setOpenAlgorithmCards] = useState<Set<string>>(
@@ -1664,7 +1679,63 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       {rowDivider()}
       {settingRow('Missing data', 'Treatment applied before model estimation.', selectShell(missingData, 220, ['Mean replacement', 'Listwise deletion', 'Median replacement'], setMissingData, true, false, preferenceColors.field, 'missing-data'), 220)}
       {rowDivider()}
-      {settingRow('Missing value sentinel', 'Value SEMinR treats as missing before the selected replacement strategy.', selectShell(missingValue, 160, ['NA'], setMissingValue, true, false, preferenceColors.field, 'missing-value'), 210)}
+      {settingRow('Missing value sentinel', 'Value SEMinR treats as missing before the selected replacement strategy.', selectShell(missingValue, 160, Array.from(new Set(['NA', ...MISSING_MARKER_PRESETS, ...customMissingMarkers, missingValue])), setMissingValue, true, false, preferenceColors.field, 'missing-value'), 210)}
+      {customMissingMarkers.length > 0 && (
+        <>
+          {rowDivider()}
+          <div
+            className="flex items-center justify-between"
+            style={{ padding: '16px 24px', gap: 16, width: '100%', flexWrap: 'wrap' }}
+          >
+            <div className="flex flex-col" style={{ gap: 4, flex: 1, minWidth: 220 }}>
+              <span style={{ color: preferenceColors.text, fontFamily: 'DM Sans, sans-serif', fontSize: 18, fontWeight: 500, lineHeight: '23px' }}>
+                Custom Missing Markers
+              </span>
+              <span style={{ color: preferenceColors.description, fontFamily: 'DM Sans, sans-serif', fontSize: 16, fontWeight: 400, lineHeight: '21px' }}>
+                User-defined missing value markers. Click remove to delete a preset from the app.
+              </span>
+            </div>
+            <div className="flex items-center" style={{ gap: 8, flexWrap: 'wrap' }}>
+              {customMissingMarkers.map((marker) => (
+                <div
+                  key={marker}
+                  className="flex items-center"
+                  style={{
+                    height: 36,
+                    padding: '0 8px 0 12px',
+                    borderRadius: 10,
+                    background: preferenceColors.fieldAlt,
+                    border: `1px solid ${preferenceColors.border}`,
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ color: preferenceColors.text, fontFamily: 'DM Sans, sans-serif', fontSize: 14, fontWeight: 600 }}>
+                    {marker}
+                  </span>
+                  <button
+                    type="button"
+                    title={`Delete custom marker "${marker}"`}
+                    aria-label={`Delete custom marker ${marker}`}
+                    onClick={() => handleDeleteCustomMarker(marker)}
+                    className="flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 6,
+                      background: 'rgba(232, 90, 79, 0.14)',
+                      border: 'none',
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    <X size={12} weight="bold" color="#E85A4F" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
       {rowDivider()}
       {settingRow('Assess model syntax', 'Ask SEMinR to validate the model specification during estimation.', selectShell(assessSyntax ? 'On' : 'Off', 160, ['Off', 'On'], (value) => setAssessSyntax(value === 'On'), true, false, preferenceColors.field, 'assess-syntax'), 190)}
       {rowDivider()}

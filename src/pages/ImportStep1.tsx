@@ -9,10 +9,17 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
-  FileCsv, FileXls, Info, ArrowRight, CaretDown, X, Warning,
+  FileCsv, FileXls, Info, ArrowRight, CaretDown, X, Warning, Plus,
 } from '@phosphor-icons/react'
 import { inferVariableTypesFromRows } from '../utils/datasetColumns'
-import { isMissingDatasetValue } from '../utils/datasetMissing'
+import {
+  isMissingDatasetValue,
+  normalizeMissingMarker,
+  MISSING_MARKER_PRESETS,
+  getSavedCustomMissingMarkers,
+  saveCustomMissingMarker,
+} from '../utils/datasetMissing'
+import { parseCSVText, parseExcelBase64, type ParseResult } from '../utils/datasetParsing'
 import { persistDatasetToWorkspace } from '../utils/datasetPersistence'
 import { writeDatasetViewCache } from '../utils/datasetViewCache'
 import { addDiagnostic } from '../utils/diagnostics'
@@ -52,48 +59,7 @@ const DELIMITER_LABELS: Record<string, string> = {
   '|':  'Pipe (|)',
 }
 
-// ─── CSV parse result ─────────────────────────────────────────────────────────
-interface ParseResult {
-  headers:    string[]
-  rows:       string[][]  // first HEAD_ROWS rows (for preview)
-  allRows:    string[][]  // all data rows (for descriptive stats in Step 2)
-  totalRows:  number      // total data rows (excluding header)
-  missing:    number      // cells that are empty or "NA"
-  delimiter:  string
-}
-
 const HEAD_ROWS = 5
-
-function decodeBase64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes
-}
-
-function stringifyExcelCellValue(value: any): string {
-  if (value === null || value === undefined) return ''
-  if (value instanceof Date) return value.toISOString()
-  if (Array.isArray(value)) {
-    return value.map((item) => stringifyExcelCellValue(item)).filter(Boolean).join(' ')
-  }
-  if (typeof value === 'object') {
-    if (typeof value.text === 'string') return value.text
-    if (Array.isArray(value.richText)) {
-      return value.richText.map((item: any) => String(item?.text ?? '')).join('')
-    }
-    if (value.result !== undefined && value.result !== null) {
-      return stringifyExcelCellValue(value.result)
-    }
-    if (typeof value.hyperlink === 'string' && typeof value.text === 'string') {
-      return value.text
-    }
-    return String(value)
-  }
-  return String(value)
-}
 
 function truncateDatasetName(name: string): string {
   return name.length > 20 ? `${name.slice(0, 17)}...` : name
@@ -112,109 +78,44 @@ type ImportStep1Props = {
   activeWorkspaceId: string
 }
 
-// ─── Pure CSV parser (handles quoted fields) ──────────────────────────────────
-function parseCSVText(text: string, delimiter: string): ParseResult {
-  // Normalise line endings
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim())
-
-  function splitLine(line: string): string[] {
-    const result: string[] = []
-    let cur = ''
-    let inQuote = false
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i]
-      if (ch === '"') {
-        if (inQuote && line[i + 1] === '"') { cur += '"'; i++ }
-        else inQuote = !inQuote
-      } else if (ch === delimiter && !inQuote) {
-        result.push(cur.trim())
-        cur = ''
-      } else {
-        cur += ch
-      }
-    }
-    result.push(cur.trim())
-    return result
-  }
-
-  const headers  = splitLine(lines[0])
-  const allRows  = lines.slice(1).map(splitLine)
-  const headRows = allRows.slice(0, HEAD_ROWS)
-
-  let missing = 0
-  allRows.forEach(row => row.forEach(cell => {
-    if (isMissingDatasetValue(cell)) missing++
-  }))
-
-  return { headers, rows: headRows, allRows, totalRows: allRows.length, missing, delimiter }
-}
-
-// ─── Excel parse (uses exceljs library) ───────────────────────────────────────
-async function parseExcelBase64(base64: string): Promise<ParseResult> {
-  // Dynamic import so the rest of the app doesn't bundle Excel parsing unless needed.
-  const ExcelJS = await import('exceljs')
-  const workbook = new ExcelJS.Workbook()
-  const bytes = decodeBase64ToUint8Array(base64)
-  await workbook.xlsx.load(bytes.buffer as ArrayBuffer)
-
-  const sheet = workbook.worksheets[0]
-  if (!sheet) throw new Error('Sheet appears empty')
-
-  const data: string[][] = []
-  sheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
-    const values = Array.isArray(row.values) ? row.values.slice(1) : []
-    data[rowNumber - 1] = values.map((cell) => stringifyExcelCellValue(cell))
-  })
-
-  if (data.length < 2) throw new Error('Sheet appears empty')
-
-  const headers     = data[0].map(String)
-  const allRowsRaw  = data.slice(1)
-  const allRows     = allRowsRaw.map(r => r.map(String))
-  const headRows    = allRows.slice(0, HEAD_ROWS)
-
-  let missing = 0
-  allRows.forEach(row => row.forEach((cell: string) => {
-    if (isMissingDatasetValue(cell)) missing++
-  }))
-
-  return { headers, rows: headRows, allRows, totalRows: allRows.length, missing, delimiter: '' }
-}
-
 // ─── Dropdown ─────────────────────────────────────────────────────────────────
 function SelectField({
-  label, value, options, onChange,
+  label, value, options, onChange, minWidth,
 }: {
-  label: string; value: string; options: string[]; onChange: (v: string) => void
+  label?: string; value: string; options: string[]; onChange: (v: string) => void; minWidth?: number
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="flex flex-col" style={{ gap: 6, flex: 1 }}>
-      <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-        {label}
-      </span>
+    <div className="flex flex-col" style={{ gap: label ? 6 : 0, minWidth, flex: 1 }}>
+      {Boolean(label) && (
+        <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+          {label}
+        </span>
+      )}
       <div className="relative">
         <button
+          type="button"
           onClick={() => setOpen(o => !o)}
           className="w-full flex items-center justify-between"
-          style={{ height: 34, backgroundColor: 'var(--color-page)', borderRadius: 7, border: '1px solid var(--color-border)', padding: '0 12px' }}
+          style={{ height: 34, backgroundColor: 'var(--color-page)', borderRadius: 7, border: '1px solid var(--color-border)', padding: '0 10px' }}
         >
-          <span style={{ color: 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>{value}</span>
-          <CaretDown size={12} color="var(--color-text-secondary)" />
+          <span style={{ color: 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</span>
+          <CaretDown size={12} color="var(--color-text-secondary)" style={{ flexShrink: 0, marginLeft: 4 }} />
         </button>
         {open && (
           <div
-            className="absolute z-20 left-0 right-0"
-            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-modal-popover)', padding: '4px 0' }}
+            className="absolute z-30 left-0 right-0"
+            style={{ top: 38, backgroundColor: 'var(--color-elevated)', borderRadius: 7, border: '1px solid var(--color-border)', boxShadow: 'var(--shadow-modal-popover)', padding: '4px 0', minWidth: minWidth ?? 140, maxHeight: 200, overflowY: 'auto' }}
           >
             {options.map(o => (
               <button
+                type="button"
                 key={o}
                 onClick={() => { onChange(o); setOpen(false) }}
                 className="w-full flex items-center hover:bg-[rgb(var(--color-hover-rgb)/0.75)] transition-colors text-left"
-                style={{ height: 32, padding: '0 12px' }}
+                style={{ height: 32, padding: '0 10px' }}
               >
-                <span style={{ color: o === value ? 'var(--color-accent)' : 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12 }}>{o}</span>
+                <span style={{ color: o === value ? 'var(--color-accent)' : 'var(--color-text-primary)', fontFamily: 'Inter, sans-serif', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o}</span>
               </button>
             ))}
           </div>
@@ -384,6 +285,51 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
   const [isShaking,   setIsShaking]   = useState(false)
   const [saving,      setSaving]      = useState(false)
 
+  // ── Missing Marker State ───────────────────────────────────────────────────
+  const [missingMarkerSelection, setMissingMarkerSelection] = useState<string>('Empty cells / NA')
+  const [customMarkerText, setCustomMarkerText] = useState<string>('')
+  const [customPresets, setCustomPresets] = useState<string[]>(() => getSavedCustomMissingMarkers())
+
+  const effectiveMissingMarker = useMemo(() => {
+    if (missingMarkerSelection === 'Custom...') {
+      return customMarkerText.trim() || 'Empty cells / NA'
+    }
+    return missingMarkerSelection
+  }, [missingMarkerSelection, customMarkerText])
+
+  const allMarkerOptions = useMemo(() => {
+    const base = [...MISSING_MARKER_PRESETS]
+    const custom = customPresets.filter((p) => !base.some((b) => b.toLowerCase() === p.toLowerCase()))
+    return [...base, ...custom, 'Custom...']
+  }, [customPresets])
+
+  const handleSaveCustomPreset = () => {
+    const marker = customMarkerText.trim()
+    if (!marker) return
+    const updatedPresets = saveCustomMissingMarker(marker)
+    setCustomPresets(updatedPresets)
+    setMissingMarkerSelection(marker)
+    setCustomMarkerText('')
+    try {
+      localStorage.setItem('pls:prefs:missingValue', marker)
+    } catch {
+      // Ignore storage errors
+    }
+  }
+
+  // Recompute missing count when effectiveMissingMarker changes
+  useEffect(() => {
+    if (!parseResult?.allRows) return
+    const activeMarker = normalizeMissingMarker(effectiveMissingMarker)
+    let count = 0
+    parseResult.allRows.forEach((row) => {
+      row.forEach((cell) => {
+        if (isMissingDatasetValue(cell, activeMarker)) count += 1
+      })
+    })
+    setParseResult((prev) => prev ? { ...prev, missing: count, missingMarker: activeMarker } : prev)
+  }, [effectiveMissingMarker])
+
   // ── Read + parse the file ──────────────────────────────────────────────────
   const parseFile = useCallback(async (delim?: string) => {
     if (!filePath && !fileContent) {
@@ -406,7 +352,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
       }
 
       if (ext === 'xlsx' || ext === 'xls') {
-        const parsed = await parseExcelBase64(base64)
+        const parsed = await parseExcelBase64(base64, effectiveMissingMarker)
         setParseResult(parsed)
         setStatus('ok')
       } else if (isCSV) {
@@ -418,7 +364,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
 
         const autoDelim = delim ?? detectDelimiter(text.split('\n')[0] ?? '')
         setDelimiter(autoDelim)
-        const parsed = parseCSVText(text, autoDelim)
+        const parsed = parseCSVText(text, autoDelim, effectiveMissingMarker)
         setParseResult(parsed)
         setStatus('ok')
       } else {
@@ -430,7 +376,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
       setStatus('error')
       setParseError(formatUserFriendlyDatasetError(err))
     }
-  }, [filePath, fileContent, ext, isCSV, encoding])
+  }, [filePath, fileContent, ext, isCSV, encoding, effectiveMissingMarker])
 
   // Parse on mount
   useEffect(() => { parseFile() }, []) // eslint-disable-line react-hooks/exhaustive-deps
@@ -506,6 +452,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
         allRows: parseResult.allRows,
         totalRows: parseResult.totalRows,
         missing: parseResult.missing,
+        missingMarker: normalizeMissingMarker(effectiveMissingMarker),
         absolutePath: absoluteDatasetPath,
         datasetTempPath: persisted.datasetTempPath || '',
       })
@@ -521,6 +468,7 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
           variableTypes,
           totalRows: parseResult.totalRows,
           missing: parseResult.missing,
+          missingMarker: normalizeMissingMarker(effectiveMissingMarker),
           absolutePath: absoluteDatasetPath,
           datasetTempPath: persisted.datasetTempPath || '',
           source: targetSource,
@@ -671,28 +619,95 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
             </div>
           )}
 
-          {/* Row 2: Parsing options (CSV only) */}
-          {isCSV && (
-            <div>
-              <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 10 }}>
-                Parsing Options
-              </span>
-              <div className="flex" style={{ gap: 12 }}>
-                <SelectField
-                  label="Delimiter"
-                  value={DELIMITER_LABELS[delimiter] ?? 'Comma (,)'}
-                  options={Object.values(DELIMITER_LABELS)}
-                  onChange={handleDelimiterChange}
-                />
-                <SelectField
-                  label="Encoding"
-                  value={encoding}
-                  options={['UTF-8', 'UTF-16', 'ISO-8859-1', 'Windows-1252']}
-                  onChange={v => { setEncoding(v); parseFile(delimiter) }}
-                />
+          {/* Row 2: Parsing options */}
+          <div>
+            <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', display: 'block', marginBottom: 10 }}>
+              Parsing Options
+            </span>
+            <div className="flex items-end" style={{ gap: 12, flexWrap: 'wrap' }}>
+              {isCSV && (
+                <>
+                  <div style={{ width: 140 }}>
+                    <SelectField
+                      label="Delimiter"
+                      value={DELIMITER_LABELS[delimiter] ?? 'Comma (,)'}
+                      options={Object.values(DELIMITER_LABELS)}
+                      onChange={handleDelimiterChange}
+                    />
+                  </div>
+                  <div style={{ width: 125 }}>
+                    <SelectField
+                      label="Encoding"
+                      value={encoding}
+                      options={['UTF-8', 'UTF-16', 'ISO-8859-1', 'Windows-1252']}
+                      onChange={v => { setEncoding(v); parseFile(delimiter) }}
+                    />
+                  </div>
+                </>
+              )}
+              {/* Missing Marker option on the same row */}
+              <div className="flex flex-col" style={{ gap: 6 }}>
+                <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'Inter, sans-serif', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  Missing Marker
+                </span>
+                <div className="flex items-center" style={{ gap: 6 }}>
+                  <div style={{ width: 145 }}>
+                    <SelectField
+                      value={missingMarkerSelection}
+                      options={allMarkerOptions}
+                      onChange={(opt) => {
+                        setMissingMarkerSelection(opt)
+                        if (opt !== 'Custom...') {
+                          setCustomMarkerText('')
+                        }
+                      }}
+                      minWidth={145}
+                    />
+                  </div>
+                  {missingMarkerSelection === 'Custom...' && (
+                    <div className="flex items-center" style={{ gap: 4 }}>
+                      <input
+                        type="text"
+                        value={customMarkerText}
+                        onChange={(e) => setCustomMarkerText(e.target.value)}
+                        placeholder="e.g. 99"
+                        aria-label="Custom missing marker"
+                        className="outline-none transition-colors focus:border-[var(--color-accent)]"
+                        style={{
+                          width: 88,
+                          height: 34,
+                          backgroundColor: 'var(--color-page)',
+                          borderRadius: 7,
+                          border: '1px solid var(--color-border)',
+                          padding: '0 10px',
+                          color: 'var(--color-text-primary)',
+                          fontFamily: 'Inter, sans-serif',
+                          fontSize: 12,
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={handleSaveCustomPreset}
+                        disabled={!customMarkerText.trim()}
+                        title="Add custom marker to presets"
+                        className="flex items-center justify-center transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{
+                          width: 34,
+                          height: 34,
+                          backgroundColor: 'rgba(var(--color-accent-rgb) / 0.15)',
+                          borderRadius: 7,
+                          border: '1px solid rgba(var(--color-accent-rgb) / 0.30)',
+                          cursor: customMarkerText.trim() ? 'pointer' : 'default',
+                        }}
+                      >
+                        <Plus size={15} weight="bold" color="var(--color-accent)" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          )}
+          </div>
 
           {/* Stats bar */}
           {status === 'ok' && parseResult && (
@@ -800,15 +815,15 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
                             <span style={{ color: 'var(--color-border)', fontFamily: 'Inter, sans-serif', fontSize: 11 }}>{ri + 1}</span>
                           </td>
                           {row.map((cell, ci) => {
-                            const isEmpty = !cell || ['na', 'n/a', '.', 'null', 'none', 'nan'].includes(cell.toLowerCase())
+                            const isCellMissing = isMissingDatasetValue(cell, effectiveMissingMarker)
                             return (
                               <td key={ci} style={{ padding: '8px 14px', whiteSpace: 'nowrap' }}>
                                 <span style={{
-                                  color: isEmpty ? 'var(--color-text-dim)' : '#D0D0D0',
+                                  color: isCellMissing ? 'var(--color-text-dim)' : '#D0D0D0',
                                   fontFamily: 'Inter, sans-serif', fontSize: 12,
-                                  fontStyle: isEmpty ? 'italic' : 'normal',
+                                  fontStyle: isCellMissing ? 'italic' : 'normal',
                                 }}>
-                                  {isEmpty ? '—' : cell}
+                                  {isCellMissing ? '—' : cell}
                                 </span>
                               </td>
                             )
@@ -842,7 +857,9 @@ export default function ImportStep1({ workspaces, activeWorkspaceId }: ImportSte
           >
             <Info size={13} color="var(--color-accent)" />
             <span style={{ color: 'var(--color-accent)', fontFamily: 'Inter, sans-serif', fontSize: 11 }}>
-              Define a missing value marker if your file uses a custom symbol for missing values
+              {effectiveMissingMarker.toLowerCase().includes('none')
+                ? 'All cells will be treated as valid values without missing data replacement.'
+                : `Missing values matching "${effectiveMissingMarker}" will be processed with mean replacement during PLS estimation.`}
             </span>
           </div>
         </div>

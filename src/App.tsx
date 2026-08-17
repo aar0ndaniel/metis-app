@@ -265,6 +265,7 @@ type DatasetImportedPayload = {
   variableTypes?: Record<string, 'MET' | 'CAT'>
   totalRows?: number
   missing?: number
+  missingMarker?: string
   datasetTempPath?: string
   source?: DatasetImportSource
   modelId?: string
@@ -293,6 +294,7 @@ function normalizeDatasetImportedPayload(detail: unknown): DatasetImportedPayloa
     variableTypes,
     totalRows: Number.isFinite(Number(detail.totalRows)) ? Number(detail.totalRows) : undefined,
     missing: Number.isFinite(Number(detail.missing)) ? Number(detail.missing) : undefined,
+    missingMarker: typeof detail.missingMarker === 'string' && detail.missingMarker.trim().length > 0 ? detail.missingMarker.trim() : undefined,
     datasetTempPath: typeof detail.datasetTempPath === 'string' && detail.datasetTempPath.trim().length > 0 ? detail.datasetTempPath : undefined,
     source: detail.source === 'workspace-home' || detail.source === 'model-canvas' ? detail.source : undefined,
     modelId: isSafeEntityId(detail.modelId) ? detail.modelId : undefined,
@@ -985,6 +987,7 @@ function AppShell() {
     variableTypes?: Record<string, 'MET' | 'CAT'>
     totalRows?: number
     missing?: number
+    missingMarker?: string
     datasetTempPath?: string
     source?: DatasetImportSource
     modelId?: string
@@ -1001,6 +1004,7 @@ function AppShell() {
       variableTypes,
       totalRows,
       missing,
+      missingMarker,
       datasetTempPath,
       source,
       modelId,
@@ -1047,6 +1051,7 @@ function AppShell() {
         variableTypes: variableTypes ?? {},
         totalRows,
         missing,
+        missingMarker: missingMarker ?? existingDataset?.missingMarker,
         meta: `${totalRows ?? '?'} cases · ${(headers as string[] | undefined)?.length ?? '?'} variables${(missing ?? 0) > 0 ? ` · ${missing} missing` : ''}`,
       }
 

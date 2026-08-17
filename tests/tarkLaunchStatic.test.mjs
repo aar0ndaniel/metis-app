@@ -114,7 +114,7 @@ assert.match(tarkReportTables, /headers: \['Construct', 'Indicator', 'Loading', 
 assert.match(tarkReportTables, /headers: \['Hypothesis', 'Path', 'β', 'Mean', 'STDEV', 't-value', 'p-value', '95% CI', 'f²', 'Effect size', 'Decision'\]/, 'Structural table should use the requested journal-ready headings.')
 assert.match(tarkReportTables, /TARK_USER_FILL_CELL,\s*\n\s*formatMappedPath/, 'Structural hypothesis cells should be blank for the user to fill after copy.')
 assert.match(tarkReportTables, /readPValue\(row\)/, 'Structural table should read p-values through the robust p-value helper.')
-assert.match(tarkReportTables, /headers: \['Endogenous construct', 'R²', 'Adjusted R²', 'R² interpretation', 'Q²', 'Q² interpretation'\]/, 'Predictive power table should include blank interpretation columns.')
+assert.match(tarkReportTables, /headers: \['Endogenous construct', 'R²', 'Adjusted R²', 'R² interpretation', 'Q²predict', 'Q²predict interpretation'\]/, 'Predictive power table should include blank interpretation columns.')
 assert.match(tarkReportTables, /displayFitIndex\(String\(metric\)\)/, 'Model fit rows should display actual fit-index names instead of generic value labels.')
 assert.match(tarkReportTables, /function readScalar/, 'Tark report tables should extract scalar values from nested saved-result cells.')
 assert.doesNotMatch(tarkReportTables, /if \(typeof value === 'object'\) return '—'/, 'Tark report tables should not discard object-shaped numeric cells.')

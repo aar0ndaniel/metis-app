@@ -9,6 +9,7 @@ export interface DatasetViewCacheEntry {
   allRows?: string[][]
   totalRows?: number
   missing?: number
+  missingMarker?: string
   absolutePath?: string
   datasetTempPath?: string
   updatedAt?: string

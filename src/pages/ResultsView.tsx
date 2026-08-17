@@ -2762,11 +2762,15 @@ function DiagramCanvas({
         exportEl.setAttribute('opacity', computed.opacity)
       }
 
-      if (tagName === 'text') {
+      if (tagName === 'text' || tagName === 'tspan') {
         exportEl.setAttribute('fill', EXPORT_DIAGRAM_TEXT_COLOR)
-        exportEl.setAttribute('font-family', computed.fontFamily)
-        exportEl.setAttribute('font-size', computed.fontSize)
-        exportEl.setAttribute('font-weight', computed.fontWeight)
+        if (exportEl instanceof SVGElement && exportEl.style) {
+          exportEl.style.fill = EXPORT_DIAGRAM_TEXT_COLOR
+          exportEl.style.color = EXPORT_DIAGRAM_TEXT_COLOR
+        }
+        exportEl.setAttribute('font-family', computed.fontFamily || 'Inter, system-ui, sans-serif')
+        exportEl.setAttribute('font-size', computed.fontSize || '11px')
+        exportEl.setAttribute('font-weight', computed.fontWeight || '700')
       }
     })
 

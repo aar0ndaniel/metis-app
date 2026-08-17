@@ -2207,7 +2207,9 @@ export default function ModelCanvas({
     const maxIterations = maxIterationsStr ? Number(maxIterationsStr) : 300
     const stopCriterion = readSharedStorageValue('prefs:stopCriterion') || '1e-7'
     const missingData = readSharedStorageValue('prefs:missingData') || 'Mean replacement'
-    const missingValue = readSharedStorageValue('prefs:missingValue') || 'NA'
+    const missingValue = linkedDataset?.missingMarker
+      || readSharedStorageValue('prefs:missingValue')
+      || 'NA'
     const assessSyntax = readSharedStorageValue('prefs:assessSyntax') === 'true'
     const selectedHocSettings = hocSettingsOverride ?? readHocSettings(readSharedStorageValue)
 

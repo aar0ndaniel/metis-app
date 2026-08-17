@@ -1,4 +1,4 @@
-import { isMissingDatasetValue } from './datasetMissing'
+import { isMissingDatasetValue, normalizeMissingMarker } from './datasetMissing'
 
 export interface ParseResult {
   headers: string[]
@@ -7,6 +7,7 @@ export interface ParseResult {
   totalRows: number
   missing: number
   delimiter: string
+  missingMarker?: string
 }
 
 const HEAD_ROWS = 5
@@ -56,7 +57,7 @@ function stringifyExcelCellValue(value: any): string {
   return String(value)
 }
 
-function parseCSVText(text: string, delimiter: string): ParseResult {
+export function parseCSVText(text: string, delimiter: string, missingMarker?: string): ParseResult {
   const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter((line) => line.trim())
 
   function splitLine(line: string): string[] {
@@ -86,15 +87,16 @@ function parseCSVText(text: string, delimiter: string): ParseResult {
   const headers = splitLine(lines[0] || '')
   const allRows = lines.slice(1).map(splitLine)
   const rows = allRows.slice(0, HEAD_ROWS)
+  const activeMarker = normalizeMissingMarker(missingMarker)
   let missing = 0
   allRows.forEach((row) => row.forEach((cell) => {
-    if (isMissingDatasetValue(cell)) missing += 1
+    if (isMissingDatasetValue(cell, activeMarker)) missing += 1
   }))
 
-  return { headers, rows, allRows, totalRows: allRows.length, missing, delimiter }
+  return { headers, rows, allRows, totalRows: allRows.length, missing, delimiter, missingMarker: activeMarker }
 }
 
-export async function parseExcelBase64(base64: string): Promise<ParseResult> {
+export async function parseExcelBase64(base64: string, missingMarker?: string): Promise<ParseResult> {
   const ExcelJS = await import('exceljs')
   const workbook = new ExcelJS.Workbook()
   const bytes = decodeBase64ToUint8Array(base64)
@@ -114,18 +116,24 @@ export async function parseExcelBase64(base64: string): Promise<ParseResult> {
   const headers = data[0].map(String)
   const allRows = data.slice(1).map((row) => row.map(String))
   const rows = allRows.slice(0, HEAD_ROWS)
+  const activeMarker = normalizeMissingMarker(missingMarker)
   let missing = 0
   allRows.forEach((row) => row.forEach((cell) => {
-    if (isMissingDatasetValue(cell)) missing += 1
+    if (isMissingDatasetValue(cell, activeMarker)) missing += 1
   }))
 
-  return { headers, rows, allRows, totalRows: allRows.length, missing, delimiter: '' }
+  return { headers, rows, allRows, totalRows: allRows.length, missing, delimiter: '', missingMarker: activeMarker }
 }
 
-export async function parseDatasetBase64(fileName: string, base64: string, explicitDelimiter?: string): Promise<ParseResult> {
+export async function parseDatasetBase64(
+  fileName: string,
+  base64: string,
+  explicitDelimiter?: string,
+  missingMarker?: string
+): Promise<ParseResult> {
   const ext = fileName.split('.').pop()?.toLowerCase() ?? ''
   if (ext === 'xlsx' || ext === 'xls') {
-    return parseExcelBase64(base64)
+    return parseExcelBase64(base64, missingMarker)
   }
   if (ext !== 'csv' && ext !== '') {
     throw new Error('Unsupported dataset format. Please use CSV or Excel.')
@@ -133,5 +141,5 @@ export async function parseDatasetBase64(fileName: string, base64: string, expli
 
   const text = decodeURIComponent(escape(atob(base64)))
   const delimiter = explicitDelimiter || detectDelimiter(text.split(/\r?\n/)[0] ?? '')
-  return parseCSVText(text, delimiter)
+  return parseCSVText(text, delimiter, missingMarker)
 }

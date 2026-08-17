@@ -130,6 +130,8 @@ const MAX_LABEL_T = 0.88
 const OVAL_RX_SCALE = 1.35
 const OVAL_RY_SCALE = 0.82
 const STRUCTURAL_PATH_NEUTRAL = 'rgb(var(--color-text-secondary-rgb) / 0.74)'
+const PATH_DIAGRAM_TEXT_PRIMARY = 'var(--color-text-primary)'
+const PATH_DIAGRAM_TEXT_SECONDARY = 'var(--color-text-secondary)'
 const LABEL_BOX_FILL_RATIO = 0.8
 const LABEL_MIN_FONT_SIZE = 6
 const LABEL_LINE_HEIGHT_RATIO = 1.08
@@ -891,7 +893,7 @@ export default function PathDiagram({
               >
                 <text
                   x={labelSplit.x} y={labelSplit.y}
-                  fill={resultsReadable ? '#000000' : measurementTextColor}
+                  fill={resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : measurementTextColor}
                   fontSize={resultsReadable ? 12 : 8} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle"
@@ -965,7 +967,7 @@ export default function PathDiagram({
               >
                 <text
                   x={split.x} y={split.y}
-                  fill={resultsReadable ? '#000000' : (useColor ? lineColor : 'var(--color-text-secondary)')}
+                  fill={resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : (useColor ? lineColor : PATH_DIAGRAM_TEXT_SECONDARY)}
                   fontSize={resultsReadable ? 12 : 9} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle"
@@ -1028,7 +1030,7 @@ export default function PathDiagram({
               >
                 <text
                   x={mid.mx} y={mid.my}
-                  fill={resultsReadable ? '#000000' : (useColor ? lineColor : 'var(--color-text-secondary)')}
+                  fill={resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : (useColor ? lineColor : PATH_DIAGRAM_TEXT_SECONDARY)}
                   fontSize={resultsReadable ? 12 : 9} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle"
@@ -1083,7 +1085,7 @@ export default function PathDiagram({
             lengthAdjust="spacingAndGlyphs"
             style={{
               fontSize: resultsReadable ? 13 : 11,
-              fill: resultsReadable ? '#000000' : 'var(--color-text-secondary)',
+              fill: resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : PATH_DIAGRAM_TEXT_SECONDARY,
               fontFamily: 'DM Sans, sans-serif',
               pointerEvents: 'none',
             }}
@@ -1106,7 +1108,7 @@ export default function PathDiagram({
         const isOval = normalizedShape === 'oval'
         const isRectangle = normalizedShape === 'rectangle'
         const isSelected = selectedConstructIds.includes(c.id)
-        const constructLabelAvailableRy = hasScore ? Math.max(LABEL_MIN_FONT_SIZE * 1.6, ry - 14) : ry
+        const constructLabelAvailableRy = hasScore ? Math.max(LABEL_MIN_FONT_SIZE * 1.6, ry - 18) : ry
         const constructLabelLayout = layoutConstructLabel(c.name, {
           rx,
           ry: constructLabelAvailableRy,
@@ -1158,46 +1160,38 @@ export default function PathDiagram({
             )}
 
             {hasScore ? (
-              /* Score mode: big number + small label */
+              /* Score mode: big number + small label with increased separation gap */
               <>
-                <text x={c.x} y={c.y - 6}
-                  fill={resultsReadable ? '#000000' : c.color} fontSize={resultsReadable ? 15 : 12} fontWeight="700"
+                <text x={c.x} y={c.y - 12}
+                  fill={resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : c.color} fontSize={resultsReadable ? 15 : 12} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
                   {scoreVal.toFixed(getDecimals())}
                 </text>
-                <text x={c.x} y={c.y + 9}
-                  fill={resultsReadable ? '#000000' : c.color + 'AA'} fontSize={constructLabelLayout.fontSize}
+                <text x={c.x} y={c.y + 13}
+                  fill={resultsReadable ? PATH_DIAGRAM_TEXT_SECONDARY : c.color + 'AA'} fontSize={constructLabelLayout.fontSize}
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle">
                   {constructLabelLayout.lines.map((line, index) => (
-                    <tspan key={`${c.id}-score-label-${index}`} x={c.x} y={c.y + 9 + line.y}>
+                    <tspan key={`${c.id}-score-label-${index}`} x={c.x} y={c.y + 13 + line.y}>
                       {line.text}
                     </tspan>
                   ))}
                 </text>
               </>
             ) : (
-              /* Default mode: name + type */
-              <>
-                <text x={c.x} y={c.y - 5}
-                  fill={resultsReadable ? '#000000' : c.color}
-                  fontSize={constructLabelLayout.fontSize} fontWeight="700"
-                  fontFamily="Inter, system-ui, sans-serif"
-                  textAnchor="middle" dominantBaseline="middle">
-                  {constructLabelLayout.lines.map((line, index) => (
-                    <tspan key={`${c.id}-label-${index}`} x={c.x} y={c.y - 5 + line.y}>
-                      {line.text}
-                    </tspan>
-                  ))}
-                </text>
-                <text x={c.x} y={c.y + 10}
-                  fill={resultsReadable ? '#000000' : c.color + 'AA'} fontSize={resultsReadable ? 11 : 7.5}
-                  fontFamily="Inter, system-ui, sans-serif"
-                  textAnchor="middle" dominantBaseline="middle">
-                  {c.type}
-                </text>
-              </>
+              /* Exogenous construct: name only, perfectly centered without type indicator */
+              <text x={c.x} y={c.y}
+                fill={resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : c.color}
+                fontSize={constructLabelLayout.fontSize} fontWeight="700"
+                fontFamily="Inter, system-ui, sans-serif"
+                textAnchor="middle" dominantBaseline="middle">
+                {constructLabelLayout.lines.map((line, index) => (
+                  <tspan key={`${c.id}-label-${index}`} x={c.x} y={c.y + line.y}>
+                    {line.text}
+                  </tspan>
+                ))}
+              </text>
             )}
 
             {interactive && isSelected && (

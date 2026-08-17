@@ -26,6 +26,7 @@ export interface WorkspaceDatasetChild extends WorkspaceChildBase {
   variableTypes?: Record<string, VariableKind>
   totalRows?: number
   missing?: number
+  missingMarker?: string
   linkedModelId?: string
 }
 

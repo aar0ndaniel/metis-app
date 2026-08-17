@@ -500,7 +500,8 @@ export default function DataView({ workspaces }: DataViewProps) {
     if (visibleRange.end < visibleRange.start) return []
     return Array.from({ length: visibleRange.end - visibleRange.start + 1 }, (_, offset) => visibleRange.start + offset)
   }, [visibleRange.end, visibleRange.start])
-  const missingCellLocations = useMemo(() => findMissingCellLocations(rows), [rows])
+  const datasetMissingMarker = dataset?.missingMarker ?? 'Empty cells / NA'
+  const missingCellLocations = useMemo(() => findMissingCellLocations(rows, datasetMissingMarker), [rows, datasetMissingMarker])
 
   useEffect(() => {
     if (!missingValueLocation) return
@@ -1442,7 +1443,7 @@ export default function DataView({ workspaces }: DataViewProps) {
           style={{ minHeight: 48, padding: '7px 18px', gap: 8, borderBottom: '1px solid var(--color-border)', background: 'var(--color-surface)' }}
         >
           <span style={{ color: 'var(--color-text-muted)', fontFamily: 'DM Sans, sans-serif', fontSize: 11, marginRight: 4 }}>
-            {missingValueLocation
+            Marker: <strong style={{ color: 'var(--color-text-primary)' }}>{datasetMissingMarker}</strong> · {missingValueLocation
               ? `Cell ${missingValueLocation.rowIndex + 1}, column ${missingValueLocation.columnIndex + 1}`
               : `${missingCellLocations.length.toLocaleString()} cells found`}
           </span>

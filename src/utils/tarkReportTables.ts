@@ -889,7 +889,11 @@ function buildSpecificIndirectSection(
 ): TarkReportSection | null {
   const rows = toRows(
     (bootstrap as any)?.final_results?.specific_indirect_effects
-      ?? (pls as any)?.final_results?.specific_indirect_effects,
+      ?? (pls as any)?.final_results?.specific_indirect_effects
+      ?? (bootstrap as any)?.final_results?.total_indirect_effects
+      ?? (pls as any)?.final_results?.total_indirect_effects
+      ?? (bootstrap as any)?.final_results?.indirect_effects
+      ?? (pls as any)?.final_results?.indirect_effects,
   )
   if (!rows.length) return null
 
@@ -901,15 +905,20 @@ function buildSpecificIndirectSection(
 
   return {
     title: 'Specific indirect effects',
-    headers: ['Path', 'β', 'STDEV', 't-value', '2.5% CI', '97.5% CI'],
-    rows: rows.map((row, index) => [
-      mapIndirectPath(readValue(row, ['path', 'Path', 'row_name', 'row']) ?? `Path ${index + 1}`),
-      formatCell(readValue(row, ['Original Est.', 'Original.Est.', 'Original Estimate', 'Original sample', 'Original sample (O)', 'O', 'coefficient', 'estimate', 'value'])),
-      formatCell(readValue(row, ['Bootstrap SD', 'Bootstrap.SD', 'STDEV', 'SDEV', 'Standard Deviation', 'Standard deviation (STDEV)'])),
-      formatCell(readValue(row, ['T Stat.', 'T.Stat.', 'T Statistic', 'T statistics', 'T statistics (|O/STDEV|)', 'T Value', 'T values', 't_value', 't'])),
-      formatCell(readValue(row, ['2.5% CI', '2.5% CI (BC)', '2.5% CI (bias-corrected)', 'CI lower', 'lower'])),
-      formatCell(readValue(row, ['97.5% CI', '97.5% CI (BC)', '97.5% CI (bias-corrected)', 'CI upper', 'upper'])),
-    ]),
+    headers: ['Path', 'β', 'STDEV', 't-value', 'p-value', '2.5% CI', '97.5% CI'],
+    rows: rows.map((row, index) => {
+      const tValue = readValue(row, ['T Stat.', 'T.Stat.', 'T Statistic', 'T statistics', 'T statistics (|O/STDEV|)', 'T Value', 'T values', 't_value', 't'])
+      const pValue = readPValue(row) ?? approximateTwoTailedPValueFromT(tValue)
+      return [
+        mapIndirectPath(readValue(row, ['path', 'Path', 'row_name', 'row']) ?? `Path ${index + 1}`),
+        formatCell(readValue(row, ['Original Est.', 'Original.Est.', 'Original Estimate', 'Original sample', 'Original sample (O)', 'O', 'coefficient', 'estimate', 'value'])),
+        formatCell(readValue(row, ['Bootstrap SD', 'Bootstrap.SD', 'STDEV', 'SDEV', 'Standard Deviation', 'Standard deviation (STDEV)'])),
+        formatCell(tValue),
+        formatPValueCell(pValue),
+        formatCell(readValue(row, ['2.5% CI', '2.5% CI (BC)', '2.5% CI (bias-corrected)', 'CI lower', 'lower'])),
+        formatCell(readValue(row, ['97.5% CI', '97.5% CI (BC)', '97.5% CI (bias-corrected)', 'CI upper', 'upper'])),
+      ]
+    }),
     note: 'Note. β = specific indirect effect; STDEV = bootstrap standard deviation; CI = bootstrap confidence interval. The displayed bounds are the standard 95% interval limits (2.5% and 97.5%).',
   }
 }
@@ -920,13 +929,16 @@ function buildPowerSection(
   plspredict: Record<string, unknown> | undefined,
 ): TarkReportSection | null {
   const rRows = toRows((pls as any)?.quality_criteria?.r_square)
-  const qRows = toRows((plspredict as any)?.final_results?.plspredict_lv_summary)
+  const qRows = toRows((plspredict as any)?.final_results?.plspredict_lv_summary ?? (pls as any)?.quality_criteria?.q_square)
   if (!rRows.length && !qRows.length) return null
-  const qByConstruct = new Map(qRows.map((row) => [readLabel(row), readValue(row, ['Q2predict', 'Q²predict', 'Q2.predict', 'q2', 'q2predict'])]))
+  const qByConstruct = new Map(qRows.map((row) => [
+    readLabel(row),
+    readValue(row, ['Q2predict', 'Q²predict', 'Q2_predict', 'Q²_predict', 'Q2.predict', 'Q2 predict', 'Q² predict', 'q2predict', 'q2_predict', 'q2', 'Q2', 'Q²']),
+  ]))
   const constructs = Array.from(new Set([...rRows.map((row) => readLabel(row)), ...qRows.map((row) => readLabel(row))])).filter(Boolean)
   return {
     title: 'Explanatory and predictive power',
-    headers: ['Endogenous construct', 'R²', 'Adjusted R²', 'R² interpretation', 'Q²', 'Q² interpretation'],
+    headers: ['Endogenous construct', 'R²', 'Adjusted R²', 'R² interpretation', 'Q²predict', 'Q²predict interpretation'],
     rows: constructs.map((construct) => {
       const rRow = rRows.find((row) => readLabel(row) === construct) ?? {}
       return [
@@ -938,7 +950,7 @@ function buildPowerSection(
         TARK_USER_FILL_CELL,
       ]
     }),
-    note: 'Note. R² and adjusted R² are from the PLS-SEM estimate. Q² values are from the saved PLSpredict output.',
+    note: 'Note. R² and adjusted R² are from the PLS-SEM estimate. Q²predict values are from the PLSpredict latent variable (LV) summary.',
   }
 }
 

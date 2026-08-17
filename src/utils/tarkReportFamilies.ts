@@ -38,7 +38,7 @@ export const DEFAULT_TARK_TABLE_FAMILIES: TarkTableFamily[] = [
   {
     id: 'explanatory-predictive-power',
     title: 'Explanatory and predictive power',
-    description: 'Combines R², adjusted R², Q², and interpretation labels.',
+    description: 'Combines R², adjusted R², Q²predict, and interpretation labels.',
     advanced: false,
   },
   {
