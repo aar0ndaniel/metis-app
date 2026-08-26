@@ -86,6 +86,7 @@ jobs:
         with:
           name: metis-macos-${{ matrix.arch }}-release
           if-no-files-found: error
+          retention-days: 1
           path: |
             release/bundle/*${{ matrix.arch }}*.dmg
             release/bundle/*${{ matrix.arch }}*.zip

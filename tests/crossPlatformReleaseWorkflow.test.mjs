@@ -31,6 +31,7 @@ assert.match(workflow, /Verify macOS bundled R runtime[\s\S]*verify-r-bundle-arc
 assert.match(workflow, /Build macOS Bundle[\s\S]*npm run build:bundle:mac:\$\{\{ matrix\.arch \}\}/, 'Workflow should build the matching architecture macOS Bundle artifact.')
 assert.match(workflow, /Build macOS Lite[\s\S]*npm run build:lite:mac:\$\{\{ matrix\.arch \}\}/, 'Workflow should build the matching architecture macOS Lite artifact.')
 assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*name: metis-macos-\$\{\{ matrix\.arch \}\}-release[\s\S]*release\/bundle\/\*\$\{\{ matrix\.arch \}\}\*\.dmg[\s\S]*release\/bundle\/\*\$\{\{ matrix\.arch \}\}\*\.zip[\s\S]*release\/lite\/\*\$\{\{ matrix\.arch \}\}\*\.dmg[\s\S]*release\/lite\/\*\$\{\{ matrix\.arch \}\}\*\.zip[\s\S]*r-api\/\$\{\{ matrix\.rArchive \}\}/, 'Workflow should upload Bundle, Lite, and R runtime artifacts for each macOS architecture.')
+assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*retention-days:\s*1/, 'macOS release artifacts should expire quickly to avoid exhausting GitHub Actions artifact storage.')
 assert.match(gitIgnore, /^r-api\/R-macos-\*\.tar\.gz$/m, 'Generated architecture-specific macOS R runtime archives should stay ignored because Actions builds them.')
 
 assert.match(installRPackagesScript, /required_packages <- c\("jsonlite", "Matrix", "plumber", "readxl", "seminr", "seminrExtras", "semPower"\)/, 'R package installer should only target the app-required package set.')
