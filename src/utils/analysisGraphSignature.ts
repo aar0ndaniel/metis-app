@@ -1,6 +1,9 @@
 interface SignatureConstruct {
   id?: unknown
   name?: unknown
+  type?: unknown
+  weightingMode?: unknown
+  isHigherOrder?: unknown
   indicators?: Array<{ name?: unknown } | string> | null
 }
 
@@ -9,6 +12,7 @@ interface SignaturePath {
   to?: unknown
   kind?: unknown
   targetPathId?: unknown
+  hocRole?: unknown
 }
 
 interface SignatureModel {
@@ -27,13 +31,18 @@ function sortUnique(values: string[]): string[] {
 export function buildAnalysisGraphSignature(model: SignatureModel | null | undefined): string {
   const constructs = sortUnique(
     (model?.constructs ?? []).map((construct) => {
-      const name = normalizeToken(construct?.name) || normalizeToken(construct?.id)
+      // Canvas IDs are stable statistical identities. Display names are omitted so
+      // renaming a construct does not invalidate or rerun an otherwise identical model.
+      const id = normalizeToken(construct?.id) || normalizeToken(construct?.name)
+      const type = normalizeToken(construct?.type) || 'Reflective'
+      const weightingMode = normalizeToken(construct?.weightingMode) || 'Automatic'
+      const isHigherOrder = Boolean(construct?.isHigherOrder)
       const indicators = sortUnique(
         (construct?.indicators ?? []).map((indicator) =>
           typeof indicator === 'string' ? normalizeToken(indicator) : normalizeToken(indicator?.name)
         )
       )
-      return `${name}::${indicators.join('|')}`
+      return `${id}::${type}::${weightingMode}::hoc=${isHigherOrder}::${indicators.join('|')}`
     })
   )
 
@@ -43,7 +52,8 @@ export function buildAnalysisGraphSignature(model: SignatureModel | null | undef
       const to = normalizeToken(path?.to)
       const kind = normalizeToken(path?.kind) || 'direct'
       const targetPathId = normalizeToken(path?.targetPathId)
-      return `${from}->${to}::${kind}::${targetPathId}`
+      const hocRole = normalizeToken(path?.hocRole)
+      return `${from}->${to}::${kind}::${targetPathId}::${hocRole}`
     })
   )
 

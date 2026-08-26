@@ -9,6 +9,7 @@ const workspaceRoot = path.resolve(__dirname, '..')
 const resultsSource = await fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8')
 const titleBarSource = await fs.readFile(path.join(workspaceRoot, 'src/components/TitleBar.tsx'), 'utf8')
 const pathDiagramSource = await fs.readFile(path.join(workspaceRoot, 'src/components/PathDiagram.tsx'), 'utf8')
+const pathDiagramExportSource = await fs.readFile(path.join(workspaceRoot, 'src/utils/pathDiagramExport.ts'), 'utf8')
 const cssSource = await fs.readFile(path.join(workspaceRoot, 'src/index.css'), 'utf8')
 
 assert.doesNotMatch(resultsSource, />Recalculate</, 'Results toolbar should not include the Recalculate action.')
@@ -266,33 +267,39 @@ assert.doesNotMatch(
 )
 
 assert.match(
-  resultsSource,
-  /function preparePathDiagramSvgForExport\(svg:\s*SVGSVGElement\):\s*SVGSVGElement/,
+  pathDiagramExportSource,
+  /downloadPathDiagramAsPng\([\s\S]*background:\s*'transparent'[\s\S]*exportPathDiagramToPngBase64\(svg,\s*downloadOptions\)/,
+  'Downloaded PNG path diagrams should remain transparent while report embedding can still request a white background.'
+)
+
+assert.match(
+  pathDiagramExportSource,
+  /export function preparePathDiagramSvgForExport\([\s\S]*svg:\s*SVGSVGElement[\s\S]*\):\s*SVGSVGElement/,
   'Path diagram PNG/SVG export should clone and normalize the live SVG before serializing.'
 )
 
 assert.match(
-  resultsSource,
+  pathDiagramExportSource,
   /getComputedStyle\(document\.documentElement\)[\s\S]*startsWith\('--color-'\)/,
   'Path diagram export should copy theme color variables onto the standalone SVG.'
 )
 
 assert.match(
-  resultsSource,
+  pathDiagramExportSource,
   /exportEl\.setAttribute\('fill',\s*computed\.fill\)/,
   'Path diagram export should inline computed fill colors so indicator boxes do not turn black.'
 )
 
 assert.match(
-  resultsSource,
-  /tagName === 'text'[\s\S]*exportEl\.setAttribute\('font-family',\s*computed\.fontFamily\)/,
+  pathDiagramExportSource,
+  /tagName === 'text'[\s\S]*exportEl\.setAttribute\([\s\S]*'font-family'[\s\S]*computed\.fontFamily/,
   'Path diagram export should inline text styling so indicator names remain visible.'
 )
 
 assert.match(
   resultsSource,
-  /serializeToString\(preparePathDiagramSvgForExport\(svgEl\)\)/,
-  'Path diagram SVG and PNG downloads should serialize the export-normalized SVG.'
+  /downloadPathDiagramAsSvg\(svgEl,[\s\S]*downloadPathDiagramAsPng\(svgEl,/,
+  'ResultsView should route SVG and PNG downloads through the shared export-normalization utility.'
 )
 
 assert.match(

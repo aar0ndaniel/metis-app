@@ -78,10 +78,17 @@ import {
   createMicomCacheEntry,
   resolveMicomOverviewForMgaCache,
   attachMicomOverviewToMgaResults,
-  putMicomCacheInWorkspaceList,
   MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW,
   type MicomCacheEntry,
 } from '../utils/micomCache'
+import {
+  isTemporaryModelId,
+  getTemporaryModelSession,
+  updateTemporaryModelSession,
+  deleteTemporaryModelSession,
+} from '../utils/temporaryModels'
+import { updateAnalysisSession } from '../utils/analysisSessions'
+import { persistModelAs } from '../utils/modelPromotion'
 import { addDiagnostic } from '../utils/diagnostics'
 import { formatUserFriendlyAnalysisError } from '../utils/userFriendlyErrors'
 import {
@@ -958,12 +965,35 @@ export default function ModelCanvas({
   const navigate = useNavigate()
   const { modelId } = useParams()
 
+  const isTemporaryModel = isTemporaryModelId(modelId)
+  const temporaryModelSession = isTemporaryModel && modelId ? getTemporaryModelSession(modelId) : null
+
+  useEffect(() => {
+    if (isTemporaryModel && !temporaryModelSession) {
+      navigate('/', { replace: true })
+    }
+  }, [isTemporaryModel, temporaryModelSession, navigate])
+
+  const [temporaryDatasetSnapshot, setTemporaryDatasetSnapshot] = useState<any>(null)
+
   // Resolve workspace by model route first; fallback to active workspace.
   const workspaceByModel = workspaces.find((w: any) => w.children?.some((c: any) => c.id === modelId))
   const resolvedWorkspace = workspaceByModel ?? workspaces.find((w: any) => w.id === activeWorkspaceId)
   const activeWs = resolvedWorkspace ? migrateWorkspace(resolvedWorkspace as any) : undefined
-  const currentModel = activeWs?.children?.find((c: any) => c.id === modelId && c.type === 'model') as any
-  const linkedDataset = activeWs ? getLinkedDatasetForModel(activeWs as any, modelId) : undefined
+  const currentModel = isTemporaryModel
+    ? (temporaryModelSession ? {
+        id: temporaryModelSession.id,
+        name: temporaryModelSession.name,
+        type: 'model',
+        linkedDatasetId: temporaryModelSession.linkedDatasetId,
+        state: temporaryModelSession.state,
+      } : null)
+    : activeWs?.children?.find((c: any) => c.id === modelId && c.type === 'model') as any
+
+  const linkedDataset = isTemporaryModel
+    ? (temporaryDatasetSnapshot || (activeWs ? getLinkedDatasetForModel(activeWs as any, temporaryModelSession?.linkedDatasetId) : undefined))
+    : (activeWs ? getLinkedDatasetForModel(activeWs as any, modelId) : undefined)
+
   const electronAPI = (window as any).electronAPI
   const returnToWorkspaceHome = useCallback(() => {
     onReturnHome(modelId ?? activeWs?.id ?? null)
@@ -1114,6 +1144,10 @@ export default function ModelCanvas({
       workspacePath: activeWs.path || '',
     }).then((snapshot) => {
       if (cancelled || !snapshot?.headers?.length) return
+      if (isTemporaryModel) {
+        setTemporaryDatasetSnapshot(snapshot)
+        return
+      }
 
       const variableTypes = getModelCanvasVariableTypes(linkedDataset as any, snapshot, snapshot.headers)
       const meta = `${snapshot.totalRows ?? '?'} cases · ${snapshot.headers.length} variables${(snapshot.missing ?? 0) > 0 ? ` · ${snapshot.missing} missing` : ''}`
@@ -1204,6 +1238,17 @@ export default function ModelCanvas({
       setPreferredLatentShape(currentModel.state.preferredLatentShape)
     }
   }, [currentModel?.id, currentModel?.state?.preferredLatentShape])
+
+  useEffect(() => {
+    if (!isTemporaryModel || !modelId) return
+    updateTemporaryModelSession(modelId, (prev) => ({
+      ...prev,
+      state: {
+        ...(prev.state ?? {}),
+        preferredLatentShape,
+      },
+    }))
+  }, [isTemporaryModel, modelId, preferredLatentShape])
 
   const getCurrentSnapshot = useCallback((): ModelDraftState => ({
     constructs: cloneModelState(constructs),
@@ -1552,7 +1597,7 @@ export default function ModelCanvas({
     return () => {
       if (liveCalcTimer.current) clearTimeout(liveCalcTimer.current)
     }
-  }, [constructs, paths, realtimeEnabled])
+  }, [currentGraphSignature, realtimeEnabled])
 
   // Context Menu Global Dismiss
   useEffect(() => {
@@ -1654,73 +1699,37 @@ export default function ModelCanvas({
   ) => {
     if (!currentModel) return
 
-    let targetWsId = wsId
-    let nextWorkspaces = workspaces
+    try {
+      const promotion = await persistModelAs({
+        workspaces: workspaces as any[],
+        sourceModel: {
+          ...currentModel,
+          linkedDatasetId: linkedDatasetId || currentModel?.linkedDatasetId,
+        },
+        snapshot: {
+          constructs,
+          paths,
+          preferredLatentShape,
+        },
+        name,
+        targetWorkspaceId: wsId,
+        newWorkspaceData: wsId === 'new' ? newWsData : undefined,
+        api: electronAPI,
+      })
 
-    if (newWsData && wsId === 'new') {
-      const newWsId = `ws-${Date.now()}`
-      const newWorkspace = {
-        id: newWsId,
-        name: `${newWsData.name}.metisws`,
-        color: newWsData.color,
-        expanded: true,
-        children: [],
-      }
-
-      const createRes = await electronAPI?.createWorkspace?.(newWorkspace)
-      if (!createRes?.success) {
-        dispatchToast('error', 'Save As failed', createRes?.error ?? 'Could not create the selected workspace')
-        return
-      }
-
-      const createdWorkspace = { ...newWorkspace, path: createRes.path ?? '' }
-      nextWorkspaces = [...workspaces, createdWorkspace]
-      setWorkspaces(nextWorkspaces)
-      targetWsId = newWsId
+      setWorkspaces(promotion.workspaces as any[])
+      writeWorkspaceClientCache(JSON.stringify(promotion.workspaces))
+      setShowSaveAsDialog(false)
+      onOpenModel(promotion.model.id, promotion.workspace.id)
+      dispatchToast(
+        'success',
+        'Model saved',
+        `${stripModelDisplayName(promotion.model.name)} is ready in ${stripWorkspaceDisplayName(promotion.workspace.name ?? '') || 'the selected workspace'}`
+      )
+    } catch (err: any) {
+      dispatchToast('error', 'Save As failed', err?.message ?? 'Could not save the target workspace')
     }
-
-    const newModelId = `m-${Date.now()}`
-    const nowIso = new Date().toISOString()
-    const newModel = {
-      ...currentModel,
-      id: newModelId,
-      name: `${name}.hbe`,
-      type: 'model' as const,
-      badge: currentModel.badge ?? 'Draft',
-      createdAt: nowIso,
-      updatedAt: nowIso,
-      state: {
-        ...(currentModel.state || {}),
-        constructs: cloneModelState(constructs),
-        paths: cloneModelState(paths),
-      },
-    }
-
-    const updatedWorkspaces = nextWorkspaces.map((workspace) =>
-      workspace.id === targetWsId
-        ? { ...workspace, children: [...workspace.children, newModel] }
-        : workspace
-    )
-
-    setWorkspaces(updatedWorkspaces)
-    const targetWorkspace = updatedWorkspaces.find((workspace) => workspace.id === targetWsId)
-
-    if (targetWorkspace && electronAPI?.saveWorkspace) {
-      const saveRes = await electronAPI.saveWorkspace(targetWorkspace)
-      if (!saveRes?.success) {
-        dispatchToast('error', 'Save As failed', saveRes?.error ?? 'Could not save the target workspace')
-        return
-      }
-    }
-
-    setShowSaveAsDialog(false)
-    onOpenModel(newModelId, targetWsId)
-    dispatchToast(
-      'success',
-      'Model saved',
-      `${stripModelDisplayName(newModel.name)} is ready in ${stripWorkspaceDisplayName(targetWorkspace?.name ?? '') || 'the selected workspace'}`
-    )
-  }, [constructs, currentModel, electronAPI, onOpenModel, paths, setWorkspaces, workspaces])
+  }, [constructs, currentModel, electronAPI, linkedDatasetId, onOpenModel, paths, preferredLatentShape, setWorkspaces, workspaces])
 
   const persistSnapshotForAnalysis = useCallback((analysisState?: {
     mode: 'pls-sem' | 'bootstrap' | 'plspredict' | 'advanced' | 'permutation' | 'mga'
@@ -1737,64 +1746,53 @@ export default function ModelCanvas({
   }) => {
     const snapshot = getCurrentSnapshot()
     const snapshotGraphSignature = buildAnalysisGraphSignature(snapshot)
-    writeSharedStorageValue('canvas-model', JSON.stringify(snapshot))
     if (modelId) {
       writeAutosaveDraft(modelId, snapshot)
+      updateAnalysisSession(modelId, (previous) => ({
+        ...previous,
+        modelSnapshot: snapshot,
+        ...(analysisState ? {
+          mode: analysisState.mode,
+          results: analysisState.results,
+          savedAt: analysisState.savedAt,
+          graphSignature: analysisState.graphSignature ?? snapshotGraphSignature,
+        } : {}),
+        ...(analysisSettings ? {
+          analysisSettings: {
+            ...(previous.analysisSettings || {}),
+            ...analysisSettings,
+          },
+        } : {}),
+        basePlsAnalysis: analysisState?.mode === 'pls-sem'
+          ? {
+              results: analysisState.results,
+              savedAt: analysisState.savedAt,
+              graphSignature: analysisState.graphSignature ?? snapshotGraphSignature,
+            }
+          : (previous.basePlsAnalysis || null),
+        diagramBaseResults: analysisState?.mode === 'pls-sem'
+          ? analysisState.results
+          : previous.diagramBaseResults,
+        ...(cacheOptions?.micomCache ? { micomCache: cacheOptions.micomCache } : {}),
+      }))
     }
 
-    if (activeWs && currentModel) {
-      const existingState = currentModel.state || {}
-      if (cacheOptions?.micomCache) {
-        micomCacheRef.current = cacheOptions.micomCache
-      }
-      const updatedModel = {
-        ...currentModel,
-        badge: 'Calculated' as const,
-        updatedAt: new Date().toISOString(),
-        state: {
-          ...existingState,
-          constructs: snapshot.constructs,
-          paths: snapshot.paths,
-          analysisSettings: {
-            ...(existingState.analysisSettings || {}),
-            ...(analysisSettings || {}),
-          },
-          ...(analysisState ? { analysis: { ...analysisState, modelSnapshot: snapshot } } : {}),
-          basePlsAnalysis: analysisState?.mode === 'pls-sem'
-            ? {
-                results: analysisState.results,
-                savedAt: analysisState.savedAt,
-                graphSignature: analysisState.graphSignature ?? snapshotGraphSignature,
-              }
-            : (existingState.basePlsAnalysis || null),
-          diagramBaseResults: analysisState?.mode === 'pls-sem'
-            ? analysisState.results
-            : existingState.diagramBaseResults,
-          ...(cacheOptions?.micomCache ? { micomCache: cacheOptions.micomCache } : {}),
-        },
-      }
-      const updatedChildren = activeWs.children.map((child: any) => child.id === modelId ? updatedModel : child)
-      const updatedWs = { ...activeWs, children: updatedChildren }
-      const updatedWorkspaces = workspaces.map((workspace) => workspace.id === activeWs.id ? updatedWs : workspace)
-      setWorkspaces(updatedWorkspaces)
-      writeWorkspaceClientCache(JSON.stringify(updatedWorkspaces))
-      electronAPI?.saveWorkspace?.(updatedWs)
+    if (cacheOptions?.micomCache) {
+      micomCacheRef.current = cacheOptions.micomCache
     }
 
     return snapshot
-  }, [activeWs, currentModel, electronAPI, getCurrentSnapshot, modelId, setWorkspaces, workspaces])
+  }, [getCurrentSnapshot, modelId])
 
   const persistMicomCacheForCurrentModel = useCallback((micomCache: MicomCacheEntry) => {
     micomCacheRef.current = micomCache
-    if (!activeWs || !modelId) return
-
-    const update = putMicomCacheInWorkspaceList(workspaces as Array<Record<string, unknown>>, activeWs.id, modelId, micomCache)
-    setWorkspaces(update.workspaces as any[])
-    writeWorkspaceClientCache(JSON.stringify(update.workspaces))
-    if (update.workspace) {
-      electronAPI?.saveWorkspace?.(update.workspace as any)
+    if (modelId) {
+      updateAnalysisSession(modelId, (previous) => ({
+        ...previous,
+        micomCache,
+      }))
     }
-  }, [activeWs, electronAPI, modelId, setWorkspaces, workspaces])
+  }, [modelId])
 
   const persistedPlsPredictSettings = useMemo(
     () => normalizePlsPredictSettings({
@@ -1911,8 +1909,6 @@ export default function ModelCanvas({
         savedAt,
         graphSignature: currentGraphSignature,
       })
-      writeSharedStorageValue('analysis-mode', 'pls-sem')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
       recordDiagnostic('calculation', 'info', 'PLS-SEM calculation succeeded.', {
         analysisKind: 'pls-sem',
         resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
@@ -1938,6 +1934,7 @@ export default function ModelCanvas({
         showTransientDone: !shouldAutoOpenResults,
       })
       dispatchToast('success', 'PLS-SEM complete', 'Results are ready.')
+      window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'analysis-started' } }))
 
       if (shouldAutoOpenResults) {
         navigate(`/results/${modelId || 'full-tam'}`, {
@@ -2070,8 +2067,6 @@ export default function ModelCanvas({
         writeAutosaveDraft(modelId, snapshot)
       }
     }
-
-    writeSharedStorageValue('canvas-model', JSON.stringify(snapshot))
 
     if (workspaceSave === 'debounced') {
       queueWorkspaceSnapshotSave(snapshot)
@@ -2327,8 +2322,6 @@ export default function ModelCanvas({
         results: result.results,
         savedAt,
       })
-      writeSharedStorageValue('analysis-mode', 'bootstrap')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
       recordDiagnostic('calculation', 'info', 'Bootstrap calculation succeeded.', {
         analysisKind: 'bootstrap',
         resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
@@ -2482,8 +2475,6 @@ export default function ModelCanvas({
       }, {
         plspredict: normalizedSettings,
       })
-      writeSharedStorageValue('analysis-mode', 'plspredict')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
       recordDiagnostic('calculation', 'info', 'PLSpredict calculation succeeded.', {
         analysisKind: 'plspredict',
         resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
@@ -2628,8 +2619,6 @@ export default function ModelCanvas({
       }, {
         advanced: settings,
       })
-      writeSharedStorageValue('analysis-mode', 'advanced')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
       recordDiagnostic('calculation', 'info', 'Advanced analysis succeeded.', {
         analysisKind: 'advanced',
         resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
@@ -2806,8 +2795,6 @@ export default function ModelCanvas({
       }, {
         micomCache,
       })
-      writeSharedStorageValue('analysis-mode', 'permutation')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
       recordDiagnostic('calculation', 'info', 'Permutation analysis succeeded.', {
         analysisKind: 'permutation',
         resultSummary: summarizeAnalysisResults(result.results as Record<string, unknown>),
@@ -2933,8 +2920,6 @@ export default function ModelCanvas({
       }, {
         mga: settings,
       })
-      writeSharedStorageValue('analysis-mode', 'mga')
-      writeSharedStorageValue('analysis-results', JSON.stringify(mgaResults))
       recordDiagnostic('calculation', 'info', 'Multi-group analysis succeeded.', {
         analysisKind: 'mga',
         resultSummary: summarizeAnalysisResults(mgaResults),
@@ -3789,6 +3774,7 @@ export default function ModelCanvas({
     setConstructs(targetConstructs)
     setPaths(newPaths)
     commit(targetConstructs, newPaths)
+    window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'path-created' } }))
     setSelectedPaths([pathId])
     setSelected([])
   }, [constructs, paths, commit])
@@ -4454,6 +4440,7 @@ export default function ModelCanvas({
     const updated = [...constructs, newC]
     setConstructs(updated)
     commit(updated, paths)
+    window.dispatchEvent(new CustomEvent('metis:onboarding-action', { detail: { action: 'construct-created' } }))
     resetNewConstructModal()
     setSelected([id])
   }
@@ -4843,6 +4830,7 @@ function computeModerationAnchorRatio(
                   gap: 6,
                   boxShadow: 'inset 0 1px 0 var(--color-floating-highlight)'
                 }}
+                id="tour-add-dataset"
               >
                 <Database size={12} weight="fill" />
                 ADD DATASET
@@ -6849,6 +6837,7 @@ function computeModerationAnchorRatio(
               <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                 <div style={{ display: 'flex', gap: 10 }}>
                   <button
+                    id="tour-run-analysis-confirm"
                     onClick={() => handleStartCalculation(plsAlgorithm, { method: hocMethod, twoStage: hocTwoStage })}
                     disabled={isAnyCalculationRunning}
                     style={{

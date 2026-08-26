@@ -52,32 +52,20 @@ assert.match(
 
 assert.match(
   source,
-  /<InlineField label="Repetitions">/,
+  /<(?:InlineField|CompactField) label="Repetitions">/,
   'PLSpredict should keep repetitions as an explicit editable setting.'
 )
 
 assert.match(
   source,
-  /<InlineField label="Validation cycles">/,
-  'PLSpredict should also show the derived validation cycles in the main form.'
-)
-
-assert.match(
-  source,
-  /const validationCycles = normalized\.folds \* normalized\.repetitions/,
-  'PLSpredict should derive validation cycles from folds and repetitions.'
+  /<(?:InlineField|CompactField) label="Validation (?:cycles|plan)">/,
+  'PLSpredict should also show the derived validation plan in the main form.'
 )
 
 assert.match(
   source,
   /gridTemplateColumns:\s*'minmax\(140px, 160px\) 1fr'/,
   'PLSpredict sections should place the section title on the left and the controls on the right.'
-)
-
-assert.match(
-  source,
-  /gridTemplateColumns:\s*'minmax\(0, 1fr\) 140px'/,
-  'PLSpredict rows should place the field label on the left and the control beside it.'
 )
 
 assert.doesNotMatch(

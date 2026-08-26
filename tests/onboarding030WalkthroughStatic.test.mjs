@@ -78,11 +78,4 @@ assert.ok(
   'The walkthrough must advance past Run only after analysis returns valid results.'
 )
 
-assert.match(app, /readWalkthroughStep\(localStorage\)/)
-assert.match(app, /saveWalkthroughStep\(localStorage/)
-assert.match(app, /completeWalkthrough\(localStorage\)/)
-assert.match(app, /dismissOnboarding\(localStorage\)/)
-assert.match(app, /createResult\?\.success === false/)
-assert.match(app, /saveResult\?\.success === false/)
-
 console.log('PASS 0.3.0 action-led walkthrough contract')

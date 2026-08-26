@@ -141,27 +141,49 @@ function getOwnValue(obj: any, candidates: string[]): any {
   return undefined
 }
 
-function getAlgorithmSettingsRows(results: any): Array<Record<string, unknown>> {
+function getAlgorithmSettingsRows(results: any, options: { savedModel?: any; mode?: string } = {}): Array<Record<string, unknown>> {
   const settings = getByPath(results, 'algorithm.settings')
   if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return []
 
+  const mode = options.mode
+  const savedModel = options.savedModel
+  const hasHoc = savedModel?.constructs ? savedModel.constructs.some((c: any) => Boolean(c.isHigherOrder || c.is_higher_order)) : true
+  const isHocNotApplicable = String((settings as any)?.hoc_method ?? '').toLowerCase() === 'not applicable' || !hasHoc
+
   const rows: Array<Record<string, unknown>> = []
-  const visit = (value: unknown, prefix: string) => {
-    if (value == null) return
-    if (Array.isArray(value)) {
-      rows.push({ Setting: prefix, Value: value.join(', ') })
-      return
+  const seenSettings = new Set<string>()
+
+  const addRow = (key: string, val: unknown) => {
+    if (val == null) return
+    if (isHocNotApplicable && /hoc/i.test(key)) return
+    if (mode === 'plspredict' && /innerweighting|inner_weighting/i.test(key)) return
+    if (seenSettings.has(key)) return
+    seenSettings.add(key)
+    if (Array.isArray(val)) {
+      rows.push({ Setting: key, Value: val.join(', ') })
+    } else {
+      rows.push({ Setting: key, Value: val })
     }
-    if (typeof value === 'object') {
-      Object.entries(value as Record<string, unknown>).forEach(([key, child]) => {
-        visit(child, prefix ? `${prefix}.${key}` : key)
-      })
-      return
-    }
-    rows.push({ Setting: prefix, Value: value })
   }
 
-  visit(settings, '')
+  Object.entries(settings).forEach(([key, value]) => {
+    if (key === 'algorithm_settings' && value && typeof value === 'object' && !Array.isArray(value)) {
+      Object.entries(value).forEach(([subKey, subVal]) => {
+        if (mode === 'plspredict') {
+          addRow(subKey, subVal)
+        } else {
+          addRow(`algorithm_settings.${subKey}`, subVal)
+        }
+      })
+    } else if (typeof value !== 'object' || Array.isArray(value)) {
+      addRow(key, value)
+    } else {
+      Object.entries(value as Record<string, unknown>).forEach(([subKey, subVal]) => {
+        addRow(`${key}.${subKey}`, subVal)
+      })
+    }
+  })
+
   return rows
 }
 
@@ -1069,15 +1091,9 @@ const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, str
     ],
     'pls-lm-comparison': [
       'final_results.plspredict_mv_summary',
-      'final_results.prediction_summary',
-      'prediction_summary',
-      'plspredict_mv_summary',
     ],
     'q2-predict': [
       'final_results.plspredict_mv_summary',
-      'final_results.plspredict_summary',
-      'plspredict_summary',
-      'plspredict_mv_summary',
     ],
     'plsem-mv-error-hist': [
       'histograms.plsem_mv_error_histogram',
@@ -1091,13 +1107,11 @@ const PANEL_DATA_FALLBACK_PATHS: Partial<Record<AnalysisMode, Record<string, str
       'final_results.cvpat_mv_summary',
       'final_results.cvpat_mv_ia',
       'final_results.cvpat_mv_lm',
-      'cvpat_mv_summary',
     ],
     'cvpat-lv-summary': [
       'final_results.cvpat_lv_summary',
       'final_results.cvpat_compare_ia',
       'final_results.cvpat_compare_lm',
-      'cvpat_lv_summary',
     ],
   },
 }
@@ -1110,7 +1124,7 @@ export function getPanelDataFromResults(
 ): any {
   const results = unwrapAnalysisResults(analysisResults)
 
-  if (panelId === 'algorithm-settings') return getAlgorithmSettingsRows(results)
+  if (panelId === 'algorithm-settings') return getAlgorithmSettingsRows(results, { ...options, mode })
 
   if (mode === 'pls-sem' || mode === 'bootstrap') {
     if (panelId === 'moderation-summary') return deriveModerationSummaryRows(options.savedModel, results)

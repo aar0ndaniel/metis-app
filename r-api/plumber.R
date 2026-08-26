@@ -25,7 +25,7 @@ max_cached_pls_cores <- suppressWarnings(as.integer(Sys.getenv("METIS_MAX_PLS_CO
    if (is.na(value) || value < 1) default_value else value
  }
  
- analysis_timeout_seconds <- read_timeout_seconds("METIS_ANALYSIS_TIMEOUT_SECONDS", 300)
+ analysis_timeout_seconds <- read_timeout_seconds("METIS_ANALYSIS_TIMEOUT_SECONDS", 600)
  bootstrap_timeout_seconds <- read_timeout_seconds("METIS_BOOTSTRAP_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 1800))
  plspredict_timeout_seconds <- read_timeout_seconds("METIS_PLSPREDICT_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 1200))
  advanced_analysis_timeout_seconds <- read_timeout_seconds("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS", max(analysis_timeout_seconds, 1200))
@@ -61,6 +61,13 @@ if (requireNamespace("seminr", quietly = TRUE)) {
 }
 
 pr <- plumber$new()
+
+# Centroid inner-weighting function for SEMinR (Wold 1982, Lohmöller 1989).
+# Inner proxy weights between adjacent constructs are the sign of their correlation.
+path_centroid <- function(smMatrix, construct_scores, dependant, paths_matrix) {
+  adj <- paths_matrix + t(paths_matrix)
+  sign(stats::cor(construct_scores, construct_scores)) * adj
+}
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
@@ -375,7 +382,7 @@ with_analysis_timeout <- function(expr) {
 
 with_analysis_timeout_for <- function(expr, timeout_seconds = analysis_timeout_seconds) {
   setTimeLimit(
-    cpu = timeout_seconds,
+    cpu = Inf,
     elapsed = timeout_seconds,
     transient = TRUE
   )
@@ -385,7 +392,7 @@ with_analysis_timeout_for <- function(expr, timeout_seconds = analysis_timeout_s
 
 format_analysis_error_message <- function(err, analysis_label, timeout_seconds) {
   message <- conditionMessage(err)
-  if (grepl("elapsed time limit", message, fixed = TRUE)) {
+  if (grepl("elapsed time limit|cpu time limit|time limit", message, ignore.case = TRUE)) {
     return(sprintf(
       "%s could not finish within %s seconds. Try fewer bootstrap subsamples or a smaller NCA run depth, close other heavy apps, and run it again.",
       analysis_label,
@@ -410,7 +417,7 @@ format_analysis_error_message <- function(err, analysis_label, timeout_seconds) 
 analysis_error_code <- function(raw_message) {
   message <- tolower(as.character(raw_message %||% ""))
 
-  if (grepl("elapsed time limit|could not finish within", message)) return("TIMEOUT")
+  if (grepl("elapsed time limit|cpu time limit|time limit|could not finish within", message)) return("TIMEOUT")
   if (grepl("cannot allocate vector|memory exhausted|cannot allocate memory|ran out of memory", message)) return("MEMORY")
   if (grepl("dgesv|exactly singular|singular matrix|computationally singular", message)) return("SINGULAR_MATRIX")
   if (grepl("plspredict could not be computed|seminr returned no prediction|plspredict is not available", message)) return("PLSPREDICT_UNSUPPORTED")
@@ -786,8 +793,7 @@ validate_algorithm_settings_payload <- function(settings_payload) {
     }
   }
   if (!is.null(settings_payload$missingValue)) {
-    normalized$missingValue <- require_scalar_string(settings_payload$missingValue, "algorithmSettings.missingValue", max_chars = 20)
-    if (toupper(trimws(normalized$missingValue)) != "NA") stop("algorithmSettings.missingValue currently supports only NA, the SEMinR default sentinel.")
+    normalized$missingValue <- require_scalar_string(settings_payload$missingValue, "algorithmSettings.missingValue", max_chars = 80)
   }
   if (!is.null(settings_payload$assessSyntax)) {
     if (!is_scalar_logical(settings_payload$assessSyntax)) stop("algorithmSettings.assessSyntax must be true or false.")
@@ -1459,34 +1465,157 @@ parse_confidence_level_alpha <- function(confidence_level) {
   alpha
 }
 
-bootstrap_interval_labels <- function(alpha, suffix = "") {
-  lower <- alpha / 2 * 100
-  upper <- 100 - lower
+bootstrap_interval_labels <- function(alpha, suffix = "", test_type = "two-tailed") {
+  is_one_tailed <- grepl("one", tolower(as.character(test_type)))
+  lower <- if (is_one_tailed) alpha * 100 else (alpha / 2) * 100
+  upper <- if (is_one_tailed) (1 - alpha) * 100 else 100 - lower
   c(
     sprintf("%s%% CI%s", lower, suffix),
     sprintf("%s%% CI%s", upper, suffix)
   )
 }
 
-bias_corrected_interval <- function(values, original, alpha = 0.05) {
+calculate_bootstrap_ci <- function(values, original, a = 0, ci_type = "BCa", alpha = 0.05, test_type = "two-tailed") {
   vals <- suppressWarnings(as.numeric(values))
   vals <- vals[is.finite(vals)]
   original <- suppressWarnings(as.numeric(original))[1]
   if (length(vals) < 2 || !is.finite(original)) return(c(NA_real_, NA_real_))
 
+  is_one_tailed <- grepl("one", tolower(as.character(test_type)))
+  alpha_lower <- if (is_one_tailed) alpha else alpha / 2
+  alpha_upper <- if (is_one_tailed) 1 - alpha else 1 - (alpha / 2)
+
+  ci_type_norm <- tolower(as.character(ci_type %||% "bca"))
+
+  if (grepl("percentile", ci_type_norm)) {
+    probs <- c(alpha_lower, alpha_upper)
+    return(as.numeric(stats::quantile(vals, probs = probs, na.rm = TRUE, names = FALSE, type = 6)))
+  }
+
   prop_less <- mean(vals < original)
   n <- length(vals)
   prop_less <- min(max(prop_less, 1 / (2 * n)), 1 - (1 / (2 * n)))
   z0 <- stats::qnorm(prop_less)
-  probs <- stats::pnorm(2 * z0 + stats::qnorm(c(alpha / 2, 1 - alpha / 2)))
+
+  acc <- if (grepl("bca", ci_type_norm)) {
+    acc_val <- suppressWarnings(as.numeric(a))[1]
+    if (is.finite(acc_val)) acc_val else 0
+  } else {
+    0
+  }
+
+  z_l <- stats::qnorm(alpha_lower)
+  z_u <- stats::qnorm(alpha_upper)
+
+  denom_l <- 1 - acc * (z0 + z_l)
+  denom_u <- 1 - acc * (z0 + z_u)
+
+  p_l <- if (is.finite(denom_l) && denom_l != 0) stats::pnorm(z0 + (z0 + z_l) / denom_l) else stats::pnorm(2 * z0 + z_l)
+  p_u <- if (is.finite(denom_u) && denom_u != 0) stats::pnorm(z0 + (z0 + z_u) / denom_u) else stats::pnorm(2 * z0 + z_u)
+
   probs <- c(
-    min(1, max(0, probs[[1]])),
-    min(1, max(0, probs[[2]]))
+    min(1, max(0, p_l)),
+    min(1, max(0, p_u))
   )
   as.numeric(stats::quantile(vals, probs = probs, na.rm = TRUE, names = FALSE, type = 6))
 }
 
-add_bias_corrected_intervals <- function(summary_table, original_matrix, boot_array, alpha = 0.05) {
+bias_corrected_interval <- function(values, original, alpha = 0.05) {
+  calculate_bootstrap_ci(values, original, a = 0, ci_type = "BC", alpha = alpha, test_type = "two-tailed")
+}
+
+compute_jackknife_acceleration <- function(data, measurement_model, structural_model, estimation_settings) {
+  n <- nrow(data)
+  if (is.null(n) || n < 3) return(list(paths = NULL, loadings = NULL, weights = NULL, total_paths = NULL))
+
+  base_model <- tryCatch({
+    estimate_pls_model(data, measurement_model, structural_model, estimation_settings)
+  }, error = function(e) NULL)
+
+  if (is.null(base_model)) return(list(paths = NULL, loadings = NULL, weights = NULL, total_paths = NULL))
+
+  p_rows <- nrow(base_model$path_coef)
+  p_cols <- ncol(base_model$path_coef)
+  l_rows <- nrow(base_model$outer_loadings)
+  l_cols <- ncol(base_model$outer_loadings)
+
+  jack_paths <- array(NA_real_, dim = c(p_rows, p_cols, n), dimnames = list(rownames(base_model$path_coef), colnames(base_model$path_coef), NULL))
+  jack_loadings <- array(NA_real_, dim = c(l_rows, l_cols, n), dimnames = list(rownames(base_model$outer_loadings), colnames(base_model$outer_loadings), NULL))
+  jack_weights <- array(NA_real_, dim = c(l_rows, l_cols, n), dimnames = list(rownames(base_model$outer_weights), colnames(base_model$outer_weights), NULL))
+  jack_total <- array(NA_real_, dim = c(p_rows, p_cols, n), dimnames = list(rownames(base_model$path_coef), colnames(base_model$path_coef), NULL))
+
+  for (i in seq_len(n)) {
+    sub_data <- data[-i, , drop = FALSE]
+    sub_model <- tryCatch({
+      estimate_pls_model(sub_data, measurement_model, structural_model, estimation_settings)
+    }, error = function(e) NULL)
+    if (!is.null(sub_model)) {
+      jack_paths[, , i] <- sub_model$path_coef
+      jack_loadings[, , i] <- sub_model$outer_loadings
+      jack_weights[, , i] <- sub_model$outer_weights
+      jack_total[, , i] <- seminr:::total_effects(sub_model$path_coef)
+    }
+  }
+
+  calc_a_matrix <- function(arr) {
+    dims <- dim(arr)
+    res <- matrix(0, nrow = dims[1], ncol = dims[2], dimnames = list(dimnames(arr)[[1]], dimnames(arr)[[2]]))
+    for (r in seq_len(dims[1])) {
+      for (c in seq_len(dims[2])) {
+        vals <- arr[r, c, ]
+        vals <- vals[is.finite(vals)]
+        if (length(vals) >= 3) {
+          mean_val <- mean(vals)
+          diffs <- mean_val - vals
+          sum_cubes <- sum(diffs^3)
+          sum_squares <- sum(diffs^2)
+          if (sum_squares > 1e-12) {
+            a_val <- sum_cubes / (6 * (sum_squares^(1.5)))
+            if (is.finite(a_val)) res[r, c] <- a_val
+          }
+        }
+      }
+    }
+    res
+  }
+
+  list(
+    paths = calc_a_matrix(jack_paths),
+    loadings = calc_a_matrix(jack_loadings),
+    weights = calc_a_matrix(jack_weights),
+    total_paths = calc_a_matrix(jack_total)
+  )
+}
+
+apply_sign_change_corrections <- function(boot_model, original_model, method = "none") {
+  method_norm <- tolower(as.character(method %||% "none"))
+  if (method_norm == "none" || !inherits(boot_model, "boot_seminr_model")) return(boot_model)
+
+  nboot <- boot_model$boots
+  if (is.null(nboot) || nboot < 1) return(boot_model)
+
+  if (grepl("construct", method_norm)) {
+    if (!is.null(boot_model$boot_paths) && length(dim(boot_model$boot_paths)) == 3L) {
+      for (b in seq_len(nboot)) {
+        for (construct in colnames(original_model$path_coef)) {
+          orig_out <- original_model$path_coef[construct, ]
+          boot_out <- boot_model$boot_paths[construct, , b]
+          valid <- (orig_out != 0) & is.finite(orig_out) & is.finite(boot_out)
+          if (sum(valid) > 0 && sum(orig_out[valid] * boot_out[valid]) < 0) {
+            boot_model$boot_paths[construct, , b] <- -boot_model$boot_paths[construct, , b]
+            if (!is.null(boot_model$boot_paths[, construct, b])) {
+              boot_model$boot_paths[, construct, b] <- -boot_model$boot_paths[, construct, b]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  boot_model
+}
+
+add_bootstrap_ci_intervals <- function(summary_table, original_matrix, boot_array, a_matrix = NULL, alpha = 0.05, ci_type = "BCa", test_type = "two-tailed") {
   if (is.null(summary_table) || is.null(original_matrix) || is.null(boot_array)) return(summary_table)
   if (is.null(dim(original_matrix)) || is.null(dim(boot_array)) || length(dim(boot_array)) < 3L) return(summary_table)
 
@@ -1497,12 +1626,16 @@ add_bias_corrected_intervals <- function(summary_table, original_matrix, boot_ar
   original[is.na(original)] <- 0
   if (nrow(original) != dim(boot_array)[1] || ncol(original) != dim(boot_array)[2]) return(summary_table)
 
+  ci_type_norm <- tolower(as.character(ci_type %||% "bca"))
+  suffix <- if (grepl("bca", ci_type_norm)) " (BCa)" else if (grepl("percentile", ci_type_norm)) " (Percentile)" else " (BC)"
+
   lower <- c()
   upper <- c()
   for (i in seq_len(nrow(original))) {
     for (j in seq_len(ncol(original))) {
       if (original[i, j] != 0) {
-        interval <- bias_corrected_interval(boot_array[i, j, ], original[i, j], alpha)
+        a_val <- if (!is.null(a_matrix) && is.matrix(a_matrix) && nrow(a_matrix) >= i && ncol(a_matrix) >= j) a_matrix[i, j] else 0
+        interval <- calculate_bootstrap_ci(boot_array[i, j, ], original[i, j], a = a_val, ci_type = ci_type, alpha = alpha, test_type = test_type)
         lower <- append(lower, interval[[1]])
         upper <- append(upper, interval[[2]])
       }
@@ -1511,11 +1644,15 @@ add_bias_corrected_intervals <- function(summary_table, original_matrix, boot_ar
 
   if (length(lower) != nrow(df) || length(upper) != nrow(df)) return(summary_table)
 
-  labels <- bootstrap_interval_labels(alpha, " (BC)")
+  labels <- bootstrap_interval_labels(alpha, suffix, test_type = test_type)
   df[[labels[[1]]]] <- lower
   df[[labels[[2]]]] <- upper
   rownames(df) <- rownames(summary_table)
   df
+}
+
+add_bias_corrected_intervals <- function(summary_table, original_matrix, boot_array, alpha = 0.05) {
+  add_bootstrap_ci_intervals(summary_table, original_matrix, boot_array, a_matrix = NULL, alpha = alpha, ci_type = "BC", test_type = "two-tailed")
 }
 
 standardize_data <- function(df) {
@@ -1652,7 +1789,61 @@ compute_regression_r2 <- function(response_vector, predictors_df) {
   max(0, min(1, r2))
 }
 
-read_dataset <- function(file_path) {
+normalize_missing_value_marker <- function(marker = NULL) {
+  value <- trimws(as.character(marker %||% "NA"))
+  if (!length(value) || is.na(value[[1]]) || !nzchar(value[[1]])) "NA" else value[[1]]
+}
+
+is_no_missing_value_marker <- function(marker = NULL) {
+  normalized <- tolower(normalize_missing_value_marker(marker))
+  normalized %in% c("none", "none (all valid)")
+}
+
+is_default_missing_value_marker <- function(marker = NULL) {
+  normalized <- tolower(normalize_missing_value_marker(marker))
+  normalized %in% c("empty cells / na", "empty / na", "na", "default")
+}
+
+dataset_na_strings <- function(marker = NULL) {
+  normalized <- normalize_missing_value_marker(marker)
+  if (is_no_missing_value_marker(normalized)) return(character(0))
+  if (is_default_missing_value_marker(normalized)) {
+    return(c("", "NA", "N/A", ".", "null", "NULL", "none", "NONE", "nan", "NaN"))
+  }
+  normalized
+}
+
+normalize_dataset_missing_values <- function(data, marker = NULL) {
+  normalized_marker <- normalize_missing_value_marker(marker)
+  if (is_no_missing_value_marker(normalized_marker)) return(data)
+
+  default_tokens <- c("", "na", "n/a", ".", "null", "none", "nan")
+  target <- tolower(normalized_marker)
+  use_default_tokens <- is_default_missing_value_marker(normalized_marker)
+  out <- data
+
+  for (column_name in names(out)) {
+    values <- out[[column_name]]
+    comparable <- tolower(trimws(as.character(values)))
+    matches <- !is.na(values) & if (use_default_tokens) {
+      comparable %in% default_tokens
+    } else {
+      comparable == target
+    }
+    if (!any(matches)) next
+
+    if (is.factor(values)) values <- as.character(values)
+    values[matches] <- NA
+    if (is.character(values)) {
+      values <- type.convert(values, as.is = TRUE, na.strings = character(0))
+    }
+    out[[column_name]] <- values
+  }
+
+  out
+}
+
+read_dataset <- function(file_path, missing_marker = NULL) {
   assert_dataset_path_allowed(file_path)
 
   if (!file.exists(file_path)) {
@@ -1673,6 +1864,8 @@ read_dataset <- function(file_path) {
       file_path,
       check.names = FALSE,
       stringsAsFactors = FALSE,
+      strip.white = TRUE,
+      na.strings = dataset_na_strings(missing_marker),
       nrows = row_read_limit
     )
   }
@@ -1688,6 +1881,7 @@ read_dataset <- function(file_path) {
     stop(sprintf("Unsupported dataset extension: %s", ext))
   }
 
+  data <- normalize_dataset_missing_values(data, missing_marker)
   assert_dataset_shape_allowed(data)
   data
 }
@@ -2007,7 +2201,7 @@ prepare_payload <- function(req) {
   raw_payload <- jsonlite::fromJSON(request_body, simplifyVector = FALSE)
   payload <- validate_payload_object(raw_payload)
   dataset_path <- as.character(payload$datasetPath)
-  data <- read_dataset(dataset_path)
+  data <- read_dataset(dataset_path, payload$algorithmSettings$missingValue %||% "NA")
 
   permutation_fields <- c("groupingVariable", "groupA", "groupB", "permutations", "alpha", "seed")
   if (all(permutation_fields %in% names(raw_payload))) {
@@ -2327,9 +2521,7 @@ resolve_pls_estimation_settings <- function(payload) {
   inner_weights <- if (grepl("factor", inner_label)) {
     get("path_factorial", envir = asNamespace("seminr"))
   } else if (grepl("centroid", inner_label)) {
-    # SEMinR 2.5.0 has no public centroid inner-weighting function. Keep the
-    # run usable, but expose the requested/applied mismatch in result metadata.
-    seminr::path_weighting
+    path_centroid
   } else {
     seminr::path_weighting
   }
@@ -2357,17 +2549,17 @@ resolve_pls_estimation_settings <- function(payload) {
   )
 }
 
-estimate_pls_model <- function(data, measurement_model, structural_model, estimation_settings) {
+estimate_pls_model <- function(data, measurement_model, structural_model, estimation_settings = list()) {
   seminr::estimate_pls(
     data = data,
     measurement_model = measurement_model,
     structural_model = structural_model,
-    inner_weights = estimation_settings$inner_weights,
-    maxIt = estimation_settings$maxIt,
-    stopCriterion = estimation_settings$stopCriterion,
-    missing = estimation_settings$missing,
-    missing_value = estimation_settings$missing_value,
-    assess_syntax = estimation_settings$assess_syntax
+    inner_weights = estimation_settings$inner_weights %||% seminr::path_weighting,
+    maxIt = estimation_settings$maxIt %||% 300L,
+    stopCriterion = estimation_settings$stopCriterion %||% 7L,
+    missing = estimation_settings$missing %||% seminr::mean_replacement,
+    missing_value = estimation_settings$missing_value %||% NA,
+    assess_syntax = isTRUE(estimation_settings$assess_syntax)
   )
 }
 
@@ -3707,10 +3899,8 @@ assemble_bootstrap_response <- function(payload, data, core, boot_model, boot_su
 
 describe_unsupported_pls_settings <- function(payload) {
   settings <- payload$algorithmSettings %||% list()
-  inner <- tolower(as.character(settings$innerWeighting %||% ""))
   initial <- tolower(as.character(settings$initialWeights %||% ""))
   notes <- character(0)
-  if (grepl("centroid", inner)) notes <- c(notes, "Centroid inner weighting is not exposed by SEMinR 2.5.0; Path weighting was applied and the request was recorded.")
   if (grepl("loh", initial) || grepl("random", initial)) notes <- c(notes, "Selectable Lohmöller or random initial outer weights are not exposed by SEMinR 2.5.0; SEMinR default initialization was applied and the request was recorded.")
   notes
 }
@@ -4750,7 +4940,7 @@ extract_plspredict_sections <- function(payload, data, core, predict_model, fold
 
   algorithm <- if (tolower(as.character(payload$algorithm %||% "standard")) == "consistent") "consistent" else "standard"
   algorithm_label <- if (algorithm == "consistent") "Consistent PLS (PLSc)" else "Standard PLS"
-  unsupported <- c(if (grepl("centroid", tolower(as.character(payload$algorithmSettings$innerWeighting %||% ""))) || grepl("loh", tolower(as.character(payload$algorithmSettings$initialWeights %||% ""))) || grepl("random", tolower(as.character(payload$algorithmSettings$initialWeights %||% "")))) "The installed SEMinR version does not expose centroid inner weighting or selectable initial outer weights; the request is recorded and SEMinR's supported defaults are used." else character(0))
+  unsupported <- c(if (grepl("loh", tolower(as.character(payload$algorithmSettings$initialWeights %||% ""))) || grepl("random", tolower(as.character(payload$algorithmSettings$initialWeights %||% "")))) "The installed SEMinR version does not expose selectable initial outer weights; the request is recorded and SEMinR's supported defaults are used." else character(0))
   mv_histogram <- lapply(mv_pred_err, function(row) list(Indicator = row$Indicator, Error = row[["PLS Error"]]))
   mv_histogram <- Filter(function(row) !is.null(row$Error) && is.finite(row$Error), mv_histogram)
   lv_histogram <- lapply(lv_pred_err, function(row) list(Construct = row$Construct, Error = row[["PLS Error"]]))
@@ -6264,6 +6454,9 @@ pr$handle("POST", "/run-bootstrap", function(req, res) {
       confidence_level <- as.character(payload$confidenceLevel %||% "95%")
       alpha <- parse_confidence_level_alpha(confidence_level)
       hoc_settings <- normalize_hoc_settings(payload$algorithmSettings %||% list())
+      ci_type <- as.character(payload$ciType %||% payload$algorithmSettings$bootstrapCiType %||% payload$algorithmSettings$ciType %||% "BCa")
+      test_type <- as.character(payload$testType %||% payload$tails %||% payload$algorithmSettings$testType %||% "two-tailed")
+      sign_changes <- as.character(payload$signChanges %||% payload$algorithmSettings$bootstrapSignChanges %||% payload$algorithmSettings$signChanges %||% "None")
 
       if (has_higher_order_construct(payload) && identical(hoc_settings$hocMethod, "Two-stage") && identical(hoc_settings$hocTwoStage, "Embedded")) {
         boot <- time_phase(timings, "embedded two-stage bootstrap", run_embedded_hoc_bootstrap(payload, data, core, nboot, seed = payload$bootstrapSeed %||% NULL, timings = timings), details = list(nboot = nboot))
@@ -6272,11 +6465,22 @@ pr$handle("POST", "/run-bootstrap", function(req, res) {
 
       core_plan <- analysis_core_plan()
       boot_model <- time_phase(timings, "seminr bootstrap_model", seminr::bootstrap_model(core$model, nboot = nboot, cores = core_plan$cores), details = list(nboot = nboot, cores = core_plan$cores, detected_cores = core_plan$detected_cores, reserved_cores = core_plan$reserved_cores, core_policy = core_plan$policy))
+
+      if (!identical(tolower(sign_changes), "none")) {
+        boot_model <- time_phase(timings, "apply sign-change corrections", apply_sign_change_corrections(boot_model, core$model, method = sign_changes))
+      }
+
+      jack_acc <- if (grepl("bca", tolower(ci_type))) {
+        time_phase(timings, "compute jackknife acceleration", compute_jackknife_acceleration(data, core$model$measurement_model, core$model$structural_model, core$estimation_settings %||% resolve_pls_estimation_settings(payload)))
+      } else {
+        list(paths = NULL, loadings = NULL, weights = NULL, total_paths = NULL)
+      }
+
       boot_summary <- time_phase(timings, "summary boot_model", summary(boot_model, alpha = alpha))
-      boot_summary$bootstrapped_paths <- time_phase(timings, "bias-corrected path intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_paths, boot_model$path_coef, boot_model$boot_paths, alpha = alpha))
-      boot_summary$bootstrapped_loadings <- time_phase(timings, "bias-corrected loading intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_loadings, boot_model$outer_loadings, boot_model$boot_loadings, alpha = alpha))
-      boot_summary$bootstrapped_weights <- time_phase(timings, "bias-corrected weight intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_weights, boot_model$outer_weights, boot_model$boot_weights, alpha = alpha))
-      boot_summary$bootstrapped_total_paths <- time_phase(timings, "bias-corrected total-effect intervals", add_bias_corrected_intervals(boot_summary$bootstrapped_total_paths, seminr:::total_effects(boot_model$path_coef), boot_model$boot_total_paths, alpha = alpha))
+      boot_summary$bootstrapped_paths <- time_phase(timings, "bootstrap path intervals", add_bootstrap_ci_intervals(boot_summary$bootstrapped_paths, boot_model$path_coef, boot_model$boot_paths, a_matrix = jack_acc$paths, alpha = alpha, ci_type = ci_type, test_type = test_type))
+      boot_summary$bootstrapped_loadings <- time_phase(timings, "bootstrap loading intervals", add_bootstrap_ci_intervals(boot_summary$bootstrapped_loadings, boot_model$outer_loadings, boot_model$boot_loadings, a_matrix = jack_acc$loadings, alpha = alpha, ci_type = ci_type, test_type = test_type))
+      boot_summary$bootstrapped_weights <- time_phase(timings, "bootstrap weight intervals", add_bootstrap_ci_intervals(boot_summary$bootstrapped_weights, boot_model$outer_weights, boot_model$boot_weights, a_matrix = jack_acc$weights, alpha = alpha, ci_type = ci_type, test_type = test_type))
+      boot_summary$bootstrapped_total_paths <- time_phase(timings, "bootstrap total-effect intervals", add_bootstrap_ci_intervals(boot_summary$bootstrapped_total_paths, seminr:::total_effects(boot_model$path_coef), boot_model$boot_total_paths, a_matrix = jack_acc$total_paths, alpha = alpha, ci_type = ci_type, test_type = test_type))
       response <- time_phase(timings, "assemble bootstrap response", assemble_bootstrap_response(payload, data, core, boot_model, boot_summary, nboot, confidence_level, algorithm, algorithm_label, alpha = alpha))
       attach_timing_metadata(response, timings)
     }, bootstrap_timeout_seconds)

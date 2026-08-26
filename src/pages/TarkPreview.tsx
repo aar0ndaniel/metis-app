@@ -309,6 +309,7 @@ export default function TarkPreview() {
                     measurementMode={request.indicatorPathMode}
                     constructMode={mapTarkConstructDiagramMode(request.constructValueMode)}
                     interactive={false}
+                    resultsReadable={true}
                     className="w-full h-full"
                   />
                 ) : (

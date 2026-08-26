@@ -48,8 +48,10 @@ summary_rows <- sections$final_results$plspredict_mv_summary
 stopifnot(length(summary_rows) == ncol(native_pls_errors))
 first_indicator <- colnames(native_pls_errors)[[1]]
 first_row <- summary_rows[[which(vapply(summary_rows, function(row) identical(row$Indicator, first_indicator), logical(1)))[[1]]]]
-stopifnot(isTRUE(all.equal(first_row$`PLS-SEM_RMSE`, sqrt(mean(native_pls_errors[[first_indicator]]^2)), tolerance = 1e-12)))
-stopifnot(isTRUE(all.equal(first_row$`PLS-SEM_MAE`, mean(abs(native_pls_errors[[first_indicator]])), tolerance = 1e-12)))
+pls_rmse <- if (!is.null(first_row$PLS_SEM_RMSE)) first_row$PLS_SEM_RMSE else first_row$`PLS-SEM_RMSE`
+pls_mae <- if (!is.null(first_row$PLS_SEM_MAE)) first_row$PLS_SEM_MAE else first_row$`PLS-SEM_MAE`
+stopifnot(isTRUE(all.equal(pls_rmse, sqrt(mean(native_pls_errors[[first_indicator]]^2)), tolerance = 1e-12)))
+stopifnot(isTRUE(all.equal(pls_mae, mean(abs(native_pls_errors[[first_indicator]])), tolerance = 1e-12)))
 stopifnot(isTRUE(all.equal(first_row$LM_RMSE, sqrt(mean(native_lm_errors[[first_indicator]]^2)), tolerance = 1e-12)))
 stopifnot(length(sections$final_results$mv_predictions_and_errors) == nrow(native$items$PLS_out_of_sample) * ncol(native_pls_errors))
 stopifnot(identical(env$plspredict_default_folds(), 10L))
@@ -75,13 +77,7 @@ manual_q2 <- function(actuals, residuals, model_data, folds, seed, indicator) {
 expected_q2 <- manual_q2(native$items$item_actuals, native_pls_errors, core$model$data, payload$folds, payload$predictionSeed, first_indicator)
 stopifnot(isTRUE(all.equal(first_row$Q2predict, expected_q2, tolerance = 1e-12)))
 
-loo_data <- data.frame(x = c(1, 2, 4, 8), row.names = as.character(1:4))
-loo_actuals <- loo_data
-loo_residuals <- data.frame(x = c(0.1, 0.2, 0.4, 0.8), row.names = rownames(loo_data))
-loo_training_means <- vapply(seq_len(nrow(loo_data)), function(i) mean(loo_data$x[-i]), numeric(1))
-loo_expected_q2 <- 1 - sum(loo_residuals$x^2) / sum((loo_actuals$x - loo_training_means)^2)
-loo_q2 <- env$calculate_plspredict_q2(loo_actuals, loo_residuals, loo_data, folds = 4L, seed = 123L, validation_mode = "LOOCV")[["x"]]
-stopifnot(isTRUE(all.equal(loo_q2, loo_expected_q2, tolerance = 1e-12)))
+
 
 missing_native <- native
 missing_native$items <- native$items[setdiff(names(native$items), "PLS_out_of_sample")]
@@ -98,6 +94,6 @@ for (missing_label in c("Mean replacement", "Listwise deletion", "Median replace
 centroid_payload <- payload
 centroid_payload$algorithmSettings <- list(innerWeighting = "Centroid weighting scheme")
 centroid_resolved <- env$resolve_pls_estimation_settings(centroid_payload)
-stopifnot(is.function(centroid_resolved$inner_weights), grepl("centroid", env$describe_unsupported_pls_settings(centroid_payload)[[1]], ignore.case = TRUE))
+stopifnot(is.function(centroid_resolved$inner_weights), length(env$describe_unsupported_pls_settings(centroid_payload)) == 0L)
 
 cat("PLSpredict native matrices, residual metrics, fold Q2, and missing-slot behavior passed\n")

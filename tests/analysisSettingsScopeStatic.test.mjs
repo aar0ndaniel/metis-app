@@ -33,9 +33,9 @@ const [catalogSource, modelCanvasSource, plumberSource, resultsSource, predictMo
   read('src/components/PlsPredictModal.tsx'),
 ])
 
-assert.match(catalogSource, /id: 'data-diagnostics'[\s\S]*label: 'Data & run diagnostics'/)
-assert.doesNotMatch(catalogSource, /id: 'run-diagnostics'/)
-assert.match(catalogSource, /id: 'data-diagnostics'[\s\S]*algorithm-settings[\s\S]*execution-log/)
+assert.match(catalogSource, /id: 'data-diagnostics'[\s\S]*label: 'Data & diagnostics'/)
+assert.match(catalogSource, /id: 'run-diagnostics'[\s\S]*label: 'Run & diagnostics'/)
+assert.match(catalogSource, /id: 'run-diagnostics'[\s\S]*algorithm-settings[\s\S]*execution-log/)
 
 assert.match(modelCanvasSource, /hasHigherOrderConstructs[\s\S]*algorithmSettings[\s\S]*hocMethod/)
 assert.match(modelCanvasSource, /if \(hasHigherOrderConstructs\)[\s\S]*hocMethod/)

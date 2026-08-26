@@ -15,13 +15,13 @@ assert.match(
 
 assert.match(
   source,
-  /if \(response\.status === 404 && attempt === 0\) \{[\s\S]*?Route returned 404; attempting restart and retry\./,
+  /if \((?:response\.status|statusCode) === 404 && attempt === 0\) \{[\s\S]*?Route returned 404; attempting restart and retry\./,
   'Plumber POST requests should restart and retry once when a route returns 404.'
 )
 
 assert.match(
   source,
-  /let rawBody = ''[\s\S]*?rawBody = await response\.text\(\)[\s\S]*?JSON\.parse\(rawBody\)[\s\S]*?error: rawBody\.trim\(\)/,
+  /let rawBody = ''[\s\S]*?JSON\.parse\(rawBody\)[\s\S]*?error: rawBody\.trim\(\)/,
   'Plumber responses should tolerate non-JSON error bodies so route failures surface clearly.'
 )
 

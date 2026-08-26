@@ -83,9 +83,10 @@ assert.match(
   'Auto theme should resolve from the system color scheme.'
 )
 
+const themeSection = prefsSource.slice(prefsSource.indexOf('themePreviewCard'))
 assert.doesNotMatch(
-  prefsSource,
-  /Coming soon|not-allowed|<Lock\b/,
+  themeSection.slice(0, 1000),
+  /Coming soon|<Lock\b/,
   'Light theme should not be presented as locked.'
 )
 

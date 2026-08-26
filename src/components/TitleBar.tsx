@@ -70,7 +70,7 @@ function buildFileMenu(screen: string, recentModels: { id: string; name: string 
     { type: 'item', label: 'Open Workspace...', action: 'open-workspace' },
     { type: 'submenu', label: 'Open Recent', items: recentItems },
     { type: 'separator' },
-    { type: 'item', label: 'Save',       shortcut: 'Ctrl+S',       disabled: noCanvas || !status.isDirty, action: 'file:save' },
+    { type: 'item', label: 'Save',       shortcut: 'Ctrl+S',       disabled: noCanvas || !status.isDirty || !!status.isTemporaryModel, action: 'file:save' },
     { type: 'item', label: 'Save As...', shortcut: 'Ctrl+Shift+S', disabled: noCanvas || !status.hasActiveModel, action: 'file:save-as' },
     { type: 'separator' },
     // Imports: greyed out on Results screen (can't import during a results session)

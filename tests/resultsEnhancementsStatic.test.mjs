@@ -8,8 +8,10 @@ const workspaceRoot = path.resolve(__dirname, '..')
 
 const read = (relativePath) => fs.readFile(path.join(workspaceRoot, relativePath), 'utf8')
 
-const [pathDiagram, resultsView, panelCatalog, panelData, plumber, tarkTables] = await Promise.all([
+const [pathDiagram, pathDiagramExport, analysisPalette, resultsView, panelCatalog, panelData, plumber, tarkTables] = await Promise.all([
   read('src/components/PathDiagram.tsx'),
+  read('src/utils/pathDiagramExport.ts'),
+  read('src/utils/analysisPalette.ts'),
   read('src/pages/ResultsView.tsx'),
   read('src/results/panelCatalog.ts'),
   read('src/results/panelData.ts'),
@@ -84,9 +86,9 @@ const checks = [
     plumber,
   ],
   [
-    'exported diagram text is literal black',
-    /const EXPORT_DIAGRAM_TEXT_COLOR = '#000000'/,
-    resultsView,
+    'exported diagram keeps normal text black and poor measurement text deep red',
+    /EXPORT_DIAGRAM_TEXT_COLOR = '#000000'[\s\S]*POOR_MEASUREMENT_COLOR = '#B4232C'[\s\S]*poor-measurement/,
+    `${pathDiagramExport}\n${analysisPalette}\n${pathDiagram}`,
   ],
   [
     'ResultsView exposes chart SVG copy and download actions',

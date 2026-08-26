@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import esbuild from 'esbuild'
+import fs from 'node:fs/promises'
 
 async function runTest(name, fn) {
   try {
@@ -99,3 +100,33 @@ await runTest('isMissingDatasetValue handles diverse data types and sentinels', 
   assert.equal(isMissingDatasetValue('MISSING', 'missing'), true)
 })
 
+await runTest('analysis requests prefer the imported marker and fall back to Preferences', async () => {
+  const canvas = await fs.readFile('src/pages/ModelCanvas.tsx', 'utf8')
+  assert.match(
+    canvas,
+    /const missingValue = linkedDataset\?\.missingMarker\s*\|\|\s*readSharedStorageValue\('prefs:missingValue'\)\s*\|\|\s*'NA'/,
+    'Imported dataset markers should take precedence over the saved preference.',
+  )
+  assert.match(
+    canvas,
+    /interactions: payloadParts\.interactions,[\s\S]*?algorithmSettings:\s*\{[\s\S]*?missingValue/,
+    'Real-time analysis requests should include the resolved missing marker.',
+  )
+})
+
+await runTest('Import Step 1 and Preferences preserve custom markers', async () => {
+  const [importStep, preferences] = await Promise.all([
+    fs.readFile('src/pages/ImportStep1.tsx', 'utf8'),
+    fs.readFile('src/components/PreferencesModal.tsx', 'utf8'),
+  ])
+  assert.match(
+    importStep,
+    /missingMarker:\s*normalizeMissingMarker\(effectiveMissingMarker\)/,
+    'Import Step 1 should attach its selected marker to the imported dataset.',
+  )
+  assert.match(
+    preferences,
+    /localStorage\.setItem\('pls:prefs:missingValue', missingValue\)/,
+    'Preferences should persist the selected custom marker.',
+  )
+})

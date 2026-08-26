@@ -6,14 +6,16 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const workspaceRoot = path.resolve(__dirname, '..')
 
-const [pathDiagramSource, resultsViewSource] = await Promise.all([
+const [pathDiagramSource, pathDiagramExportSource, resultsViewSource, paletteSource] = await Promise.all([
   fs.readFile(path.join(workspaceRoot, 'src/components/PathDiagram.tsx'), 'utf8'),
+  fs.readFile(path.join(workspaceRoot, 'src/utils/pathDiagramExport.ts'), 'utf8'),
   fs.readFile(path.join(workspaceRoot, 'src/pages/ResultsView.tsx'), 'utf8'),
+  fs.readFile(path.join(workspaceRoot, 'src/utils/analysisPalette.ts'), 'utf8'),
 ])
 
 assert.match(
   pathDiagramSource,
-  /const RESULTS_READABLE_TEXT_COLOR = 'var\(--color-text-primary\)'/,
+  /const PATH_DIAGRAM_TEXT_PRIMARY = 'var\(--color-text-primary\)'/,
   'Results path diagram text should use the app text token so it turns light in dark theme.',
 )
 
@@ -25,38 +27,44 @@ assert.doesNotMatch(
 
 assert.match(
   pathDiagramSource,
-  /fill=\{resultsReadable \? RESULTS_READABLE_TEXT_COLOR : measurementTextColor\}/,
-  'Measurement values should switch to theme-readable text in Results mode.',
+  /shouldUseMeasurementQualityTone[\s\S]*'Outer loadings'[\s\S]*'Outer weights'[\s\S]*'Outer weights \/ loadings'/,
+  'Loadings and weights should use the same poor-value threshold contract.',
 )
 
 assert.match(
   pathDiagramSource,
-  /fill=\{resultsReadable \? RESULTS_READABLE_TEXT_COLOR : \(useColor \? lineColor : 'var\(--color-text-secondary\)'\)\}/,
-  'Structural path values should switch to theme-readable text in Results mode.',
+  /const isPoorMeasurement[\s\S]*getOuterLoadingTone\(val\) === 'fail'[\s\S]*const measurementTextColor = isPoorMeasurement[\s\S]*POOR_MEASUREMENT_COLOR[\s\S]*PATH_DIAGRAM_TEXT_PRIMARY/,
+  'Poor loading and weight values should override the readable theme color with deep red.',
 )
 
 assert.match(
   pathDiagramSource,
-  /const constructScoreY = resultsReadable \? c\.y - 12 : c\.y - 6/,
-  'Endogenous construct scores should move upward in Results mode to open space for the construct name.',
+  /data-analysis-tone=\{isPoorMeasurement \? 'poor-measurement' : undefined\}/,
+  'Poor measurement labels should be marked so export normalization can preserve their red tone.',
 )
 
 assert.match(
   pathDiagramSource,
-  /const constructNameY = hasScore\s*\?\s*\(resultsReadable \? c\.y \+ 16 : c\.y \+ 9\)\s*:\s*\(resultsReadable \? c\.y : c\.y - 5\)/,
-  'Construct names should have a larger gap from R-square scores and sit centered when no score is shown.',
+  /fill=\{measurementTextColor\}[\s\S]*fontSize=\{resultsReadable \? 12 : 8\}/,
+  'Poor values should keep exactly the same font size as normal theme-readable values.',
 )
 
-assert.doesNotMatch(
-  pathDiagramSource,
-  /\{c\.type\}/,
-  'Path diagrams should no longer render formative/reflective construct type text.',
+assert.match(
+  paletteSource,
+  /export const POOR_MEASUREMENT_COLOR = '#[0-9A-F]{6}'/,
+  'The poor measurement tone should be a stable deep red shared by live and exported diagrams.',
+)
+
+assert.match(
+  pathDiagramExportSource,
+  /data-analysis-tone[\s\S]*poor-measurement[\s\S]*POOR_MEASUREMENT_COLOR[\s\S]*exportEl\.setAttribute\('fill',\s*exportTextColor\)/,
+  'Path diagram downloads should keep poor measurement labels red while normal text becomes black.',
 )
 
 assert.match(
   resultsViewSource,
-  /if \(tagName === 'text'\)[\s\S]{0,260}exportEl\.setAttribute\('fill',\s*EXPORT_DIAGRAM_TEXT_COLOR\)/,
-  'Path diagram downloads should force text back to black for document export.',
+  /const measurementColor = getOuterLoadingTone\(val\) === 'fail'[\s\S]*POOR_MEASUREMENT_COLOR[\s\S]*EXPORT_DIAGRAM_TEXT_COLOR[\s\S]*fill="\$\{measurementColor\}"/,
+  'HTML path-diagram export should keep poor loading and weight values red.',
 )
 
 console.log('PASS path diagram Results theme and export text contract')

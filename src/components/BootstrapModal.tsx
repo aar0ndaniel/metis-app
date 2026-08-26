@@ -18,7 +18,7 @@ import DraftNumberInput from './DraftNumberInput'
 interface BootstrapSettings {
   subsamples: number
   resampling: 'Individual' | 'All'
-  ciType: 'Percentile' | 'BCa' | 't-statistic'
+  ciType: 'Percentile' | 'BC' | 'BCa' | 't-statistic'
   confidenceLevel: '90%' | '95%' | '99%'
   tails: 'Two-tailed' | 'One-tailed'
   signChanges: 'none' | 'individual' | 'construct'
@@ -328,7 +328,7 @@ export default function BootstrapModal({ onClose, onRun, initialSettings, isRunn
                       <Field label="CI type">
                         <SelectBox
                           value={settings.ciType}
-                          options={['Percentile', 'BCa', 't-statistic']}
+                          options={['BCa', 'BC', 'Percentile', 't-statistic']}
                           onChange={(value) => set('ciType', value as BootstrapSettings['ciType'])}
                         />
                       </Field>

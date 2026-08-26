@@ -37,6 +37,16 @@ import {
 import { readWorkspaceClientCache, writeWorkspaceClientCache } from './utils/workspaceClientCache'
 import { stripModelDisplayName } from './utils/displayNames'
 import {
+  isTemporaryModelId,
+  getTemporaryModelSession,
+  deleteTemporaryModelSession,
+  clearAllTemporaryModelSessions,
+} from './utils/temporaryModels'
+import {
+  clearTemporaryAnalysisSessions,
+  deleteAnalysisSession,
+} from './utils/analysisSessions'
+import {
   completeWalkthrough,
   completeWhatsNew,
   dismissOnboarding,
@@ -653,10 +663,26 @@ function AppShell() {
     }
   }, [location.pathname])
 
+  useEffect(() => {
+    if (location.pathname !== '/') return
+    clearAllTemporaryModelSessions()
+    clearTemporaryAnalysisSessions()
+    setOpenModelTabs((previous) => previous.filter((modelId) => !isTemporaryModelId(modelId)))
+    preferencesReturnLocationRef.current = null
+    if (/^\/canvas\/temp-model-/.test(lastCanvasPathRef.current)) {
+      lastCanvasPathRef.current = ''
+    }
+  }, [location.pathname])
+
   const openModelInCanvas = useCallback((modelId: string, workspaceId?: string) => {
     if (!modelId) return
 
-    if (workspaceId) {
+    if (isTemporaryModelId(modelId)) {
+      const tempSession = getTemporaryModelSession(modelId)
+      if (tempSession?.sourceWorkspaceId) {
+        setActiveWorkspaceId(tempSession.sourceWorkspaceId)
+      }
+    } else if (workspaceId) {
       setActiveWorkspaceId(workspaceId)
     } else {
       const owningWs = workspaces.find(w => w.children?.some(c => c.id === modelId && c.type === 'model'))
@@ -685,6 +711,11 @@ function AppShell() {
   const closeModelTab = useCallback((modelId: string) => {
     if (!modelId) return
 
+    if (isTemporaryModelId(modelId)) {
+      deleteTemporaryModelSession(modelId)
+      deleteAnalysisSession(modelId)
+    }
+
     const currentTabs = openModelTabs
     const closingIndex = currentTabs.indexOf(modelId)
     if (closingIndex === -1) return
@@ -706,6 +737,13 @@ function AppShell() {
   }, [currentCanvasModelId, navigate, openModelTabs, workspaces])
 
   const returnToWorkspaceHome = useCallback((preferredWorkspaceId?: string | null) => {
+    clearAllTemporaryModelSessions()
+    clearTemporaryAnalysisSessions()
+    setOpenModelTabs(prev => prev.filter(id => !isTemporaryModelId(id)))
+    preferencesReturnLocationRef.current = null
+    if (/^\/canvas\/temp-model-/.test(lastCanvasPathRef.current)) {
+      lastCanvasPathRef.current = ''
+    }
     const targetWorkspace = resolveWorkspaceForAction(workspaces, preferredWorkspaceId || currentCanvasModelId || activeWorkspaceId)
     if (targetWorkspace) {
       setActiveWorkspaceId(targetWorkspace.id)
@@ -855,7 +893,8 @@ function AppShell() {
 
   useEffect(() => {
     setOpenModelTabs(prev => prev.filter(modelId =>
-      workspaces.some(workspace => workspace.children?.some(child => child.id === modelId && child.type === 'model'))
+      (isTemporaryModelId(modelId) && Boolean(getTemporaryModelSession(modelId)))
+      || workspaces.some(workspace => workspace.children?.some(child => child.id === modelId && child.type === 'model'))
     ))
   }, [workspaces])
 
@@ -903,6 +942,9 @@ function AppShell() {
       const model = workspace.children.find((child) => child.type === 'model' && child.id === modelId)
       if (model) return stripModelDisplayName(model.name || modelId)
     }
+
+    const temporarySession = getTemporaryModelSession(modelId)
+    if (temporarySession) return stripModelDisplayName(temporarySession.name)
 
     return stripModelDisplayName(modelId)
   })()
@@ -1013,6 +1055,16 @@ function AppShell() {
     } = detail
     if (!fileName) return
 
+    const linkedModelId = modelId || currentCanvasModelId || undefined
+    if (source === 'model-canvas' && isTemporaryModelId(linkedModelId)) {
+      dispatchToast(
+        'warning',
+        'Save model first',
+        'Importing a workspace dataset is unavailable from a temporary model.',
+      )
+      return
+    }
+
     setWorkspaces((prev) => {
       const targetWs = resolveWorkspaceForAction(prev, workspaceId)
         ?? (workspaceName ? prev.find((workspace) => workspace.name === workspaceName) ?? null : null)
@@ -1059,7 +1111,7 @@ function AppShell() {
         const updatedWs = upsertDatasetInWorkspace(migratedWorkspace, newDataset, {
           setAsDefault: setAsDefault ?? source !== 'model-canvas',
           linkedModelId: source === 'model-canvas'
-            ? (modelId || currentCanvasModelId || undefined)
+            ? linkedModelId
             : undefined,
         })
 
@@ -1171,6 +1223,10 @@ function AppShell() {
       }
 
       if (action === 'import-dataset') {
+        if (currentScreen === 'canvas' && isTemporaryModelId(currentCanvasModelId)) {
+          dispatchToast('warning', 'Save model first', 'Importing a new workspace dataset is unavailable from a temporary model. Select an existing dataset or use Save As first.')
+          return
+        }
         const activeWs = resolveWorkspaceForAction(workspaces, activeWorkspaceId)
         const hasDataset = activeWs?.children.some(c => c.type === 'dataset') ?? false
 
@@ -1278,7 +1334,16 @@ function AppShell() {
   }, [workspaces, activeWorkspaceId, openDatasetFilePicker, location.pathname, currentScreen, currentCanvasModelId])
 
   useEffect(() => {
-    const handler = async () => {
+    const handleUseSampleDataset = async () => {
+      if (currentScreen === 'canvas' && isTemporaryModelId(currentCanvasModelId)) {
+        dispatchToast(
+          'warning',
+          'Save model first',
+          'Adding the sample dataset is unavailable from a temporary model.',
+        )
+        return
+      }
+
       const activeWs = resolveWorkspaceForAction(workspaces, activeWorkspaceId)
       const api = (window as any).electronAPI
 
@@ -1331,8 +1396,8 @@ function AppShell() {
       }
     }
 
-    window.addEventListener('pls:use-sample-dataset', handler)
-    return () => window.removeEventListener('pls:use-sample-dataset', handler)
+    window.addEventListener('pls:use-sample-dataset', handleUseSampleDataset)
+    return () => window.removeEventListener('pls:use-sample-dataset', handleUseSampleDataset)
   }, [activeWorkspaceId, applyImportedDataset, cacheDatasetView, workspaces, currentScreen, currentCanvasModelId])
 
   // ── Dataset imported: add as child to active workspace + persist ─────────────

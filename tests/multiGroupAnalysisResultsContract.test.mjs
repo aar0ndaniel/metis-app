@@ -809,8 +809,8 @@ assert.match(
 )
 assert.match(
   resultsViewSource,
-  /modeRaw === 'mga'/,
-  'ResultsView should restore MGA results from shared analysis-mode storage.',
+  /const session = getAnalysisSession\(modelId\)[\s\S]*session\.mode === 'mga'/,
+  'ResultsView should restore MGA results from the volatile analysis session.',
 )
 assert.match(
   resultsViewSource,
@@ -846,18 +846,18 @@ assert.match(
 )
 assert.match(
   resultsViewSource,
-  /savedAnalysis\?\.modelSnapshot[\s\S]*navState\?\.savedModelSnapshot[\s\S]*setSavedModel\(cloneResultsModelSnapshot\(analysisModelSnapshot/,
+  /savedAnalysis\?\.modelSnapshot[\s\S]*navState\?\.savedModelSnapshot[\s\S]*setSavedModel\(cloneResultsModelSnapshot\(navigatedModelSnapshot[\s\S]*setAnalysisModelSnapshot\(cloneResultsModelSnapshot\(navigatedModelSnapshot/,
   'ResultsView should prefer the analysis-time model snapshot embedded in saved analysis state.',
 )
 assert.match(
   resultsViewSource,
-  /handleRunMultiGroupFromResults\s*=\s*useCallback\(async \(settings: MultiGroupAnalysisSettings\)[\s\S]*persistResultsToWorkspace\(\{[\s\S]*mode:\s*'mga'[\s\S]*modelSnapshot:\s*savedModel/,
+  /handleRunMultiGroupFromResults\s*=\s*useCallback\(async \(settings: MultiGroupAnalysisSettings\)[\s\S]*persistCurrentAnalysisToSession\('mga',\s*mgaResults,\s*savedAt/,
   'Results-screen MGA reruns should preserve the model snapshot that produced the result.',
 )
 assert.match(
   modelCanvasSource,
-  /(?:analysis:\s*analysisState\s*\?|analysisState\s*\?\s*\{\s*analysis:)[\s\S]*\.\.\.analysisState[\s\S]*modelSnapshot:\s*snapshot/,
-  'ModelCanvas should persist the analysis-time model snapshot inside saved analysis state.',
+  /updateAnalysisSession\(modelId,[\s\S]*modelSnapshot:\s*snapshot/,
+  'ModelCanvas should retain the analysis-time model snapshot inside volatile analysis state.',
 )
 
 assert.match(

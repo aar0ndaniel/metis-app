@@ -24,6 +24,7 @@ import {
   stripTarkDocxExtension,
   sanitizeTarkDocxFilename,
 } from '../utils/tarkReportDocx'
+import { exportPathDiagramToPngBase64 } from '../utils/pathDiagramExport'
 
 type AdvancedAnalysisId = 'nca' | 'ipma' | 'cipma' | 'micom' | 'mga'
 type CreationStatus = 'idle' | 'creating' | 'success' | 'error'
@@ -548,115 +549,6 @@ function buildAdvancedSections(
   return sections
 }
 
-async function convertSvgElementToPngBase64(
-  svg: SVGSVGElement,
-  exportWidth = 1600,
-  exportHeight = 1000,
-): Promise<string> {
-  const exportSvg = svg.cloneNode(true) as SVGSVGElement
-  exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-  exportSvg.style.background = '#ffffff'
-
-  const vb = svg.viewBox.baseVal
-  let w = exportWidth
-  let h = exportHeight
-  if (vb?.width && vb?.height) {
-    exportSvg.setAttribute('width', String(Math.max(1, vb.width)))
-    exportSvg.setAttribute('height', String(Math.max(1, vb.height)))
-    exportSvg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.width} ${vb.height}`)
-    const aspect = vb.width / vb.height
-    w = exportWidth
-    h = Math.round(exportWidth / aspect)
-  }
-
-  const rootStyles = getComputedStyle(document.documentElement)
-  Array.from(rootStyles)
-    .filter((name) => name.startsWith('--color-'))
-    .forEach((name) => {
-      const value = rootStyles.getPropertyValue(name).trim()
-      if (value) exportSvg.style.setProperty(name, value)
-    })
-
-  const sourceElements = [svg, ...Array.from(svg.querySelectorAll('*'))]
-  const exportElements = [exportSvg, ...Array.from(exportSvg.querySelectorAll('*'))]
-  sourceElements.forEach((sourceEl, index) => {
-    const exportEl = exportElements[index]
-    if (!(sourceEl instanceof Element) || !(exportEl instanceof Element)) return
-
-    const computed = getComputedStyle(sourceEl)
-    const tagName = sourceEl.tagName.toLowerCase()
-    const attrFill = exportEl.getAttribute('fill') ?? ''
-    const attrStroke = exportEl.getAttribute('stroke') ?? ''
-    const styleAttr = sourceEl.getAttribute('style') ?? ''
-
-    const hasPaintFill = attrFill !== 'none' && (
-      attrFill.includes('var(') ||
-      styleAttr.includes('fill') ||
-      ['text', 'rect', 'circle', 'ellipse', 'polygon'].includes(tagName)
-    )
-
-    if (hasPaintFill && computed.fill && computed.fill !== 'none') {
-      exportEl.setAttribute('fill', computed.fill)
-    }
-
-    if (attrStroke && attrStroke !== 'none' && computed.stroke && computed.stroke !== 'none') {
-      exportEl.setAttribute('stroke', computed.stroke)
-    }
-
-    if (exportEl.hasAttribute('stroke-width') && computed.strokeWidth) {
-      exportEl.setAttribute('stroke-width', computed.strokeWidth)
-    }
-
-    if (exportEl.hasAttribute('opacity') && computed.opacity) {
-      exportEl.setAttribute('opacity', computed.opacity)
-    }
-
-    if (tagName === 'text') {
-      exportEl.setAttribute('font-family', computed.fontFamily || 'Inter, sans-serif')
-      exportEl.setAttribute('font-size', computed.fontSize || '10px')
-      exportEl.setAttribute('font-weight', computed.fontWeight || '400')
-    }
-  })
-
-  const serializer = new XMLSerializer()
-  const svgStr = serializer.serializeToString(exportSvg)
-
-  return new Promise((resolve, reject) => {
-    const img = new Image()
-    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
-    const url = URL.createObjectURL(svgBlob)
-
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas')
-        canvas.width = w
-        canvas.height = h
-        const ctx = canvas.getContext('2d')
-        if (!ctx) {
-          URL.revokeObjectURL(url)
-          reject(new Error('Canvas context unavailable'))
-          return
-        }
-        ctx.fillStyle = '#ffffff'
-        ctx.fillRect(0, 0, w, h)
-        ctx.drawImage(img, 0, 0, w, h)
-        URL.revokeObjectURL(url)
-        const dataUrl = canvas.toDataURL('image/png')
-        const base64 = dataUrl.replace(/^data:image\/png;base64,/, '')
-        resolve(base64)
-      } catch (err) {
-        URL.revokeObjectURL(url)
-        reject(err)
-      }
-    }
-    img.onerror = (err) => {
-      URL.revokeObjectURL(url)
-      reject(err)
-    }
-    img.src = url
-  })
-}
-
 export default function TarkModal({
   workspaces,
   activeWorkspaceId,
@@ -821,7 +713,7 @@ export default function TarkModal({
         const svgEl = diagramExportContainerRef.current.querySelector('svg')
         if (svgEl) {
           try {
-            pathDiagramPngBase64 = await convertSvgElementToPngBase64(svgEl as SVGSVGElement)
+            pathDiagramPngBase64 = await exportPathDiagramToPngBase64(svgEl as SVGSVGElement)
           } catch (err) {
             console.warn('Could not generate path diagram PNG:', err)
           }
@@ -1366,6 +1258,7 @@ export default function TarkModal({
             measurementMode={indicatorPathMode}
             constructMode={mapTarkConstructDiagramMode(constructValueMode)}
             interactive={false}
+            resultsReadable={true}
             className="w-full h-full"
           />
         ) : null}

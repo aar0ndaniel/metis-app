@@ -15,7 +15,7 @@ assert.match(
 
 assert.match(
   source,
-  /else if\s*\(\s*con_type\s*==\s*"formative"\s*\)\s*\{[\s\S]*seminr::composite\(con_name,\s*items\)[\s\S]*seminr::reflective\(con_name,\s*items\)/,
+  /else if\s*\(\s*con_type\s*==\s*"formative"\s*\)\s*\{[\s\S]*seminr::composite\(con_name,\s*items(?:,\s*weights\s*=\s*seminr::mode_B)?\)[\s\S]*seminr::reflective\(con_name,\s*items\)/,
   'Plumber should keep multi-indicator formative and reflective constructs on the normal multi-item paths.',
 )
 

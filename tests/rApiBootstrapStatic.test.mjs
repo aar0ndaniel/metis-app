@@ -123,25 +123,25 @@ assert.match(
 
 assert.match(
   source,
-  /analysis_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_ANALYSIS_TIMEOUT_SECONDS",\s*180\)/,
-  'Base PLS analyses should use the longer default timeout baseline.'
+  /analysis_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_ANALYSIS_TIMEOUT_SECONDS",\s*(?:180|600)\)/,
+  'Base PLS analyses should use the default timeout baseline.'
 )
 
 assert.match(
   source,
-  /bootstrap_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_BOOTSTRAP_TIMEOUT_SECONDS",\s*max\(analysis_timeout_seconds,\s*900\)\)/,
+  /bootstrap_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_BOOTSTRAP_TIMEOUT_SECONDS",\s*max\(analysis_timeout_seconds,\s*(?:900|1800)\)\)/,
   'Bootstrap should use a route-specific timeout longer than the base analysis timeout.'
 )
 
 assert.match(
   source,
-  /plspredict_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_PLSPREDICT_TIMEOUT_SECONDS",\s*max\(analysis_timeout_seconds,\s*600\)\)/,
+  /plspredict_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_PLSPREDICT_TIMEOUT_SECONDS",\s*max\(analysis_timeout_seconds,\s*(?:600|1200)\)\)/,
   'PLSpredict should use a route-specific timeout longer than the base analysis timeout.'
 )
 
 assert.match(
   source,
-  /advanced_analysis_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS",\s*max\(analysis_timeout_seconds,\s*600\)\)/,
+  /advanced_analysis_timeout_seconds\s*<-\s*read_timeout_seconds\("METIS_ADVANCED_ANALYSIS_TIMEOUT_SECONDS",\s*max\(analysis_timeout_seconds,\s*(?:600|1200)\)\)/,
   'Advanced analysis should use a route-specific timeout longer than the base analysis timeout.'
 )
 

@@ -124,13 +124,13 @@ assert.ok(
 
 assert.match(
   plumberSource,
-  /core_plan\s*<-\s*analysis_core_plan\(\)[\s\S]*cores\s*<-\s*core_plan\$cores[\s\S]*seminr::bootstrap_model\s*\(\s*core\$model,\s*nboot\s*=\s*nboot,\s*cores\s*=\s*cores\)/,
+  /core_plan\s*<-\s*analysis_core_plan\(\)[\s\S]*seminr::bootstrap_model\s*\(\s*core\$model,\s*nboot\s*=\s*nboot,\s*cores\s*=\s*core_plan\$cores\)/,
   'Bootstrap should pass planned bounded cores into seminr::bootstrap_model.'
 )
 
 assert.match(
   plumberSource,
-  /details\s*=\s*list\([\s\S]*nboot\s*=\s*nboot[\s\S]*cores\s*=\s*cores[\s\S]*detected_cores\s*=\s*core_plan\$detected_cores[\s\S]*reserved_cores\s*=\s*core_plan\$reserved_cores[\s\S]*core_policy\s*=\s*core_plan\$policy/,
+  /details\s*=\s*list\([\s\S]*nboot\s*=\s*nboot[\s\S]*cores\s*=\s*core_plan\$cores[\s\S]*detected_cores\s*=\s*core_plan\$detected_cores[\s\S]*reserved_cores\s*=\s*core_plan\$reserved_cores[\s\S]*core_policy\s*=\s*core_plan\$policy/,
   'Bootstrap timing details should log the local core plan for machine-specific validation.'
 )
 

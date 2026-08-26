@@ -37,5 +37,10 @@ assert.match(
   /liveCalcTimer\.current = setTimeout\(async \(\) => \{[\s\S]*const datasetFilePath = resolveDatasetFilePath\(\)/,
   'Real-time calculation should resolve the dataset path only inside the debounced calculation callback.',
 )
+assert.match(
+  liveCalcEffect,
+  /\}, \[currentGraphSignature,.*realtimeEnabled\]\)/,
+  'Real-time calculation should react only to the statistical graph signature, so construct renames and visual edits do not recalculate.',
+)
 
 console.log('PASS model canvas performance contract')

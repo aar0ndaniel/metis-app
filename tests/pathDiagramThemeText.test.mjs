@@ -16,6 +16,8 @@ async function runTest(name, fn) {
 const pathDiagramFile = fs.readFileSync(path.resolve('src/components/PathDiagram.tsx'), 'utf-8')
 const resultsViewFile = fs.readFileSync(path.resolve('src/pages/ResultsView.tsx'), 'utf-8')
 const tarkModalFile = fs.readFileSync(path.resolve('src/components/TarkModal.tsx'), 'utf-8')
+const pathDiagramExportFile = fs.readFileSync(path.resolve('src/utils/pathDiagramExport.ts'), 'utf-8')
+const analysisPaletteFile = fs.readFileSync(path.resolve('src/utils/analysisPalette.ts'), 'utf-8')
 
 await runTest('PathDiagram does not use hardcoded #000000 text fills for readable mode', () => {
   // Should not contain resultsReadable ? '#000000'
@@ -31,10 +33,11 @@ await runTest('PathDiagram does not use hardcoded #000000 text fills for readabl
   assert.ok(pathDiagramFile.includes('fill: resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : PATH_DIAGRAM_TEXT_SECONDARY'))
 })
 
-await runTest('ResultsView export transforms all diagram text and tspan elements to black #000000', () => {
-  assert.ok(resultsViewFile.includes("const EXPORT_DIAGRAM_TEXT_COLOR = '#000000'"))
-  assert.ok(resultsViewFile.includes("if (tagName === 'text' || tagName === 'tspan')"))
-  assert.ok(resultsViewFile.includes("exportEl.setAttribute('fill', EXPORT_DIAGRAM_TEXT_COLOR)"))
+await runTest('Path diagram export keeps normal text black and poor measurements deep red', () => {
+  assert.ok(pathDiagramExportFile.includes("EXPORT_DIAGRAM_TEXT_COLOR = '#000000'"))
+  assert.ok(analysisPaletteFile.includes("POOR_MEASUREMENT_COLOR = '#B4232C'"))
+  assert.ok(pathDiagramExportFile.includes("data-analysis-tone') === 'poor-measurement'"))
+  assert.ok(pathDiagramExportFile.includes('isPoorMeasurement ? POOR_MEASUREMENT_COLOR : textColor'))
 })
 
 await runTest('PathDiagram increases vertical gap between construct name and score value', () => {
@@ -52,8 +55,8 @@ await runTest('PathDiagram removes construct type for exogenous constructs and c
   assert.ok(pathDiagramFile.includes('<text x={c.x} y={c.y}'))
 })
 
-await runTest('HTML export and DOCX export enforce black text for white publication background', () => {
+await runTest('HTML and DOCX exports preserve poor measurement red on publication backgrounds', () => {
   assert.ok(resultsViewFile.includes('fill="${EXPORT_DIAGRAM_TEXT_COLOR}"'))
-  assert.ok(tarkModalFile.includes("convertSvgElementToPngBase64"))
+  assert.ok(resultsViewFile.includes('fill="${measurementColor}"'))
+  assert.ok(tarkModalFile.includes('exportPathDiagramToPngBase64'))
 })
-

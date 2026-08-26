@@ -223,8 +223,8 @@ assert.match(
 )
 assert.match(
   resultsViewSource,
-  /modeRaw === 'permutation'/,
-  'ResultsView should restore permutation results from shared analysis-mode storage.',
+  /const session = getAnalysisSession\(modelId\)[\s\S]*session\.mode === 'permutation'/,
+  'ResultsView should restore permutation results from the volatile analysis session.',
 )
 assert.match(
   resultsViewSource,
@@ -248,23 +248,23 @@ assert.match(
 )
 assert.match(
   resultsViewSource,
-  /savedAnalysis\?\.modelSnapshot[\s\S]*navState\?\.savedModelSnapshot[\s\S]*setSavedModel\(cloneResultsModelSnapshot\(analysisModelSnapshot/,
+  /savedAnalysis\?\.modelSnapshot[\s\S]*navState\?\.savedModelSnapshot[\s\S]*setSavedModel\(cloneResultsModelSnapshot\(navigatedModelSnapshot[\s\S]*setAnalysisModelSnapshot\(cloneResultsModelSnapshot\(navigatedModelSnapshot/,
   'ResultsView should prefer the analysis-time model snapshot embedded in saved analysis state.',
 )
 assert.match(
   resultsViewSource,
-  /persistResultsToWorkspace\s*=\s*useCallback\(\(options:[\s\S]*modelSnapshot\?: \{ constructs: CanvasConstruct\[\]; paths: CanvasPath\[\] \} \| null[\s\S]*analysis:\s*\{[\s\S]*modelSnapshot:\s*options\.modelSnapshot/,
-  'ResultsView rerun persistence should write the analysis-time model snapshot into saved analysis state.',
+  /persistCurrentAnalysisToSession\s*=\s*useCallback\([\s\S]*const calculationModelSnapshot = savedModel \? cloneResultsModelSnapshot\(savedModel\) : null[\s\S]*modelSnapshot:\s*calculationModelSnapshot \?\? previous\.modelSnapshot/,
+  'ResultsView reruns should retain the analysis-time model snapshot in volatile session state.',
 )
 assert.match(
   resultsViewSource,
-  /handleRunPermutationFromResults\s*=\s*useCallback\(async \(settings: PermutationAnalysisSettings\)[\s\S]*persistResultsToWorkspace\(\{[\s\S]*mode:\s*'permutation'[\s\S]*modelSnapshot:\s*savedModel/,
+  /handleRunPermutationFromResults\s*=\s*useCallback\(async \(settings: PermutationAnalysisSettings\)[\s\S]*persistCurrentAnalysisToSession\('permutation',\s*result\.results,\s*savedAt/,
   'Results-screen MICOM reruns should preserve the model snapshot that produced the result.',
 )
 assert.match(
   modelCanvasSource,
-  /\.\.\.\(analysisState\s*\?\s*\{\s*analysis:\s*\{\s*\.\.\.analysisState,\s*modelSnapshot:\s*snapshot\s*\}\s*\}\s*:\s*\{\}\)/,
-  'ModelCanvas should persist the analysis-time model snapshot inside saved analysis state.',
+  /updateAnalysisSession\(modelId,[\s\S]*modelSnapshot:\s*snapshot/,
+  'ModelCanvas should retain the analysis-time model snapshot inside volatile analysis state.',
 )
 assert.match(
   resultsViewSource,

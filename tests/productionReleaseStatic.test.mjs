@@ -135,6 +135,11 @@ const packageSource = await read('package.json')
 const bundleBuildSource = await read('build/electron-builder.bundle.yml')
 const liteBuildSource = await read('build/electron-builder.lite.yml')
 const packageJson = JSON.parse(packageSource)
+assert.equal(
+  packageJson.build.electronFuses?.grantFileProtocolExtraPrivileges,
+  true,
+  'Packaged file:// renderer pages must retain the privileges required to load dist/index.html from app.asar.'
+)
 const bundleCommonResourcesSection = bundleBuildSource.slice(
   bundleBuildSource.indexOf('extraResources:'),
   bundleBuildSource.indexOf('\nwin:')

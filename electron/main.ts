@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, screen, Menu, net, type MenuItemConstructorOptions, type Rectangle } from 'electron'
+import http from 'http'
 import path from 'path'
 import fs from 'fs'
 import os from 'os'
@@ -3616,6 +3617,21 @@ ipcMain.handle('dataset:useSample', async (_, data: { workspacePath: string; dat
   }
 })
 
+function buildPersistedWorkspaceManifest(manifest: WorkspaceManifest): any {
+  const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = manifest as any
+  const cleanChildren = (cleanData.children || []).map((child: any) => {
+    if (child && typeof child === 'object') {
+      const { datasetTempPath: _cdt, absolutePath: _cap, ...cleanChild } = child
+      return cleanChild
+    }
+    return child
+  })
+  return {
+    ...cleanData,
+    children: cleanChildren,
+  }
+}
+
 /** Scan the metis data directory for current ZIP workspace files. */
 ipcMain.handle('workspace:list', async () => {
   const dataPath = getDataPath()
@@ -3650,7 +3666,7 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
     console.log('[main] Creating workspace at:', workspacePath)
 
     const hydrated = hydrateWorkspaceManifest(wsData)
-    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
+    const cleanData = buildPersistedWorkspaceManifest(hydrated)
 
     const zip = new JSZip()
     zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
@@ -3668,15 +3684,11 @@ ipcMain.handle('workspace:create', async (_, wsData: WorkspaceManifest) => {
 
 /** Save updated workspace data to its workspace file (preserves embedded datasets). */
 ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: string }) => {
+  const explicitPath = wsData.path && String(wsData.path).trim().length > 0 ? String(wsData.path).trim() : null
   console.log('[main] workspace:save request', { name: wsData.name, id: wsData.id })
   try {
-    // Resolve target path: prefer the explicit path if it exists.
-    // Strip asterisks — the UI uses '*' as a dirty-state indicator in display
-    // labels only; it must never reach the file system path.
+    ensureDataDir()
     let workspacePath = ''
-    const explicitPath = typeof (wsData as any).path === 'string'
-      ? (wsData as any).path.trim().replace(/\*/g, '')
-      : ''
     if (explicitPath) {
       workspacePath = validateWorkspaceFilePath(explicitPath)
     } else {
@@ -3708,7 +3720,26 @@ ipcMain.handle('workspace:save', async (_, wsData: WorkspaceManifest & { path?: 
       })
     }
 
-    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = hydrated as any
+    // Embed any new or copied datasets that are not yet inside datasets/
+    for (const dataset of datasetChildren) {
+      if (dataset.filePath) {
+        const datasetZipPath = `datasets/${dataset.filePath}`
+        if (!zip.file(datasetZipPath)) {
+          const sourcePath = dataset.datasetTempPath || dataset.absolutePath
+          if (sourcePath) {
+            const trustedRoots = getTrustedDatasetRoots()
+            const resolvedSource = path.resolve(sourcePath)
+            const isTrusted = trustedRoots.some((root) => !path.relative(root, resolvedSource).startsWith('..') && !path.isAbsolute(path.relative(root, resolvedSource)))
+            if ((isTrusted || fs.existsSync(resolvedSource)) && fs.existsSync(resolvedSource)) {
+              const sourceBuffer = await fs.promises.readFile(sourcePath)
+              zip.file(datasetZipPath, sourceBuffer)
+            }
+          }
+        }
+      }
+    }
+
+    const cleanData = buildPersistedWorkspaceManifest(hydrated)
     zip.file('workspace.json', JSON.stringify(cleanData, null, 2))
 
     if (!fs.existsSync(path.dirname(workspacePath))) {
@@ -3820,7 +3851,7 @@ ipcMain.handle('workspace:deleteChild', async (_, payload: { workspaceName?: str
       ...wsData,
       children: nextChildren,
     })
-    const { path: _p, datasetTempPath: _dtp, _format: _f, ...cleanData } = nextManifest as any
+    const cleanData = buildPersistedWorkspaceManifest(nextManifest)
 
     if (childType === 'dataset' && child.filePath) {
       zip.remove(`datasets/${child.filePath}`)
@@ -3915,6 +3946,64 @@ ipcMain.handle('plumber:health', async () => {
   }
 })
 
+interface PlumberHttpResponse {
+  ok: boolean
+  status: number
+  rawBody: string
+}
+
+function requestPlumberHttp(
+  baseUrl: string,
+  pathname: string,
+  headers: Record<string, string>,
+  body: string,
+  timeoutMs = 1800000,
+): Promise<PlumberHttpResponse> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`${baseUrl}${pathname}`)
+    const postBuffer = Buffer.from(body, 'utf8')
+    const options: http.RequestOptions = {
+      hostname: url.hostname,
+      port: url.port ? Number(url.port) : 8765,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        'Content-Length': postBuffer.length,
+      },
+      timeout: timeoutMs,
+    }
+
+    const req = http.request(options, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk) => chunks.push(chunk))
+      res.on('end', () => {
+        const rawBody = Buffer.concat(chunks).toString('utf8')
+        resolve({
+          ok: (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300,
+          status: res.statusCode ?? 0,
+          rawBody,
+        })
+      })
+      res.on('error', (err) => {
+        reject(err)
+      })
+    })
+
+    req.on('timeout', () => {
+      req.destroy(new Error(`Local R analysis request timed out after ${timeoutMs / 1000}s.`))
+    })
+
+    req.on('error', (err) => {
+      reject(err)
+    })
+
+    req.write(postBuffer)
+    req.end()
+  })
+}
+
 async function postToPlumber(pathname: string, payload: any) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const requestStarted = Date.now()
@@ -3937,15 +4026,17 @@ async function postToPlumber(pathname: string, payload: any) {
       }
     }
 
-    let response: Response
     const fetchStarted = Date.now()
+    let response: PlumberHttpResponse
     try {
-      response = await fetch(`${plumberBaseUrl}${pathname}`, {
-        method: 'POST',
-        headers: buildPlumberHeaders(true),
-        body: JSON.stringify(payload ?? {}),
-        signal: AbortSignal.timeout(1800000),
-      })
+      const body = JSON.stringify(payload ?? {})
+      response = await requestPlumberHttp(
+        plumberBaseUrl,
+        pathname,
+        buildPlumberHeaders(true),
+        body,
+        1800000,
+      )
     } catch (err: any) {
       const elapsedSeconds = (Date.now() - requestStarted) / 1000
       return {
@@ -3967,31 +4058,13 @@ async function postToPlumber(pathname: string, payload: any) {
       }
     }
 
-    const textStarted = Date.now()
+    const parseStarted = Date.now()
     let rawBody = ''
     try {
-      rawBody = await response.text()
-    } catch (err: any) {
-      return {
-        success: false,
-        status: 0,
-        url: plumberBaseUrl,
-        rscript: resolvedRscript,
-        error: `The R analysis engine started the response but Metis could not finish receiving it. Try fewer samples, close other heavy apps, or restart Metis and run again.`,
-        errorCode: 'BACKEND_RESPONSE_READ_FAILED',
-        userAction: 'Try fewer samples, close other heavy apps, restart Metis, and run the analysis again.',
-        backendDetail: err?.message || 'Could not read the R backend response.',
-        runtimeStatus: getBundledPortableRuntimeStatus(),
-        bridgeTimings: {
-          route: pathname,
-          totalSeconds: Number(((Date.now() - requestStarted) / 1000).toFixed(3)),
-          fetchSeconds: Number(((textStarted - fetchStarted) / 1000).toFixed(3)),
-          responseTextSeconds: Number(((Date.now() - textStarted) / 1000).toFixed(3)),
-        },
-        recentPlumberLogs: getRecentPlumberLogs(),
-      }
+      rawBody = response.rawBody || ''
+    } catch {
+      rawBody = ''
     }
-    const parseStarted = Date.now()
     let data: any = {}
     if (rawBody.trim().length > 0) {
       try {
@@ -4000,6 +4073,7 @@ async function postToPlumber(pathname: string, payload: any) {
         data = {
           success: false,
           error: rawBody.trim(),
+          errorCode: 'BACKEND_RESPONSE_READ_FAILED',
         }
       }
     }
@@ -4007,8 +4081,7 @@ async function postToPlumber(pathname: string, payload: any) {
     const bridgeTimings = {
       route: pathname,
       totalSeconds: Number(((finished - requestStarted) / 1000).toFixed(3)),
-      fetchSeconds: Number(((textStarted - fetchStarted) / 1000).toFixed(3)),
-      responseTextSeconds: Number(((parseStarted - textStarted) / 1000).toFixed(3)),
+      fetchSeconds: Number(((parseStarted - fetchStarted) / 1000).toFixed(3)),
       parseSeconds: Number(((finished - parseStarted) / 1000).toFixed(3)),
     }
 

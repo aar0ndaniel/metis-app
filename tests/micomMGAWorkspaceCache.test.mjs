@@ -181,9 +181,10 @@ assert.deepEqual(persisted.workspaces[0].children[0].state.micomCache, cache)
 
 assert.match(
   modelCanvasSource,
-  /createMicomCacheEntry[\s\S]*resolveMicomOverviewForMgaCache[\s\S]*attachMicomOverviewToMgaResults[\s\S]*putMicomCacheInWorkspaceList/,
+  /createMicomCacheEntry[\s\S]*resolveMicomOverviewForMgaCache[\s\S]*attachMicomOverviewToMgaResults/,
   'ModelCanvas should import MICOM cache helpers.',
 )
+assert.doesNotMatch(modelCanvasSource, /putMicomCacheInWorkspaceList/, 'ModelCanvas MICOM cache must remain transient until Save Results.')
 assert.match(
   modelCanvasSource,
   /handlePermutationConfiguralPrecheck[\s\S]*createMicomCacheEntry\([\s\S]*persistMicomCacheForCurrentModel/,
@@ -202,18 +203,19 @@ assert.match(
 
 assert.match(
   resultsViewSource,
-  /createMicomCacheEntry[\s\S]*resolveMicomOverviewForMgaCache[\s\S]*attachMicomOverviewToMgaResults[\s\S]*putMicomCacheInWorkspaceList/,
+  /createMicomCacheEntry[\s\S]*resolveMicomOverviewForMgaCache[\s\S]*attachMicomOverviewToMgaResults/,
   'ResultsView should import MICOM cache helpers.',
 )
+assert.doesNotMatch(resultsViewSource, /putMicomCacheInWorkspaceList/, 'ResultsView MICOM cache must remain transient until Save Results.')
 assert.match(
   resultsViewSource,
-  /handlePermutationConfiguralPrecheckFromResults[\s\S]*createMicomCacheEntry\([\s\S]*persistMicomCacheToWorkspace/,
+  /handlePermutationConfiguralPrecheckFromResults[\s\S]*createMicomCacheEntry\([\s\S]*persistMicomCacheToSession/,
   'ResultsView should cache step-one MICOM configural precheck results.',
 )
 assert.match(
   resultsViewSource,
-  /handleRunPermutationFromResults[\s\S]*createMicomCacheEntry\([\s\S]*persistResultsToWorkspace\([\s\S]*micomCache/,
-  'ResultsView should cache full MICOM permutation results with the model.',
+  /handleRunPermutationFromResults[\s\S]*createMicomCacheEntry\([\s\S]*persistCurrentAnalysisToSession\('permutation',[\s\S]*micomCache/,
+  'ResultsView should keep full MICOM permutation results in the analysis session.',
 )
 assert.match(
   resultsViewSource,
@@ -221,4 +223,4 @@ assert.match(
   'ResultsView should silently validate cached MICOM before attaching it to MGA overview results.',
 )
 
-console.log('PASS MICOM MGA workspace cache contract')
+console.log('PASS MICOM MGA transient cache contract')

@@ -389,7 +389,7 @@ await runTest('panel table helpers split PLSpredict summaries and expose matrix/
   )
 })
 
-await runTest('analysis graph signature stays stable across ordering changes and reacts to real model changes', async () => {
+await runTest('analysis graph signature ignores construct renames and reacts to statistical model changes', async () => {
   const bundled = await bundleModule('src/utils/analysisGraphSignature.ts', 'analysisGraphSignature.test.bundle.mjs')
   assert.ok(!bundled.error, `Expected src/utils/analysisGraphSignature.ts to exist and compile, got: ${bundled.error?.message ?? 'unknown error'}`)
 
@@ -398,30 +398,65 @@ await runTest('analysis graph signature stays stable across ordering changes and
 
   const modelA = {
     constructs: [
-      { name: 'PEOU', indicators: [{ name: 'PEOU1' }, { name: 'PEOU2' }] },
-      { name: 'BI', indicators: [{ name: 'BI1' }] },
+      { id: 'construct-1', name: 'PEOU', type: 'Reflective', weightingMode: 'Automatic', indicators: [{ name: 'PEOU1' }, { name: 'PEOU2' }] },
+      { id: 'construct-2', name: 'BI', type: 'Reflective', weightingMode: 'Automatic', indicators: [{ name: 'BI1' }] },
     ],
-    paths: [{ from: 'PEOU', to: 'BI' }],
+    paths: [{ id: 'path-1', from: 'construct-1', to: 'construct-2' }],
   }
 
   const modelB = {
     constructs: [
-      { name: 'BI', indicators: [{ name: 'BI1' }] },
-      { name: 'PEOU', indicators: [{ name: 'PEOU2' }, { name: 'PEOU1' }] },
+      { id: 'construct-2', name: 'Behavioural Intention', type: 'Reflective', weightingMode: 'Automatic', indicators: [{ name: 'BI1' }] },
+      { id: 'construct-1', name: 'Ease of Use', type: 'Reflective', weightingMode: 'Automatic', indicators: [{ name: 'PEOU2' }, { name: 'PEOU1' }] },
     ],
-    paths: [{ from: 'PEOU', to: 'BI' }],
+    paths: [{ id: 'path-1', from: 'construct-1', to: 'construct-2' }],
   }
 
   const modelChanged = {
     constructs: [
-      { name: 'PEOU', indicators: [{ name: 'PEOU1' }, { name: 'PEOU3' }] },
-      { name: 'BI', indicators: [{ name: 'BI1' }] },
+      { id: 'construct-1', name: 'PEOU', type: 'Formative', weightingMode: 'Automatic', indicators: [{ name: 'PEOU1' }, { name: 'PEOU2' }] },
+      { id: 'construct-2', name: 'BI', type: 'Reflective', weightingMode: 'Automatic', indicators: [{ name: 'BI1' }] },
     ],
-    paths: [{ from: 'PEOU', to: 'BI' }],
+    paths: [{ id: 'path-1', from: 'construct-1', to: 'construct-2' }],
+  }
+
+  const modelWithChangedWeights = {
+    ...modelA,
+    constructs: modelA.constructs.map((construct) =>
+      construct.id === 'construct-1' ? { ...construct, weightingMode: 'Factor' } : construct
+    ),
+  }
+
+  const modelWithHoc = {
+    ...modelA,
+    constructs: modelA.constructs.map((construct) =>
+      construct.id === 'construct-1' ? { ...construct, isHigherOrder: true } : construct
+    ),
+  }
+
+  const modelWithVisualEdits = {
+    constructs: modelA.constructs.map((construct) => ({
+      ...construct,
+      x: 640,
+      y: 360,
+      color: '#ff00ff',
+      shape: 'square',
+      folded: true,
+      indicatorAlignment: 'left',
+      margin: 24,
+    })),
+    paths: modelA.paths.map((path) => ({
+      ...path,
+      style: 'curved',
+      curvature: 0.75,
+    })),
   }
 
   assert.equal(buildAnalysisGraphSignature(modelA), buildAnalysisGraphSignature(modelB))
+  assert.equal(buildAnalysisGraphSignature(modelA), buildAnalysisGraphSignature(modelWithVisualEdits))
   assert.notEqual(buildAnalysisGraphSignature(modelA), buildAnalysisGraphSignature(modelChanged))
+  assert.notEqual(buildAnalysisGraphSignature(modelA), buildAnalysisGraphSignature(modelWithChangedWeights))
+  assert.notEqual(buildAnalysisGraphSignature(modelA), buildAnalysisGraphSignature(modelWithHoc))
 })
 
 await runTest('bootstrap base-model panels are rendered in bootstrap mode', async () => {
@@ -509,8 +544,7 @@ await runTest('panel data resolver exposes bootstrap HTMT confidence interval al
     }),
     cvpatMvRows,
   )
-
-  const cvpatLvRows = { ia: [{ Construct: 'SAT', 'PLS Loss': 0.15 }], lm: [{ Construct: 'SAT', 'PLS Loss': 0.15 }] }
+  const cvpatLvRows = { ia: [{ Construct: 'SAT', 'PLS Loss': 0.15 }], lm: [{ Construct: 'SAT', 'PLS Loss': 0.15 }] }
   assert.deepEqual(
     getPanelDataFromResults('plspredict', 'cvpat-lv-summary', {
       final_results: {
@@ -524,7 +558,7 @@ await runTest('panel data resolver exposes bootstrap HTMT confidence interval al
   assert.deepEqual(
     getPanelDataFromResults('plspredict', 'q2-predict', {
       final_results: {
-        plspredict_summary: altSummaryRows,
+        plspredict_mv_summary: altSummaryRows,
       },
     }),
     altSummaryRows,
@@ -547,14 +581,9 @@ await runTest('panel data resolver exposes bootstrap HTMT confidence interval al
   ]
   assert.deepEqual(
     getPanelDataFromResults('plspredict', 'q2-predict', {
-      plspredict_mv_summary: comparisonRows,
-    }),
-    comparisonRows,
-  )
-
-  assert.deepEqual(
-    getPanelDataFromResults('plspredict', 'pls-lm-comparison', {
-      prediction_summary: comparisonRows,
+      final_results: {
+        plspredict_mv_summary: comparisonRows,
+      },
     }),
     comparisonRows,
   )
@@ -562,7 +591,7 @@ await runTest('panel data resolver exposes bootstrap HTMT confidence interval al
   assert.deepEqual(
     getPanelDataFromResults('plspredict', 'pls-lm-comparison', {
       final_results: {
-        prediction_summary: comparisonRows,
+        plspredict_mv_summary: comparisonRows,
       },
     }),
     comparisonRows,

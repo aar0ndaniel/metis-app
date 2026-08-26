@@ -6,6 +6,9 @@ export const ANALYSIS_TONE_HEX: Record<AnalysisTone, string> = {
   fail: '#D96B4D',
 }
 
+// A publication-safe deep red reserved for measurement values below the .70 threshold.
+export const POOR_MEASUREMENT_COLOR = '#B4232C'
+
 export const ANALYSIS_TONE_TEXT_CLASS: Record<AnalysisTone, string> = {
   pass: 'text-secondary',
   neutral: 'text-amber',

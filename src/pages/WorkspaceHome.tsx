@@ -21,6 +21,7 @@ import {
   Palette,
   WarningCircle,
   PushPin,
+  Copy,
 } from '@phosphor-icons/react'
 import { stripModelDisplayName, stripWorkspaceDisplayName } from '../utils/displayNames'
 import {
@@ -30,6 +31,7 @@ import {
 } from '../utils/themeAccent'
 import DatasetManagerModal from '../components/DatasetManagerModal'
 import { getWorkspaceDatasets, migrateWorkspace } from '../utils/datasetWorkspace'
+import { createTemporaryModelSession, clearAllTemporaryModelSessions } from '../utils/temporaryModels'
 import AppLogo from '../components/AppLogo'
 import type { Workspace, WorkspaceChild } from '../types/workspace'
 
@@ -52,6 +54,7 @@ interface CtxMenu {
 function SidebarContextMenu({
   menu,
   onRename,
+  onTemporaryCopy,
   onDelete,
   onViewDataset,
   onManageDataset,
@@ -61,6 +64,7 @@ function SidebarContextMenu({
 }: {
   menu: CtxMenu
   onRename: (id: string) => void
+  onTemporaryCopy?: (id: string) => void
   onDelete: (id: string, kind: 'workspace' | 'model' | 'dataset' | 'result') => void
   onViewDataset?: (id: string) => void
   onManageDataset?: (id: string) => void
@@ -120,6 +124,21 @@ function SidebarContextMenu({
 
           <div style={{ height: 1, backgroundColor: 'var(--color-border)', margin: '4px 0' }} />
         </>
+      )}
+
+      {menu.kind === 'model' && (
+        <button
+          className="flex items-center gap-2.5 px-3.5 h-8 hover:bg-[rgb(var(--color-hover-rgb)/0.75)] transition-colors w-full text-left"
+          onClick={() => {
+            onTemporaryCopy?.(menu.id)
+            onClose()
+          }}
+        >
+          <Copy size={13} color="var(--color-text-muted)" />
+          <span style={{ color: 'var(--color-text-secondary)', fontFamily: 'DM Sans, sans-serif', fontSize: 13 }}>
+            Temporary Copy
+          </span>
+        </button>
       )}
 
       <button
@@ -777,6 +796,19 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
     document.addEventListener('mousedown', handlePointerDown)
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [openDatasetMenuId])
+
+  // Clear all temporary model sessions on returning to or mounting WorkspaceHome
+  useEffect(() => {
+    clearAllTemporaryModelSessions()
+  }, [])
+
+  const handleCreateTemporaryCopy = useCallback((id: string) => {
+    const owningWorkspace = workspaces.find((ws) => ws.children.some((child) => child.id === id))
+    const child = owningWorkspace?.children.find((c) => c.id === id)
+    if (!owningWorkspace || !child || child.type !== 'model') return
+    const tempSession = createTemporaryModelSession(child, owningWorkspace)
+    navigate(`/canvas/${tempSession.id}`)
+  }, [navigate, workspaces])
 
   // Context menu
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null)
@@ -2006,6 +2038,7 @@ export default function WorkspaceHome({ workspaces, setWorkspaces, activeId, set
           onViewDataset={openDataset}
           onManageDataset={openDatasetManager}
           onRename={startRename}
+          onTemporaryCopy={handleCreateTemporaryCopy}
           onDelete={handleDelete}
           onChangeColor={handleChangeColor}
           onTogglePin={togglePin}

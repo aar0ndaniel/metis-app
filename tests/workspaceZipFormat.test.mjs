@@ -314,6 +314,37 @@ await runTest('Workspace Saving and Dataset Imports (ZIP format)', async () => {
   assert.ok(!finalZip.file('datasets/ds-dummy.csv'), 'ds-dummy.csv should have been removed from ZIP on save')
   assert.ok(finalZip.file('datasets/ds-import.csv'), 'ds-import.csv should still exist in ZIP')
 
+  // Saving a model into another workspace may copy a dataset manifest whose
+  // bytes are not yet embedded in the destination ZIP. Import those bytes from
+  // the trusted extracted dataset path and never serialize that transient path.
+  const copiedDatasetWorkspace = {
+    ...wsDataWithRemoval,
+    children: [
+      ...wsDataWithRemoval.children,
+      {
+        id: 'ds-copied',
+        type: 'dataset',
+        name: 'copied.csv',
+        filePath: 'ds-copied.csv',
+        datasetTempPath: importResult.datasetTempPath,
+        absolutePath: importResult.datasetTempPath,
+      },
+    ],
+  }
+  const copiedSaveResult = await saveHandler(null, copiedDatasetWorkspace)
+  assert.equal(copiedSaveResult.success, true)
+  const copiedZip = await JSZip.loadAsync(await fsPromises.readFile(wsPath))
+  assert.equal(
+    await copiedZip.file('datasets/ds-copied.csv').async('text'),
+    'ColA,ColB\nVal1,Val2\nVal3,Val4',
+    'workspace:save should embed missing copied dataset bytes',
+  )
+  const copiedManifest = JSON.parse(await copiedZip.file('workspace.json').async('text'))
+  const persistedCopiedDataset = copiedManifest.children.find(c => c.id === 'ds-copied')
+  assert.ok(persistedCopiedDataset, 'Copied dataset should remain in the destination manifest')
+  assert.equal('datasetTempPath' in persistedCopiedDataset, false, 'Transient extracted paths must not be serialized')
+  assert.equal('absolutePath' in persistedCopiedDataset, false, 'Transient absolute paths must not be serialized')
+
   // 5. Test workspace:deleteChild IPC handler
   const deleteChildHandler = ipcMain.getHandler('workspace:deleteChild')
   assert.ok(deleteChildHandler, 'Expected workspace:deleteChild handler to be registered')

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowLeft, ArrowRight, ArrowSquareOut, X } from '@phosphor-icons/react'
+import algorithmPreferencesCapture from '../assets/onboarding/0.3.1/algorithm-preferences.png'
 import analysisTitlebarCapture from '../assets/onboarding/0.3.1/analysis-titlebar.png'
-import languagesCapture from '../assets/onboarding/0.3.1/languages.png'
-import micomCapture from '../assets/onboarding/0.3.1/micom.png'
-import mgaCapture from '../assets/onboarding/0.3.1/mga.png'
+import missingDataHighlightingCapture from '../assets/onboarding/0.3.1/missing-data-highlighting.png'
+import missingDataMarkerCapture from '../assets/onboarding/0.3.1/missing-data-marker.png'
 import tarkReportCapture from '../assets/onboarding/0.3.1/tark-report.png'
 
 interface WhatsNewModalProps {
@@ -23,20 +23,22 @@ interface UpdateSlide {
 
 const slides: UpdateSlide[] = [
   {
-    title: 'Multilingual support (Spanish, Portuguese & French)',
-    description: 'Hello · Hola · Olá · Bonjour — welcome to Metis. Work in your preferred language! Metis now includes Spanish (Español), Portuguese (Português), and French (Français) interface options alongside English.',
-    image: languagesCapture,
-    imageAlt: 'Metis Preferences showing the open language selector with English, Spanish, Portuguese, and French.',
+    title: 'Algorithm Preferences',
+    description: 'Set reusable defaults for PLS-SEM, bootstrap, prediction, advanced analyses, and moderation from one dedicated preferences page.',
+    image: algorithmPreferencesCapture,
+    imageAlt: 'The Metis Algorithm Defaults preferences page.',
   },
   {
-    title: 'Permutation Analysis (MICOM)',
-    description: 'Check configural, compositional, and equality invariance before comparing groups, with a guided permutation setup.',
-    image: micomCapture,
-    imageAlt: 'The Metis Permutation Analysis MICOM modal.',
-    links: [
-      { label: 'MICOM guide', href: 'https://metis.emend.it.com/metis-micom.html' },
-      { label: 'Metis documentation', href: 'https://metis.emend.it.com/docs.html' },
-    ],
+    title: 'Missing Data Highlighting',
+    description: 'Find missing values quickly with a dataset-wide count, previous and next navigation, and row-and-column highlighting for the active cell.',
+    image: missingDataHighlightingCapture,
+    imageAlt: 'Metis Data View highlighting a missing value and its row and column.',
+  },
+  {
+    title: 'Missing Data Marker',
+    description: 'Choose a built-in or custom missing-value marker during import so values are recognized consistently throughout analysis.',
+    image: missingDataMarkerCapture,
+    imageAlt: 'The Metis dataset import preview with the Missing Marker selector open.',
   },
   {
     title: 'Tark reports',
@@ -44,13 +46,6 @@ const slides: UpdateSlide[] = [
     image: tarkReportCapture,
     imageAlt: 'The Metis Tark report setup modal with its three-step report workflow.',
     links: [{ label: 'Tark report guide', href: 'https://metis.emend.it.com/tark-report.html' }],
-  },
-  {
-    title: 'Multi Group Analysis (MGA)',
-    description: 'Compare structural paths across groups with bootstrap subsamples, alpha controls, reproducible seeds, and dedicated results.',
-    image: mgaCapture,
-    imageAlt: 'The Metis Multi Group Analysis modal.',
-    links: [{ label: 'Metis documentation', href: 'https://metis.emend.it.com/docs.html' }],
   },
   {
     title: 'Analysis menu',
@@ -153,7 +148,7 @@ export default function WhatsNewModal({ theme, onComplete, onDismiss }: WhatsNew
               key={slide.image}
               src={slide.image}
               alt={slide.imageAlt}
-              style={{ width: '100%', height: '100%', objectFit: slide.image === languagesCapture ? 'contain' : 'cover', objectPosition: 'top left', display: 'block', padding: slide.image === languagesCapture ? 8 : 0, background: slide.image === languagesCapture ? '#111418' : 'transparent', transform: slide.image === languagesCapture ? 'none' : 'scale(1.3) translate(-60px, -30px)', transformOrigin: 'top left', animation: reduceMotion ? 'none' : 'metis-whats-new-in 180ms ease-out' }}
+              style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top left', display: 'block', animation: reduceMotion ? 'none' : 'metis-whats-new-in 180ms ease-out' }}
             />
           </figure>
           <section className="metis-whats-new-info" style={{ width: '48%', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 8 }}>

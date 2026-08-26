@@ -46,6 +46,11 @@ import {
   resolveAccentRgb,
 } from '../utils/themeAccent'
 import { MISSING_MARKER_PRESETS, getSavedCustomMissingMarkers, deleteCustomMissingMarker } from '../utils/datasetMissing'
+import {
+  METIS_PREF_CALCULATION_GAME_KEY,
+  LEGACY_PREF_CALCULATION_GAME_KEY,
+  getSavedCalculationGameSetting,
+} from '../utils/calculationGameEngine'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Props {
@@ -410,6 +415,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
   const [startupAction, setStartupAction] = useState(getSavedSetting('startupAction', 'Open last workspace'))
   const [realtimeCalc, setRealtimeCalc]   = useState(getSavedSetting('realtimeCalc', true))
   const [showHocPathPrompt, setShowHocPathPrompt] = useState(getSavedSetting('showHocPathPrompt', true))
+  const [calculationGame, setCalculationGame] = useState(() => getSavedCalculationGameSetting())
   const [workspaceFolder, setWorkspaceFolder] = useState('')
   const [exportFolder, setExportFolder] = useState('')
   const [initialStoragePaths, setInitialStoragePaths] = useState({ workspacePath: '', exportPath: '' })
@@ -514,6 +520,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     startupAction: getSavedSetting('startupAction', 'Open last workspace'),
     realtimeCalc: getSavedSetting('realtimeCalc', true),
     showHocPathPrompt: getSavedSetting('showHocPathPrompt', true),
+    calculationGame: getSavedCalculationGameSetting(),
     theme: getSavedThemeSetting(),
     themePreference: getSavedThemePreferenceSetting(),
     fontScale: getSavedFontScaleSetting(),
@@ -570,6 +577,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     startupAction,
     realtimeCalc,
     showHocPathPrompt,
+    calculationGame,
     theme,
     themePreference,
     fontScale,
@@ -655,6 +663,8 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     localStorage.setItem('pls:prefs:realtimeCalc', String(realtimeCalc))
     localStorage.setItem('metis:prefs:showHocPathPrompt', String(showHocPathPrompt))
     localStorage.setItem('pls:prefs:showHocPathPrompt', String(showHocPathPrompt))
+    localStorage.setItem(METIS_PREF_CALCULATION_GAME_KEY, String(calculationGame))
+    localStorage.setItem(LEGACY_PREF_CALCULATION_GAME_KEY, String(calculationGame))
     const resolvedTheme = resolveThemePreference(themePreference)
     localStorage.setItem('metis:prefs:theme', themePreference)
     localStorage.setItem('pls:prefs:theme', resolvedTheme)
@@ -739,6 +749,8 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
     setLanguage('English')
     setStartupAction('Open last workspace')
     setRealtimeCalc(true)
+    setShowHocPathPrompt(true)
+    setCalculationGame(false)
     setTheme('Dark')
     setThemePreference('Dark')
     setFontScale('Default')
@@ -1418,6 +1430,15 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
           {rowDivider()}
           {generalRow(
             <>
+              {labelBlock('Metis Game', 'Show a small puzzle while calculations are running.')}
+              <div className="flex items-center justify-center" style={{ width: 90, gap: 10, flexShrink: 0 }}>
+                {toggleControl(calculationGame, setCalculationGame, 'Metis Game')}
+              </div>
+            </>,
+          )}
+          {rowDivider()}
+          {generalRow(
+            <>
               {labelBlock('Autosave projects', 'Save recoverable project snapshots while you work.')}
               <div className="flex items-center justify-center" style={{ width: 90, gap: 10, flexShrink: 0 }}>
                 {toggleControl(autosaveOn, setAutosaveOn, 'Autosave projects')}
@@ -1795,7 +1816,7 @@ export default function PreferencesModal({ onClose, initialTab = 'general' }: Pr
       {rowDivider()}
       {settingRow('Confidence level', 'Confidence level for bootstrap intervals.', segmentedControl([{ label: '90%', value: '90%', width: 78 }, { label: '95%', value: '95%', width: 78 }, { label: '99%', value: '99%', width: 78 }], bootstrapConfidence, setBootstrapConfidence, 260), 270)}
       {rowDivider()}
-      {settingRow('CI type', 'Interval method reported for bootstrap results.', selectShell(bootstrapCiType, 160, ['Percentile', 'Basic', 'BCa'], setBootstrapCiType, true, false, preferenceColors.field, 'bootstrap-ci-type'), 190)}
+      {settingRow('CI type', 'Interval method reported for bootstrap results.', selectShell(bootstrapCiType, 160, ['BCa', 'BC', 'Percentile', 'Basic'], setBootstrapCiType, true, false, preferenceColors.field, 'bootstrap-ci-type'), 190)}
       {rowDivider()}
       {settingRow('Tails', 'Tail selection for significance testing.', segmentedControl([{ label: 'Two-tailed', value: 'Two-tailed', width: 120 }, { label: 'One-tailed', value: 'One-tailed', width: 120 }], bootstrapTails, setBootstrapTails, 260), 270)}
       {rowDivider()}

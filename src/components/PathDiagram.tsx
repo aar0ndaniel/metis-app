@@ -15,7 +15,8 @@
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import {
   ANALYSIS_TONE_HEX,
-  getOuterLoadingColor,
+  POOR_MEASUREMENT_COLOR,
+  getOuterLoadingTone,
   getPValueColor,
   getPValueTone,
 } from '../utils/analysisPalette'
@@ -589,13 +590,10 @@ function getMeasurementValueFromResults(
   return getMeasurementValue(fallbackLoading, mode)
 }
 
-function shouldUseOuterLoadingTone(
-  mode: string,
-  constructType?: 'Reflective' | 'Formative',
-): boolean {
-  if (mode === 'Outer loadings') return true
-  if (mode === 'Outer weights / loadings') return constructType !== 'Formative'
-  return false
+function shouldUseMeasurementQualityTone(mode: string): boolean {
+  return mode === 'Outer loadings'
+    || mode === 'Outer weights'
+    || mode === 'Outer weights / loadings'
 }
 
 function pValueColor(pValue?: number): string {
@@ -842,9 +840,13 @@ export default function PathDiagram({
         const labelSplit = splitLineAtT(startX, startY, ix, iy, clampLabelT(ind.labelT), 24)
         const measurementEntry = lookupMeasurement(ind.constructId, ind.name)
         const val = showMeasure ? getMeasurementValueFromResults(measurementEntry, ind.loading, measurementMode, c.type) : undefined
-        const measurementTextColor = shouldUseOuterLoadingTone(measurementMode, c.type)
-          ? getOuterLoadingColor(val, c.color + 'CC')
-          : c.color + 'CC'
+        const isPoorMeasurement = shouldUseMeasurementQualityTone(measurementMode)
+          && getOuterLoadingTone(val) === 'fail'
+        const measurementTextColor = isPoorMeasurement
+          ? POOR_MEASUREMENT_COLOR
+          : resultsReadable
+            ? PATH_DIAGRAM_TEXT_PRIMARY
+            : c.color + 'CC'
         // When blank (no value label), render a single unbroken measurement arrow
         if (val === undefined) {
           let iEndX = ind.ix, iEndY = ind.iy
@@ -893,7 +895,8 @@ export default function PathDiagram({
               >
                 <text
                   x={labelSplit.x} y={labelSplit.y}
-                  fill={resultsReadable ? PATH_DIAGRAM_TEXT_PRIMARY : measurementTextColor}
+                  fill={measurementTextColor}
+                  data-analysis-tone={isPoorMeasurement ? 'poor-measurement' : undefined}
                   fontSize={resultsReadable ? 12 : 8} fontWeight="700"
                   fontFamily="Inter, system-ui, sans-serif"
                   textAnchor="middle" dominantBaseline="middle"

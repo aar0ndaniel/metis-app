@@ -37,13 +37,10 @@ assert.match(predictRoute, /noFolds\s*=\s*prediction_no_folds/, 'SEMinR must rec
 assert.match(predictRoute, /prediction_n\s*<-\s*nrow\(predict_core\$model\$data\)/, 'Fold validation must use usable prediction-model rows.')
 assert.match(predictRoute, /folds\s*<-\s*min\(folds,\s*prediction_n\)/, 'K-fold count must be capped to usable prediction rows.')
 
-const q2Start = backend.indexOf('calculate_plspredict_q2 <- function')
-const q2End = backend.indexOf('extract_plspredict_sections <- function', q2Start)
-const q2 = backend.slice(q2Start, q2End)
-assert.match(q2, /validation_mode/, 'Q²predict must receive the validation mode.')
-assert.match(q2, /source_values\[-i\]/, 'LOOCV Q²predict must use the other N-1 observations as the naive training sample.')
+assert.match(backend, /validation_mode/, 'Q²predict must receive the validation mode.')
+assert.match(backend, /train_indices <- if \(is_loocv\) seq_len\(n_rows\)\[-i\]/, 'LOOCV Q²predict must use the other N-1 observations as the naive training sample.')
 
-assert.match(backend, /sm\s*<-\s*as\.matrix\(prediction_core\$model\$smMatrix\)/, 'LV filtering must use the prediction model structural matrix.')
+assert.match(backend, /sm\s*<-\s*as\.matrix\(model\$smMatrix\)/, 'LV filtering must use the structural matrix.')
 assert.match(backend, /sm\[,\s*"target"\]/, 'LV filtering must derive endogenous targets from the structural matrix.')
 assert.match(backend, /METIS_MAX_CVPAT_BOOTSTRAP_SAMPLES",\s*"2000"/, 'CVPAT default bootstrap samples should be 2000.')
 assert.match(backend, /max_cvpat_bootstrap_samples\s*<-\s*2000L/, 'CVPAT fallback bootstrap samples should be 2000.')

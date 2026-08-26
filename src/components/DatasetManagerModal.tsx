@@ -9,6 +9,11 @@ import {
   setModelLinkedDataset,
 } from '../utils/datasetWorkspace'
 import { clearDatasetViewCache, clearLegacyDatasetViewCacheByWorkspaceName } from '../utils/datasetViewCache'
+import {
+  getTemporaryModelSession,
+  isTemporaryModelId,
+  updateTemporaryModelSession,
+} from '../utils/temporaryModels'
 import type { Workspace } from '../types/workspace'
 
 interface DatasetManagerModalProps {
@@ -49,7 +54,10 @@ export default function DatasetManagerModal({
   const [renameDraft, setRenameDraft] = useState('')
   const [contextMenu, setContextMenu] = useState<DatasetContextMenu | null>(null)
 
-  const currentModel = hydratedWorkspace.children.find((child: any) => child.type === 'model' && child.id === modelId) as any
+  const temporarySession = isTemporaryModelId(modelId) ? getTemporaryModelSession(modelId) : undefined
+  const currentModel = temporarySession
+    ?? hydratedWorkspace.children.find((child: any) => child.type === 'model' && child.id === modelId) as any
+  const isTemporaryContext = Boolean(temporarySession)
   const activeDatasetId = context === 'model-canvas'
     ? currentModel?.linkedDatasetId
     : hydratedWorkspace.defaultDatasetId
@@ -147,6 +155,19 @@ export default function DatasetManagerModal({
 
   const chooseDataset = async (datasetId: string) => {
     if (datasetId === activeDatasetId) return false
+
+    if (isTemporaryModelId(modelId)) {
+      const updated = updateTemporaryModelSession(modelId!, (previous) => ({
+        ...previous,
+        linkedDatasetId: datasetId,
+        updatedAt: new Date().toISOString(),
+      }))
+      if (!updated) {
+        dispatchToast('error', 'Dataset update failed', 'The temporary model session is no longer available.')
+        return false
+      }
+      return true
+    }
 
     let nextWorkspace = hydratedWorkspace
     if (context === 'model-canvas' && modelId) {
@@ -328,7 +349,7 @@ export default function DatasetManagerModal({
                 className="flex items-center"
                 onClick={(event) => void handleRowClick(event, dataset.id, index)}
                 onDoubleClick={() => handleRowDoubleClick(dataset.id)}
-                onContextMenu={(event) => openDatasetMenu(event, dataset.id, index)}
+                onContextMenu={isTemporaryContext ? undefined : (event) => openDatasetMenu(event, dataset.id, index)}
                 onMouseEnter={() => setHoveredId(dataset.id)}
                 onMouseLeave={() => setHoveredId((current) => current === dataset.id ? null : current)}
                 style={{
@@ -430,7 +451,7 @@ export default function DatasetManagerModal({
           style={{ padding: '14px 16px', borderTop: '1px solid var(--color-border)' }}
         >
           <div className="flex items-center" style={{ gap: 8 }}>
-            {selectedIds.length >= 1 && (
+            {selectedIds.length >= 1 && !isTemporaryContext && (
               <button
                 onClick={() => void deleteDatasetIds(selectedIds)}
                 title={selectedIds.length === 1 ? 'Delete selected dataset' : `Delete ${selectedIds.length} selected datasets`}
@@ -484,8 +505,8 @@ export default function DatasetManagerModal({
 
             <button
               onClick={onBrowse}
-              disabled={datasets.length >= 3}
-              title={datasets.length >= 3 ? 'Workspace full' : 'Browse dataset'}
+              disabled={datasets.length >= 3 || isTemporaryContext}
+              title={isTemporaryContext ? 'Save the temporary model before importing a new dataset' : datasets.length >= 3 ? 'Workspace full' : 'Browse dataset'}
               style={{
                 width: 30,
                 height: 30,
@@ -493,7 +514,7 @@ export default function DatasetManagerModal({
                 borderRadius: 9,
                 border: '1px solid var(--color-border)',
                 background: 'rgba(255,255,255,0.05)',
-                opacity: datasets.length >= 3 ? 0.45 : 1,
+                opacity: datasets.length >= 3 || isTemporaryContext ? 0.45 : 1,
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -506,7 +527,7 @@ export default function DatasetManagerModal({
         </div>
       </div>
 
-      {contextMenu && (() => {
+      {contextMenu && !isTemporaryContext && (() => {
         const menuDataset = datasets.find((dataset) => dataset.id === contextMenu.datasetId)
         if (!menuDataset) return null
 

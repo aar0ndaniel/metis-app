@@ -57,6 +57,8 @@ const allowUntranslated = [
   /^AVE/,
   /^Rho_[AC]$/,
   /^T-Statistic$/,
+  /^Welch$/,
+  /^K-fold$/,
   /^@keyframes/,
   /^AbortError$/,
   /^Canvas element not found$/,

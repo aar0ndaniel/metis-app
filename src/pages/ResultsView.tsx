@@ -48,6 +48,12 @@ import {
   Check,
 } from '@phosphor-icons/react'
 import PathDiagramSVG from '../components/PathDiagram'
+import {
+  preparePathDiagramSvgForExport,
+  downloadPathDiagramAsPng,
+  downloadPathDiagramAsSvg,
+  EXPORT_DIAGRAM_TEXT_COLOR,
+} from '../utils/pathDiagramExport'
 import { readDatasetViewCache } from '../utils/datasetViewCache'
 import { resolveDatasetFilePathFromRequest } from '../utils/datasetLoading'
 import { getLinkedDatasetForModel, migrateWorkspace } from '../utils/datasetWorkspace'
@@ -58,6 +64,7 @@ import {
   getAnalysisToneTextClass,
   getOuterLoadingColor,
   getOuterLoadingTone,
+  POOR_MEASUREMENT_COLOR,
   parseSignificancePValue,
 } from '../utils/analysisPalette'
 import BootstrapModal from '../components/BootstrapModal'
@@ -68,15 +75,22 @@ import PermutationAnalysisModal, {
   type PermutationConfiguralStatus,
 } from '../components/PermutationAnalysisModal'
 import MultiGroupAnalysisModal, { type MultiGroupAnalysisSettings } from '../components/MultiGroupAnalysisModal'
+import NewModelDialog from '../components/NewModelDialog'
 import { ResultChart, buildChartSvgForPanel } from '../components/ResultsCharts'
 import { APP_BRAND_NAME } from '../config/appBranding'
-import { stripModelDisplayName } from '../utils/displayNames'
+import { stripModelDisplayName, stripWorkspaceDisplayName } from '../utils/displayNames'
+import { isTemporaryModelId, getTemporaryModelSession, deleteTemporaryModelSession } from '../utils/temporaryModels'
+import {
+  deleteAnalysisSession,
+  getAnalysisSession,
+  updateAnalysisSession,
+} from '../utils/analysisSessions'
+import { persistModelAs, saveWorkspaceOrThrow } from '../utils/modelPromotion'
 import { buildAnalysisGraphSignature } from '../utils/analysisGraphSignature'
 import {
   createMicomCacheEntry,
   resolveMicomOverviewForMgaCache,
   attachMicomOverviewToMgaResults,
-  putMicomCacheInWorkspaceList,
   MICOM_MGA_HOC_UNAVAILABLE_OVERVIEW,
   type MicomCacheEntry,
 } from '../utils/micomCache'
@@ -1854,7 +1868,6 @@ function escapeHtml(value: unknown): string {
     .replace(/'/g, '&#39;')
 }
 
-const EXPORT_DIAGRAM_TEXT_COLOR = '#000000'
 const EXPORT_DIAGRAM_MUTED_COLOR = '#5F6978'
 const EXPORT_DIAGRAM_BORDER_COLOR = '#D7DDE6'
 const EXPORT_DIAGRAM_SURFACE_COLOR = '#FFFFFF'
@@ -2061,8 +2074,14 @@ function buildPathDiagramSvg(
     const seg2Y = midY + gapUy
     const path1 = `M${startX},${startY} L${seg1X},${seg1Y}`
     const path2 = `M${seg2X},${seg2Y} L${ix},${iy}`
-    const val = measurementMap[`${c.name}::${ind.name}`]?.loading
-    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="14" font-weight="700" fill="${EXPORT_DIAGRAM_TEXT_COLOR}">${(val as number).toFixed(getDecimals())}</text>` : ''
+    const measurementEntry = measurementMap[`${c.name}::${ind.name}`]
+    const val = c.type === 'Formative'
+      ? measurementEntry?.weight ?? measurementEntry?.loading
+      : measurementEntry?.loading ?? measurementEntry?.weight
+    const measurementColor = getOuterLoadingTone(val) === 'fail'
+      ? POOR_MEASUREMENT_COLOR
+      : EXPORT_DIAGRAM_TEXT_COLOR
+    const txt = Number.isFinite(val as number) ? `<text x="${midX}" y="${midY}" text-anchor="middle" font-size="14" font-weight="700" fill="${measurementColor}">${(val as number).toFixed(getDecimals())}</text>` : ''
     return `<g><path d="${path1}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none"></path><path d="${path2}" stroke="${ind.constructColor}" stroke-width="1.2" fill="none" marker-end="url(#exp-arr-measure)"></path>${txt}</g>`
   }).join('')
 
@@ -2593,15 +2612,24 @@ function readModelSnapshotFromWorkspaceCache(modelId?: string): { constructs: Ca
 }
 
 function readSavedModelSnapshot(modelId?: string): { constructs: CanvasConstruct[]; paths: CanvasPath[] } | null {
+  const analysisSessionSnapshot = getAnalysisSession(modelId)?.modelSnapshot
+  if (analysisSessionSnapshot) {
+    return cloneResultsModelSnapshot(analysisSessionSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] })
+  }
+
+  if (isTemporaryModelId(modelId)) {
+    const session = getTemporaryModelSession(modelId)
+    if (session?.state?.constructs) {
+      return cloneResultsModelSnapshot({
+        constructs: session.state.constructs,
+        paths: session.state.paths || [],
+      })
+    }
+  }
+
   const workspaceSnapshot = readModelSnapshotFromWorkspaceCache(modelId)
   if (workspaceSnapshot) return workspaceSnapshot
-
-  try {
-    const raw = readSharedStorageValue('results-canvas-model') || readSharedStorageValue('canvas-model')
-    return raw ? cloneResultsModelSnapshot(JSON.parse(raw) as { constructs: CanvasConstruct[]; paths: CanvasPath[] }) : null
-  } catch {
-    return null
-  }
+  return null
 }
 
 function resolveSavedModelSnapshot(
@@ -2700,127 +2728,17 @@ function DiagramCanvas({
     setCtxMenu({ kind: 'canvas', x: e.clientX, y: e.clientY })
   }
 
-  function preparePathDiagramSvgForExport(svg: SVGSVGElement): SVGSVGElement {
-    const exportSvg = svg.cloneNode(true) as SVGSVGElement
-    exportSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
-    exportSvg.style.background = 'transparent'
-
-    const vb = svg.viewBox.baseVal
-    if (vb?.width && vb?.height) {
-      exportSvg.setAttribute('width', String(Math.max(1, vb.width)))
-      exportSvg.setAttribute('height', String(Math.max(1, vb.height)))
-      exportSvg.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.width} ${vb.height}`)
-    }
-
-    const rootStyles = getComputedStyle(document.documentElement)
-    Array.from(rootStyles)
-      .filter((name) => name.startsWith('--color-'))
-      .forEach((name) => {
-        const value = rootStyles.getPropertyValue(name).trim()
-        if (value) exportSvg.style.setProperty(name, value)
-      })
-
-    const sourceElements = [svg, ...Array.from(svg.querySelectorAll('*'))]
-    const exportElements = [exportSvg, ...Array.from(exportSvg.querySelectorAll('*'))]
-    sourceElements.forEach((sourceEl, index) => {
-      const exportEl = exportElements[index]
-      if (!(sourceEl instanceof Element) || !(exportEl instanceof Element)) return
-
-      const computed = getComputedStyle(sourceEl)
-      const tagName = sourceEl.tagName.toLowerCase()
-      const attrFill = exportEl.getAttribute('fill') ?? ''
-      const attrStroke = exportEl.getAttribute('stroke') ?? ''
-      const styleAttr = sourceEl.getAttribute('style') ?? ''
-      const hasPaintFill = attrFill !== 'none' && (
-        attrFill.includes('var(') ||
-        styleAttr.includes('fill') ||
-        tagName === 'text' ||
-        tagName === 'rect' ||
-        tagName === 'circle' ||
-        tagName === 'ellipse' ||
-        tagName === 'polygon'
-      )
-
-      if (hasPaintFill && computed.fill && computed.fill !== 'none') {
-        exportEl.setAttribute('fill', computed.fill)
-      }
-
-      if (
-        attrStroke &&
-        attrStroke !== 'none' &&
-        computed.stroke &&
-        computed.stroke !== 'none'
-      ) {
-        exportEl.setAttribute('stroke', computed.stroke)
-      }
-
-      if (exportEl.hasAttribute('stroke-width') && computed.strokeWidth) {
-        exportEl.setAttribute('stroke-width', computed.strokeWidth)
-      }
-
-      if (exportEl.hasAttribute('opacity') && computed.opacity) {
-        exportEl.setAttribute('opacity', computed.opacity)
-      }
-
-      if (tagName === 'text' || tagName === 'tspan') {
-        exportEl.setAttribute('fill', EXPORT_DIAGRAM_TEXT_COLOR)
-        if (exportEl instanceof SVGElement && exportEl.style) {
-          exportEl.style.fill = EXPORT_DIAGRAM_TEXT_COLOR
-          exportEl.style.color = EXPORT_DIAGRAM_TEXT_COLOR
-        }
-        exportEl.setAttribute('font-family', computed.fontFamily || 'Inter, system-ui, sans-serif')
-        exportEl.setAttribute('font-size', computed.fontSize || '11px')
-        exportEl.setAttribute('font-weight', computed.fontWeight || '700')
-      }
-    })
-
-    return exportSvg
-  }
-
   const downloadSvg = () => {
     const svgEl = svgWrapRef.current?.querySelector('svg')
     if (!svgEl) return
-    const serializer = new XMLSerializer()
-    const svgStr = serializer.serializeToString(preparePathDiagramSvgForExport(svgEl))
-    const blob = new Blob([svgStr], { type: 'image/svg+xml' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'path-diagram.svg'
-    a.click()
-    URL.revokeObjectURL(url)
+    downloadPathDiagramAsSvg(svgEl, 'path-diagram.svg')
     setCtxMenu(null)
   }
 
-  const downloadPng = () => {
+  const downloadPng = async () => {
     const svgEl = svgWrapRef.current?.querySelector('svg')
     if (!svgEl) return
-    const serializer = new XMLSerializer()
-    const svgStr = serializer.serializeToString(preparePathDiagramSvgForExport(svgEl))
-    const vbAttr = svgEl.getAttribute('viewBox')
-    let w = 1200, h = 800
-    if (vbAttr) {
-      const parts = vbAttr.split(/[\s,]+/)
-      if (parts.length >= 4) { w = Math.max(400, parseFloat(parts[2]) || 1200); h = Math.max(300, parseFloat(parts[3]) || 800) }
-    }
-    const SCALE = 2
-    const canvas = document.createElement('canvas')
-    canvas.width  = w * SCALE
-    canvas.height = h * SCALE
-    const ctx2d = canvas.getContext('2d')
-    if (!ctx2d) return
-    const img = new Image()
-    const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' })
-    const url = URL.createObjectURL(svgBlob)
-    img.onload = () => {
-      ctx2d.drawImage(img, 0, 0, canvas.width, canvas.height)
-      URL.revokeObjectURL(url)
-      const a = document.createElement('a')
-      a.download = 'path-diagram.png'
-      a.href = canvas.toDataURL('image/png')
-      a.click()
-    }
-    img.src = url
+    await downloadPathDiagramAsPng(svgEl, 'path-diagram.png')
     setCtxMenu(null)
   }
 
@@ -5240,8 +5158,9 @@ export default function ResultsView() {
     savedDiagramBaseResults?: Record<string, unknown> | null
   } | null
 
-  // ── Load model from ModelCanvas (saved to localStorage before navigating) ──
+  // ── Load the analysis-time model from volatile navigation/session state ──
   const [savedModel, setSavedModel] = useState<{ constructs: CanvasConstruct[]; paths: CanvasPath[] } | null>(() => resolveSavedModelSnapshot(modelId, navState))
+  const [analysisModelSnapshot, setAnalysisModelSnapshot] = useState<{ constructs: CanvasConstruct[]; paths: CanvasPath[] } | null>(() => resolveSavedModelSnapshot(modelId, navState))
 
   const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('pls-sem')
   const [analysisResults, setAnalysisResults] = useState<Record<string, unknown> | null>(null)
@@ -5256,8 +5175,15 @@ export default function ResultsView() {
   const [permutationConfiguralStatus, setPermutationConfiguralStatus] = useState<PermutationConfiguralStatus>('idle')
   const [mgaComparisonMethod, setMgaComparisonMethod] = useState<MgaComparisonMethod>('biasCorrectedConfidenceIntervals')
   const [tableViewPreferences, setTableViewPreferences] = useState<Record<string, ResultsTableView>>({})
+  const [showSaveAsForResults, setShowSaveAsForResults] = useState(false)
   const calcDispatch = useCalculationDispatch()
   const isContextCalculating = useIsCalculating()
+
+  useEffect(() => {
+    if (isTemporaryModelId(modelId) && !getTemporaryModelSession(modelId)) {
+      navigate('/', { replace: true })
+    }
+  }, [modelId, navigate])
 
   // ── Three diagram display modes (from ui.pen Path Coefficient Dropdown spec) ──
   const [structuralMode,  setStructuralMode]  = useState('Path coefficients')
@@ -5294,25 +5220,16 @@ export default function ResultsView() {
     const savedAnalysis = navState?.savedAnalysis
 
     if (savedAnalysis?.results && (savedAnalysis?.mode === 'pls-sem' || savedAnalysis?.mode === 'bootstrap' || savedAnalysis?.mode === 'plspredict' || savedAnalysis?.mode === 'advanced' || savedAnalysis?.mode === 'permutation' || savedAnalysis?.mode === 'mga')) {
-      const analysisModelSnapshot = savedAnalysis?.modelSnapshot ?? navState?.savedModelSnapshot
-      if (analysisModelSnapshot) {
-        try {
-          writeSharedStorageValue('results-canvas-model', JSON.stringify(cloneResultsModelSnapshot(analysisModelSnapshot)))
-        } catch {
-          // no-op
-        }
-        setSavedModel(cloneResultsModelSnapshot(analysisModelSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] }))
+      const navigatedModelSnapshot = savedAnalysis?.modelSnapshot ?? navState?.savedModelSnapshot
+      if (navigatedModelSnapshot) {
+        setSavedModel(cloneResultsModelSnapshot(navigatedModelSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] }))
+        setAnalysisModelSnapshot(cloneResultsModelSnapshot(navigatedModelSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] }))
       }
 
       if (savedAnalysis.mode !== 'bootstrap') {
         setPlsResultsForDiagram(savedAnalysis.results as Record<string, unknown>)
       } else if (navState?.savedDiagramBaseResults) {
         setPlsResultsForDiagram(navState.savedDiagramBaseResults)
-        try {
-          writeSharedStorageValue('analysis-results-for-diagram', JSON.stringify(navState.savedDiagramBaseResults))
-        } catch {
-          // no-op
-        }
       }
       setAnalysisMode(savedAnalysis.mode)
       if (savedAnalysis.mode === 'advanced') setSelectedPanel('priority-map')
@@ -5320,48 +5237,41 @@ export default function ResultsView() {
       if (savedAnalysis.mode === 'mga') setSelectedPanel('overview')
       setAnalysisResults(savedAnalysis.results as Record<string, unknown>)
       setDiagramCollapsed(false)
-      writeSharedStorageValue('analysis-mode', savedAnalysis.mode)
-      writeSharedStorageValue('analysis-results', JSON.stringify(savedAnalysis.results))
+      if (modelId) {
+        updateAnalysisSession(modelId, (previous) => ({
+          ...previous,
+          mode: savedAnalysis.mode,
+          results: savedAnalysis.results,
+          savedAt: savedAnalysis.savedAt,
+          modelSnapshot: navigatedModelSnapshot ?? previous.modelSnapshot,
+          diagramBaseResults: savedAnalysis.mode === 'pls-sem'
+            ? savedAnalysis.results
+            : (navState?.savedDiagramBaseResults ?? previous.diagramBaseResults),
+          basePlsAnalysis: savedAnalysis.mode === 'pls-sem'
+            ? {
+                results: savedAnalysis.results,
+                savedAt: savedAnalysis.savedAt,
+                graphSignature: navigatedModelSnapshot ? buildAnalysisGraphSignature(navigatedModelSnapshot) : undefined,
+              }
+            : previous.basePlsAnalysis,
+        }))
+      }
       return
     }
 
-    try {
-      const modeRaw = readSharedStorageValue('analysis-mode')
-      if (modeRaw === 'bootstrap' || modeRaw === 'plspredict' || modeRaw === 'pls-sem' || modeRaw === 'advanced' || modeRaw === 'permutation' || modeRaw === 'mga') {
-        setAnalysisMode(modeRaw)
-        if (modeRaw === 'advanced') setSelectedPanel('priority-map')
-        if (modeRaw === 'permutation') setSelectedPanel('overview')
-        if (modeRaw === 'mga') setSelectedPanel('overview')
-      }
-
-      const raw = readSharedStorageValue('analysis-results')
-      if (!raw) return
-      const parsed = JSON.parse(raw)
-      setSavedModel(resolveSavedModelSnapshot(modelId, navState))
-      if (modeRaw !== 'bootstrap') {
-        setPlsResultsForDiagram(parsed as Record<string, unknown>)
-      } else {
-        try {
-          const plsRaw = readSharedStorageValue('analysis-results-for-diagram')
-          if (plsRaw) setPlsResultsForDiagram(JSON.parse(plsRaw) as Record<string, unknown>)
-        } catch { /* no-op */ }
-      }
-      setAnalysisResults(parsed as Record<string, unknown>)
-      setDiagramCollapsed(false)
-    } catch {
-      setAnalysisMode('pls-sem')
-      setAnalysisResults(null)
+    const session = getAnalysisSession(modelId)
+    if (!session?.mode || !session.results) return
+    setAnalysisMode(session.mode)
+    if (session.mode === 'advanced') setSelectedPanel('priority-map')
+    if (session.mode === 'permutation' || session.mode === 'mga') setSelectedPanel('overview')
+    if (session.modelSnapshot) {
+      setSavedModel(cloneResultsModelSnapshot(session.modelSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] }))
+      setAnalysisModelSnapshot(cloneResultsModelSnapshot(session.modelSnapshot as { constructs: CanvasConstruct[]; paths: CanvasPath[] }))
     }
+    setPlsResultsForDiagram(session.mode === 'bootstrap' ? session.diagramBaseResults ?? null : session.results)
+    setAnalysisResults(session.results)
+    setDiagramCollapsed(false)
   }, [modelId, navState])
-
-  useEffect(() => {
-    if (!savedModel) return
-    try {
-      writeSharedStorageValue('results-canvas-model', JSON.stringify(savedModel))
-    } catch {
-      // no-op
-    }
-  }, [savedModel])
 
   const moderationAvailable = useMemo(
     () => modelHasSavedModerationPaths(savedModel) || hasModerationInteractions(savedModel, analysisResults),
@@ -5395,6 +5305,9 @@ export default function ResultsView() {
   }, [analysisMode, analysisResults])
 
   const resolveWorkspaceContext = useCallback(() => {
+    const isTemporary = isTemporaryModelId(modelId)
+    const tempSession = isTemporary ? getTemporaryModelSession(modelId) : undefined
+
     const raw = readWorkspaceClientCache()
     const all = raw ? JSON.parse(raw) : []
     if (!Array.isArray(all)) {
@@ -5402,8 +5315,23 @@ export default function ResultsView() {
         allWorkspaces: [] as any[],
         workspace: null as any,
         migratedWorkspace: null as any,
-        modelChild: null as any,
+        modelChild: tempSession ?? null as any,
         dataset: null as any,
+      }
+    }
+
+    if (isTemporary && tempSession) {
+      const workspace = all.find((entry: any) => entry.id === tempSession.sourceWorkspaceId) ?? null
+      const migratedWorkspace = workspace ? migrateWorkspace(workspace) : null
+      const dataset = migratedWorkspace
+        ? getLinkedDatasetForModel(migratedWorkspace as any, tempSession.linkedDatasetId || tempSession.id)
+        : null
+      return {
+        allWorkspaces: all,
+        workspace,
+        migratedWorkspace,
+        modelChild: tempSession as any,
+        dataset,
       }
     }
 
@@ -5430,15 +5358,22 @@ export default function ResultsView() {
     }
 
     const { modelChild } = resolveWorkspaceContext()
-    return readPlsPredictSettingsFromState(modelChild?.state)
-  }, [analysisResults, resolveWorkspaceContext])
+    const sessionSettings = getAnalysisSession(modelId)?.analysisSettings
+    return readPlsPredictSettingsFromState({
+      ...(modelChild?.state || {}),
+      analysisSettings: {
+        ...(modelChild?.state?.analysisSettings || {}),
+        ...(sessionSettings || {}),
+      },
+    })
+  }, [analysisResults, modelId, resolveWorkspaceContext])
 
   const canRunAdvancedAnalysis = useMemo(() => {
     const { modelChild } = resolveWorkspaceContext()
-    const basePlsAnalysis = modelChild?.state?.basePlsAnalysis
+    const basePlsAnalysis = getAnalysisSession(modelId)?.basePlsAnalysis ?? modelChild?.state?.basePlsAnalysis
     if (!basePlsAnalysis?.results || !savedModel) return false
     return basePlsAnalysis.graphSignature === buildAnalysisGraphSignature(savedModel)
-  }, [resolveWorkspaceContext, savedModel])
+  }, [analysisResults, modelId, resolveWorkspaceContext, savedModel])
 
   useEffect(() => {
     const shouldShowAdvancedHint =
@@ -5455,62 +5390,42 @@ export default function ResultsView() {
     window.dispatchEvent(new CustomEvent('pls:action', { detail: { status } }))
   }, [isAnalysisRunning, analysisMode, analysisResults, canRunAdvancedAnalysis, savedModel])
 
-  const persistResultsToWorkspace = useCallback((options: {
-    mode: AnalysisMode
-    results: Record<string, unknown>
-    savedAt: string
-    analysisSettings?: {
-      plspredict?: PlsPredictSettings
-      advanced?: AdvancedAnalysisSettings
-      permutation?: PermutationAnalysisSettings
-      mga?: MultiGroupAnalysisSettings
-    }
-    modelSnapshot?: { constructs: CanvasConstruct[]; paths: CanvasPath[] } | null
-    micomCache?: MicomCacheEntry | null
-  }) => {
-    const { allWorkspaces, migratedWorkspace, modelChild } = resolveWorkspaceContext()
-    if (!migratedWorkspace || !modelChild) return
+  const persistMicomCacheToSession = useCallback((micomCache: MicomCacheEntry) => {
+    if (!modelId) return
+    updateAnalysisSession(modelId, (previous) => ({ ...previous, micomCache }))
+  }, [modelId])
 
-    const existingState = modelChild.state || {}
-    const updatedModel = {
-      ...modelChild,
-      badge: 'Calculated' as const,
-      updatedAt: new Date().toISOString(),
-      state: {
-        ...existingState,
-        analysis: {
-          mode: options.mode,
-          results: options.results,
-          savedAt: options.savedAt,
-          ...(options.modelSnapshot ? { modelSnapshot: options.modelSnapshot } : {}),
-        },
-        analysisSettings: {
-          ...(existingState.analysisSettings || {}),
-          ...(options.analysisSettings || {}),
-        },
-        ...(options.micomCache ? { micomCache: options.micomCache } : {}),
+  const persistCurrentAnalysisToSession = useCallback((
+    mode: AnalysisMode,
+    results: Record<string, unknown>,
+    savedAt: string,
+    options: {
+      diagramBaseResults?: Record<string, unknown> | null
+      analysisSettings?: Record<string, unknown>
+      micomCache?: MicomCacheEntry | null
+    } = {},
+  ) => {
+    if (!modelId) return
+    const analysisDatasetId = resolveWorkspaceContext().dataset?.id
+    const calculationModelSnapshot = savedModel ? cloneResultsModelSnapshot(savedModel) : null
+    if (calculationModelSnapshot) setAnalysisModelSnapshot(calculationModelSnapshot)
+    updateAnalysisSession(modelId, (previous) => ({
+      ...previous,
+      mode,
+      results,
+      savedAt,
+      linkedDatasetId: analysisDatasetId ?? previous.linkedDatasetId,
+      modelSnapshot: calculationModelSnapshot ?? previous.modelSnapshot,
+      diagramBaseResults: options.diagramBaseResults === undefined
+        ? previous.diagramBaseResults
+        : options.diagramBaseResults,
+      analysisSettings: {
+        ...(previous.analysisSettings || {}),
+        ...(options.analysisSettings || {}),
       },
-    }
-
-    const updatedChildren = migratedWorkspace.children.map((child: any) => child.id === modelId ? updatedModel : child)
-    const updatedWorkspace = { ...migratedWorkspace, children: updatedChildren }
-    const updatedAll = allWorkspaces.map((entry: any) => entry.id === updatedWorkspace.id ? updatedWorkspace : entry)
-    writeWorkspaceClientCache(JSON.stringify(updatedAll))
-    window.dispatchEvent(new CustomEvent('pls:workspaces-updated', { detail: { workspaces: updatedAll } }))
-    ;(window as any).electronAPI?.saveWorkspace?.(updatedWorkspace)
-  }, [modelId, resolveWorkspaceContext])
-
-  const persistMicomCacheToWorkspace = useCallback((micomCache: MicomCacheEntry) => {
-    const { allWorkspaces, migratedWorkspace } = resolveWorkspaceContext()
-    if (!migratedWorkspace) return
-
-    const update = putMicomCacheInWorkspaceList(allWorkspaces, migratedWorkspace.id, modelId, micomCache)
-    writeWorkspaceClientCache(JSON.stringify(update.workspaces))
-    window.dispatchEvent(new CustomEvent('pls:workspaces-updated', { detail: { workspaces: update.workspaces } }))
-    if (update.workspace) {
-      ;(window as any).electronAPI?.saveWorkspace?.(update.workspace)
-    }
-  }, [modelId, resolveWorkspaceContext])
+      ...(options.micomCache ? { micomCache: options.micomCache } : {}),
+    }))
+  }, [modelId, resolveWorkspaceContext, savedModel])
 
   const resolveRunPayload = useCallback((): RunPlsRequest | null => {
     const model = savedModel
@@ -5637,10 +5552,12 @@ export default function ResultsView() {
       // Cache current PLS-SEM results as fallback for the bootstrap diagram overlay
       if (analysisMode === 'pls-sem' && analysisResults) {
         setPlsResultsForDiagram(analysisResults)
-        try { writeSharedStorageValue('analysis-results-for-diagram', JSON.stringify(analysisResults)) } catch { /* no-op */ }
       }
-      writeSharedStorageValue('analysis-mode', 'bootstrap')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      persistCurrentAnalysisToSession('bootstrap', result.results, new Date().toISOString(), {
+        diagramBaseResults: analysisMode === 'pls-sem'
+          ? analysisResults
+          : getAnalysisSession(modelId)?.diagramBaseResults ?? null,
+      })
       setAnalysisMode('bootstrap')
       setAnalysisResults(result.results)
       setDiagramCollapsed(false)
@@ -5659,7 +5576,7 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [analysisResults, analysisMode, calcDispatch, currentResultsRoute, isAnalysisRunning, resolveRunPayload, startResultsCalculation])
+  }, [analysisResults, analysisMode, calcDispatch, currentResultsRoute, isAnalysisRunning, modelId, persistCurrentAnalysisToSession, resolveRunPayload, startResultsCalculation])
 
   const handleRunPlsPredictFromResults = useCallback(async (settings: PlsPredictSettings) => {
     if (isAnalysisRunning) return
@@ -5698,18 +5615,11 @@ export default function ResultsView() {
 
       calcDispatch({ type: 'setPhase', phaseId: 'final' })
       const savedAt = new Date().toISOString()
-      writeSharedStorageValue('analysis-mode', 'plspredict')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      persistCurrentAnalysisToSession('plspredict', result.results, savedAt, {
+        analysisSettings: { plspredict: normalizedSettings },
+      })
       setAnalysisMode('plspredict')
       setAnalysisResults(result.results)
-      persistResultsToWorkspace({
-        mode: 'plspredict',
-        results: result.results as Record<string, unknown>,
-        savedAt,
-        analysisSettings: {
-          plspredict: normalizedSettings,
-        },
-      })
       calcDispatch({
         type: 'complete',
         result: { type: 'plspredict', completedAt: Date.now(), resultsRoute: currentResultsRoute() },
@@ -5723,7 +5633,7 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistCurrentAnalysisToSession, resolveRunPayload, startResultsCalculation])
 
   const handleRunAdvancedFromResults = useCallback(async (settings: AdvancedAnalysisSettings) => {
     if (isAnalysisRunning) return
@@ -5761,20 +5671,13 @@ export default function ResultsView() {
 
       calcDispatch({ type: 'setPhase', phaseId: 'final' })
       const savedAt = new Date().toISOString()
-      writeSharedStorageValue('analysis-mode', 'advanced')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      persistCurrentAnalysisToSession('advanced', result.results, savedAt, {
+        analysisSettings: { advanced: settings },
+      })
       setPlsResultsForDiagram(result.results as Record<string, unknown>)
       setAnalysisMode('advanced')
       setSelectedPanel('priority-map')
       setAnalysisResults(result.results)
-      persistResultsToWorkspace({
-        mode: 'advanced',
-        results: result.results as Record<string, unknown>,
-        savedAt,
-        analysisSettings: {
-          advanced: settings,
-        },
-      })
       setAdvancedOpen(false)
       calcDispatch({
         type: 'complete',
@@ -5789,7 +5692,7 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, isAnalysisRunning, persistCurrentAnalysisToSession, resolveRunPayload, startResultsCalculation])
 
   const resultsGroupingData = useMemo(() => {
     const { dataset } = resolveWorkspaceContext()
@@ -5871,7 +5774,7 @@ export default function ResultsView() {
           results: result.results as Record<string, unknown>,
           graphSignature: savedModel ? buildAnalysisGraphSignature(savedModel) : undefined,
         })
-        persistMicomCacheToWorkspace(micomCache)
+        persistMicomCacheToSession(micomCache)
       }
       const passed = (result.results?.configuralInvariance as any)?.passed === true
       setPermutationConfiguralStatus(passed ? 'passed' : 'failed')
@@ -5880,7 +5783,7 @@ export default function ResultsView() {
       setPermutationConfiguralStatus('failed')
       return { success: false, error: error?.message || 'Configural precheck failed.' }
     }
-  }, [hasHigherOrderConstructs, persistMicomCacheToWorkspace, resolveRunPayload, savedModel, showMicomHocUnavailable])
+  }, [hasHigherOrderConstructs, persistMicomCacheToSession, resolveRunPayload, savedModel, showMicomHocUnavailable])
 
   const handleRunPermutationFromResults = useCallback(async (settings: PermutationAnalysisSettings) => {
     if (isAnalysisRunning) return
@@ -5940,21 +5843,10 @@ export default function ResultsView() {
         graphSignature: savedModel ? buildAnalysisGraphSignature(savedModel) : undefined,
         savedAt,
       })
-      writeSharedStorageValue('analysis-mode', 'permutation')
-      writeSharedStorageValue('analysis-results', JSON.stringify(result.results))
+      persistCurrentAnalysisToSession('permutation', result.results, savedAt, { micomCache })
       setAnalysisMode('permutation')
       setSelectedPanel('overview')
       setAnalysisResults(result.results)
-      persistResultsToWorkspace({
-        mode: 'permutation',
-        results: result.results as Record<string, unknown>,
-        savedAt,
-        modelSnapshot: savedModel,
-        analysisSettings: {
-          permutation: settings,
-        },
-        micomCache,
-      })
       calcDispatch({
         type: 'complete',
         result: { type: 'permutation', completedAt: Date.now(), resultsRoute: currentResultsRoute() },
@@ -5968,7 +5860,7 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, hasHigherOrderConstructs, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, savedModel, showMicomHocUnavailable, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, hasHigherOrderConstructs, isAnalysisRunning, persistCurrentAnalysisToSession, resolveRunPayload, savedModel, showMicomHocUnavailable, startResultsCalculation])
 
   const handleRunMultiGroupFromResults = useCallback(async (settings: MultiGroupAnalysisSettings) => {
     if (isAnalysisRunning) return
@@ -6005,7 +5897,9 @@ export default function ResultsView() {
     )
     try {
       const { modelChild } = resolveWorkspaceContext()
-      const cachedMicom = (modelChild?.state?.micomCache as MicomCacheEntry | undefined) ?? null
+      const cachedMicom = (getAnalysisSession(modelId)?.micomCache as MicomCacheEntry | undefined)
+        ?? (modelChild?.state?.micomCache as MicomCacheEntry | undefined)
+        ?? null
       const micomValidationPayload = {
         ...mgaPayload,
         groupingVariable: settings.groupingVariable,
@@ -6045,20 +5939,12 @@ export default function ResultsView() {
       calcDispatch({ type: 'setPhase', phaseId: 'final' })
       const savedAt = new Date().toISOString()
       const mgaResults = attachMicomOverviewToMgaResults(result.results as Record<string, unknown>, micomOverview)
-      writeSharedStorageValue('analysis-mode', 'mga')
-      writeSharedStorageValue('analysis-results', JSON.stringify(mgaResults))
+      persistCurrentAnalysisToSession('mga', mgaResults, savedAt, {
+        analysisSettings: { mga: settings },
+      })
       setAnalysisMode('mga')
       setSelectedPanel('overview')
       setAnalysisResults(mgaResults)
-      persistResultsToWorkspace({
-        mode: 'mga',
-        results: mgaResults,
-        savedAt,
-        modelSnapshot: savedModel,
-        analysisSettings: {
-          mga: settings,
-        },
-      })
       calcDispatch({
         type: 'complete',
         result: { type: 'mga', completedAt: Date.now(), resultsRoute: currentResultsRoute() },
@@ -6072,7 +5958,7 @@ export default function ResultsView() {
     } finally {
       setAnalysisBusy(false)
     }
-  }, [calcDispatch, currentResultsRoute, hasHigherOrderConstructs, isAnalysisRunning, persistResultsToWorkspace, resolveRunPayload, resolveWorkspaceContext, savedModel, startResultsCalculation])
+  }, [calcDispatch, currentResultsRoute, hasHigherOrderConstructs, isAnalysisRunning, persistCurrentAnalysisToSession, resolveRunPayload, resolveWorkspaceContext, savedModel, startResultsCalculation])
 
   const generateRScript = useCallback(() => {
     if (!savedModel?.constructs?.length) {
@@ -6101,10 +5987,11 @@ export default function ResultsView() {
       : {}) as Record<string, unknown>
     const rString = (value: unknown) => `'${String(value ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
     const innerWeighting = String(algorithmSettings.innerWeighting ?? 'Path weighting scheme')
+    const isCentroid = innerWeighting.toLowerCase().includes('centroid')
     const innerWeightsExpression = innerWeighting.toLowerCase().includes('factor')
       ? 'path_factorial'
-      : innerWeighting.toLowerCase().includes('centroid')
-        ? 'unit_weights'
+      : isCentroid
+        ? 'path_centroid'
         : 'path_weighting'
     const maxIterations = Number(algorithmSettings.maxIterations) || 300
     const stopCriterionValue = Number(algorithmSettings.stopCriterion)
@@ -6223,6 +6110,16 @@ export default function ResultsView() {
       pathBlocks.join(',\n'),
       ')',
       '',
+      ...(isCentroid
+        ? [
+            '# Centroid inner weighting function (Lohmöller 1989, Wold 1982)',
+            'path_centroid <- function(smMatrix, construct_scores, dependant, paths_matrix) {',
+            '  adj <- paths_matrix + t(paths_matrix)',
+            '  sign(stats::cor(construct_scores, construct_scores)) * adj',
+            '}',
+            '',
+          ]
+        : []),
       `inner_weights <- ${innerWeightsExpression}`,
       `max_iterations <- ${maxIterations}`,
       `stop_criterion <- ${stopCriterion}`,
@@ -6803,10 +6700,98 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
     }
   }, [analysisMode, analysisResults, mgaComparisonMethod, modelId, savedModel, sidebarData])
 
+  const handleSaveAsFromResults = useCallback(async (
+    name: string,
+    wsId: string,
+    newWsData?: { name: string; description: string; color: string }
+  ) => {
+    try {
+      if (!analysisResults || !analysisModelSnapshot) return
+
+      const raw = readWorkspaceClientCache()
+      const allWorkspaces = raw ? JSON.parse(raw) : []
+      const tempSession = isTemporaryModelId(modelId) ? getTemporaryModelSession(modelId) : undefined
+      if (!tempSession) throw new Error('The temporary model session is no longer available.')
+      const savedAtIso = new Date().toISOString()
+      const modeLabel = analysisMode === 'bootstrap'
+        ? 'Bootstrap'
+        : analysisMode === 'plspredict'
+          ? 'PLSpredict'
+          : analysisMode === 'advanced'
+            ? 'Advanced analysis'
+            : analysisMode === 'permutation'
+              ? 'Permutation analysis'
+              : analysisMode === 'mga'
+                ? 'Multi group analysis'
+                : 'PLS-SEM'
+      const savedAnalysisState = {
+        mode: analysisMode,
+        results: analysisResults,
+        savedAt: savedAtIso,
+        modelSnapshot: analysisModelSnapshot,
+      }
+      const modelBaseName = stripModelDisplayName(name)
+      const resultName = `${modelBaseName} — ${modeLabel}`
+      const promotion = await persistModelAs({
+        workspaces: allWorkspaces,
+        sourceModel: {
+          ...tempSession,
+          linkedDatasetId: getAnalysisSession(modelId)?.linkedDatasetId ?? tempSession.linkedDatasetId,
+        },
+        snapshot: analysisModelSnapshot,
+        name,
+        targetWorkspaceId: wsId,
+        newWorkspaceData: newWsData,
+        api: (window as any).electronAPI,
+        buildAdditionalChildren: (model) => [{
+          id: `r-${Date.now()}`,
+          name: resultName,
+          type: 'result' as const,
+          badge: 'Calculated' as const,
+          createdAt: savedAtIso,
+          updatedAt: savedAtIso,
+          meta: `${modeLabel} result`,
+          linkedModelId: model.id,
+          state: {
+            analysis: savedAnalysisState,
+            modelSnapshot: analysisModelSnapshot,
+          },
+        }],
+      })
+
+      writeWorkspaceClientCache(JSON.stringify(promotion.workspaces))
+      window.dispatchEvent(new CustomEvent('pls:workspaces-updated', { detail: { workspaces: promotion.workspaces } }))
+      deleteTemporaryModelSession(modelId!)
+      deleteAnalysisSession(modelId!)
+
+      setShowSaveAsForResults(false)
+      dispatchToast('success', `Saved model and results: ${resultName}`)
+
+      navigate(`/results/${promotion.model.id}`, {
+        replace: true,
+        state: {
+          savedAnalysis: savedAnalysisState,
+          savedModelSnapshot: analysisModelSnapshot,
+        },
+      })
+    } catch (err: any) {
+      dispatchToast('error', 'Save failed', err?.message || 'Unknown error')
+    }
+  }, [analysisMode, analysisModelSnapshot, analysisResults, modelId, navigate])
+
   const handleSaveResults = useCallback(async () => {
     try {
       if (!analysisResults) {
         dispatchToast('warning', 'Save failed', 'No analysis results available to save.')
+        return
+      }
+      if (!analysisModelSnapshot) {
+        dispatchToast('warning', 'Save failed', 'The calculation-time model snapshot is unavailable.')
+        return
+      }
+
+      if (isTemporaryModelId(modelId)) {
+        setShowSaveAsForResults(true)
         return
       }
 
@@ -6838,7 +6823,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
         mode: analysisMode,
         results: analysisResults,
         savedAt: savedAtIso,
-        modelSnapshot: savedModel,
+        modelSnapshot: analysisModelSnapshot,
       }
 
       const savedResultChild = {
@@ -6852,33 +6837,22 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
         linkedModelId: modelId,
         state: {
           analysis: savedAnalysisState,
-          modelSnapshot: savedModel,
+          modelSnapshot: analysisModelSnapshot,
         },
       }
 
-      const updatedChildren = workspace.children.map((child: any) => {
-        if (child.id !== modelId) return child
-        const existingState = child.state || {}
-        return {
-          ...child,
-          updatedAt: new Date().toISOString(),
-          state: {
-            ...existingState,
-            analysis: savedAnalysisState,
-          },
-        }
-      }).concat(savedResultChild)
+      const updatedChildren = [...workspace.children, savedResultChild]
 
       const updatedWorkspace = { ...workspace, children: updatedChildren }
       const updatedAll = allWorkspaces.map((ws: any) => ws.id === workspace.id ? updatedWorkspace : ws)
+      await saveWorkspaceOrThrow((window as any).electronAPI, updatedWorkspace)
       writeWorkspaceClientCache(JSON.stringify(updatedAll))
       window.dispatchEvent(new CustomEvent('pls:workspaces-updated', { detail: { workspaces: updatedAll } }))
-      await (window as any).electronAPI?.saveWorkspace?.(updatedWorkspace)
       dispatchToast('success', `Saved result: ${resultName}`)
     } catch (err: any) {
       dispatchToast('error', 'Save failed', err?.message || 'Unknown error')
     }
-  }, [analysisMode, analysisResults, modelId, savedModel])
+  }, [analysisMode, analysisModelSnapshot, analysisResults, modelId])
 
   const showDiagramTools = analysisMode === 'pls-sem' || analysisMode === 'bootstrap' || analysisMode === 'advanced'
   const showDiagram = showDiagramTools && !diagramCollapsed
@@ -7199,7 +7173,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           onRun={handleRunBootstrapFromResults}
           initialSettings={{
             subsamples: Number(readSharedStorageValue('prefs:defaultSubsamples') || '') || 500,
-            ciType: (readSharedStorageValue('prefs:bootstrapCiType') || 'Percentile') as 'Percentile' | 'BCa' | 't-statistic',
+            ciType: (readSharedStorageValue('prefs:bootstrapCiType') || 'Percentile') as 'Percentile' | 'BC' | 'BCa' | 't-statistic',
             confidenceLevel: (readSharedStorageValue('prefs:bootstrapConfidence') || '95%') as '90%' | '95%' | '99%',
             maxIterations: Number(readSharedStorageValue('prefs:bootstrapMaxIterations') || '') || 300,
             stopCriterion: readSharedStorageValue('prefs:bootstrapStopCriterion') || '1e-7',
@@ -7232,6 +7206,7 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           onRun={handleRunAdvancedFromResults}
           initialSettings={{
             ...(resolveWorkspaceContext().modelChild?.state?.analysisSettings?.advanced ?? {}),
+            ...((getAnalysisSession(modelId)?.analysisSettings as any)?.advanced ?? {}),
             runDepth: Number(readSharedStorageValue('prefs:ncaRunDepth') || '') || 500,
             bottleneckStepSize: Number(readSharedStorageValue('prefs:ncaStepSize') || '') || 10,
           } as Partial<AdvancedAnalysisSettings>}
@@ -7269,6 +7244,18 @@ function buildExportHocTableHtml(hocRows: HOCResultRow[]): string {
           }}
           onRun={handleRunMultiGroupFromResults}
           isRunning={isAnalysisRunning}
+        />
+      )}
+
+      {showSaveAsForResults && (
+        <NewModelDialog
+          title="Save Model As"
+          confirmLabel="Save Model & Results"
+          initialModelName={stripModelDisplayName(resolveWorkspaceContext().modelChild?.name || 'Model').replace(/\s+—\s+Temporary$/i, '')}
+          onClose={() => setShowSaveAsForResults(false)}
+          activeWorkspaceId={resolveWorkspaceContext().workspace?.id || ''}
+          workspaces={resolveWorkspaceContext().allWorkspaces || []}
+          onCreate={handleSaveAsFromResults}
         />
       )}
     </div>

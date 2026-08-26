@@ -1,12 +1,25 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { EyeSlash, StopCircle } from '@phosphor-icons/react'
 import { useCalculation, useCalculationDispatch } from '@/state/calculationContext'
+import { getSavedCalculationGameSetting } from '@/utils/calculationGameEngine'
 import CalcCancelDialog from './CalcCancelDialog'
+import Calculation2048Game from './Calculation2048Game'
 
 export default function CalculatingModal() {
   const state = useCalculation()
   const dispatch = useCalculationDispatch()
   const [showStopConfirm, setShowStopConfirm] = useState(false)
+  const [gameEnabled, setGameEnabled] = useState(getSavedCalculationGameSetting)
+
+  useEffect(() => {
+    const handlePrefsUpdated = () => {
+      setGameEnabled(getSavedCalculationGameSetting())
+    }
+    window.addEventListener('pls:preferences-updated', handlePrefsUpdated)
+    return () => {
+      window.removeEventListener('pls:preferences-updated', handlePrefsUpdated)
+    }
+  }, [])
 
   const active = state.active
   if (!active || active.view !== 'modal') return null
@@ -26,14 +39,14 @@ export default function CalculatingModal() {
 
   return (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center"
+      className="fixed inset-0 z-[200] flex items-center justify-center p-4"
       style={{ background: 'var(--color-overlay)', backdropFilter: 'blur(4px)', WebkitBackdropFilter: 'blur(4px)' }}
     >
       <div
         role="dialog"
         aria-live="polite"
         aria-label={active.title}
-        className="rounded-xl px-8 py-7 w-[480px] max-w-[90vw]"
+        className="rounded-2xl px-5 py-4 w-[350px] max-w-[90vw] max-h-[95vh] overflow-y-auto"
         style={{
           background: 'var(--color-elevated)',
           border: '1px solid var(--color-border)',
@@ -41,12 +54,12 @@ export default function CalculatingModal() {
           boxShadow: 'var(--shadow-modal)',
         }}
       >
-        <h2 className="text-lg font-medium mb-1">{active.title}</h2>
-        <p className="text-xs mb-5" style={{ color: 'var(--color-text-secondary)' }}>
-          {active.subLabel || currentPhase?.label || 'Working'}
+        <h2 className="text-sm font-semibold mb-0.5">{active.title}</h2>
+        <p className="text-xs mb-2 truncate" style={{ color: 'var(--color-text-secondary)' }}>
+          {active.subLabel || currentPhase?.label || 'Working...'}
         </p>
 
-        <div className="h-2 rounded-full overflow-hidden mb-5 calculation-progress-track" style={{ background: 'var(--color-input)' }}>
+        <div className="h-1.5 rounded-full overflow-hidden mb-2.5 calculation-progress-track" style={{ background: 'var(--color-input)' }}>
           <div
             className={isIndeterminate
               ? 'h-full calculation-progress-indeterminate'
@@ -55,34 +68,24 @@ export default function CalculatingModal() {
           />
         </div>
 
-        <div
-          className="flex items-center gap-2 rounded-lg px-3 py-2 mb-6 text-sm"
-          style={{
-            background: 'rgb(var(--color-calculation-accent-rgb) / 0.08)',
-            color: 'var(--color-text-primary)',
-            border: '1px solid rgb(var(--color-calculation-accent-rgb) / 0.18)',
-          }}
-        >
-          <span
-            aria-hidden="true"
-            className="inline-block w-2.5 h-2.5 rounded-full calculation-progress-pulse"
-            style={{ background: 'var(--color-calculation-accent)' }}
-          />
-          <span>{currentPhase?.label || 'Working'}</span>
-        </div>
+        {gameEnabled && !isError && (
+          <div className="my-2 pt-2 border-t border-[var(--color-border)]">
+            <Calculation2048Game />
+          </div>
+        )}
 
         {isStopping && (
-          <p className="text-xs mb-3" style={{ color: 'var(--color-warning)' }}>Stopping... waiting for the current step to return.</p>
+          <p className="text-xs my-2" style={{ color: 'var(--color-warning)' }}>Stopping... waiting for the current step to return.</p>
         )}
         {isError && (
-          <p className="text-xs mb-3" style={{ color: 'var(--color-danger)' }}>{active.errorMessage || 'Calculation failed.'}</p>
+          <p className="text-xs my-2" style={{ color: 'var(--color-danger)' }}>{active.errorMessage || 'Calculation failed.'}</p>
         )}
 
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-1.5 mt-2.5">
           {isError ? (
             <button
               type="button"
-              className="px-3 py-1.5 text-sm rounded-md border"
+              className="px-2.5 py-1 text-xs rounded-md border"
               style={{
                 borderColor: 'var(--color-border)',
                 color: 'var(--color-text-primary)',
@@ -99,7 +102,7 @@ export default function CalculatingModal() {
                 aria-label="Hide calculation"
                 title="Hide calculation"
                 disabled={isStopping}
-                className="h-9 px-3 flex items-center justify-center gap-2 rounded-md border disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-7 px-2.5 text-xs flex items-center justify-center gap-1.5 rounded-md border disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   borderColor: 'var(--color-border)',
                   color: 'var(--color-text-secondary)',
@@ -107,7 +110,7 @@ export default function CalculatingModal() {
                 }}
                 onClick={onHide}
               >
-                <EyeSlash size={16} weight="bold" />
+                <EyeSlash size={14} weight="bold" />
                 <span>Hide</span>
               </button>
               <button
@@ -115,7 +118,7 @@ export default function CalculatingModal() {
                 aria-label="Stop calculation"
                 title="Stop calculation"
                 disabled={isStopping}
-                className="h-9 px-3 flex items-center justify-center gap-2 rounded-md border disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-7 px-2.5 text-xs flex items-center justify-center gap-1.5 rounded-md border disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   borderColor: 'rgb(var(--color-danger-rgb, 217 107 77) / 0.45)',
                   color: 'var(--color-danger)',
@@ -123,7 +126,7 @@ export default function CalculatingModal() {
                 }}
                 onClick={onStop}
               >
-                <StopCircle size={16} weight="fill" />
+                <StopCircle size={14} weight="fill" />
                 <span>Stop</span>
               </button>
             </>
