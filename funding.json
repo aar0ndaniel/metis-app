@@ -7,7 +7,7 @@
     "name": "Metis Team",
     "email": "metis@emend.it.com",
     "phone": "",
-    "description": "Metis is maintained by a small academic and technical team working to make advanced statistical modelling more accessible to students, researchers, lecturers, and academic teams affected by software cost, licensing restrictions, and coding barriers.",
+    "description": "Metis is maintained by an academic and technical research team working to make advanced statistical modelling accessible to students, researchers, lecturers, and academic teams affected by software cost, licensing restrictions, and coding barriers.",
     "webpageUrl": {
       "url": "https://metis.emend.it.com",
       "wellKnown": ""
@@ -17,7 +17,7 @@
     {
       "guid": "metis",
       "name": "Metis",
-      "description": "Metis version 0.0.1 is a free desktop application for PLS-SEM, Necessary Condition Analysis, IPMA, and PLSpredict. It provides a visual interface for importing datasets, building models, running analyses, reviewing results, and exporting outputs while using R and SEMinR as its analytical foundation. Metis supports reproducible research and lowers the barrier to advanced statistical modelling for students, lecturers, researchers, and academic teams affected by software cost, licensing restrictions, or coding requirements.",
+      "description": "Metis currently ships as version 0.3.1 for Windows and macOS. It is a free desktop application for Partial Least Squares Structural Equation Modeling (PLS-SEM), Bootstrapping, PLSpredict, MICOM (Measurement Invariance for Composite Models), and automated Tark publication-ready reporting. Metis provides a visual interface for importing datasets, building models, running analyses, reviewing results, and exporting outputs while using R and SEMinR as its analytical foundation. Metis supports reproducible research and lowers the barrier to advanced statistical modelling for students, lecturers, researchers, and academic teams affected by software cost, licensing restrictions, or coding requirements.",
       "webpageUrl": {
         "url": "https://metis.emend.it.com",
         "wellKnown": ""
@@ -34,12 +34,12 @@
         "research",
         "education",
         "pls-sem",
+        "micom",
         "data-analysis",
         "rstats",
         "desktop-app",
         "academic-tools",
-        "open-science",
-        "foss"
+        "open-science"
       ]
     }
   ],
@@ -57,7 +57,7 @@
         "guid": "metis-2026",
         "status": "active",
         "name": "Metis 2026 sustainability grant",
-        "description": "Funding will support Metis from public beta to a stable release. This includes Windows code signing, release infrastructure, documentation, Linux and macOS builds, testing, academic workshops, developer time, bug fixes, and long-term maintenance so the tool can remain free for research and education communities.",
+        "description": "Funding will support Metis beyond its current Windows and macOS public releases. This includes Windows code signing, release infrastructure, documentation, Linux packaging, ongoing Windows and macOS build maintenance, testing, academic workshops, developer time, bug fixes, and long-term maintenance so the tool can remain free for research and education communities.",
         "amount": 25000,
         "currency": "USD",
         "frequency": "one-time",
@@ -97,7 +97,7 @@
         "expenses": 0,
         "taxes": 0,
         "currency": "USD",
-        "description": "Metis version 0.0.1 is currently in public beta and has not yet received structured external funding."
+        "description": "Metis has current public releases for Windows and macOS (version 0.3.1) and has not yet received structured external funding."
       }
     ]
   }
